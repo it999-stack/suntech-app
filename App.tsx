@@ -4,6 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator } from 'react-native';
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import RootNavigator from './src/navigation/RootNavigator';
 import { initDb } from './src/db/client';
@@ -39,18 +40,20 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <KeyboardProvider>
-        <NavigationContainer>
-          <PlanProvider>
-            <SiteSettingsProvider>
-              <PilesProvider>
-                <RootNavigator />
-                <StatusBar style="auto" />
-              </PilesProvider>
-            </SiteSettingsProvider>
-          </PlanProvider>
-        </NavigationContainer>
-      </KeyboardProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <KeyboardProvider>
+          <NavigationContainer>
+            <PlanProvider>
+              <SiteSettingsProvider>
+                <PilesProvider>
+                  <RootNavigator />
+                  <StatusBar style="auto" />
+                </PilesProvider>
+              </SiteSettingsProvider>
+            </PlanProvider>
+          </NavigationContainer>
+        </KeyboardProvider>
+      </GestureHandlerRootView>
     </SafeAreaProvider>
   );
 }

@@ -17,16 +17,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { ChevronLeft, CheckCircle2, Circle, ArrowRight } from 'lucide-react-native';
-import { colors, spacing, typography } from '../../theme/theme';
-import { formatTime, formatMinutes } from '../../utils/formatTime';
-import { usePlan } from '../../state/PlanContext';
-import { useAuthStore } from '../../store/authStore';
-import PileProgressCard from '../../components/plan/actual/PileProgressCard';
-import { getMachinesBySite } from '../../repositories/machinesRepository';
-import { getPilesBySite } from '../../repositories/pilesRepository';
-import { getPersonnelBySite } from '../../repositories/personnelRepository';
-import type { PilingMachine, PilingPile, PilingPersonnel } from '../../db/schema';
-import type { ActualEntry } from '../../types/plan';
+import { colors, spacing, typography } from '@theme/theme';
+import { formatTime, formatMinutes } from '@utils/formatTime';
+import { usePlan } from '@state/PlanContext';
+import { useAuthStore } from '@store/authStore';
+import PileProgressCard from '@components/plan/actual/PileProgressCard';
+import { getMachinesBySite } from '@repositories/machinesRepository';
+import { getPilesBySite } from '@repositories/pilesRepository';
+import { getPersonnelBySite } from '@repositories/personnelRepository';
+import type { PilingMachine, PilingPile, PilingPersonnel } from '@db/schema';
+import type { ActualEntry } from '@app-types/plan';
 
 /** Shape expected by PileProgressCard and PileStepsModal. */
 type PileGroup = {
@@ -236,10 +236,9 @@ export default function FillActualsScreen() {
 // cannot easily override it without restructuring, we inline the modal content
 // here in a simplified form instead.
 
-import AppModal from '../../components/shared/AppModal';
-
-import StepTimeControl from '../../components/plan/actual/StepTimeControl';
-import { radius } from '../../theme/theme';
+import AppModal from '@components/shared/AppModal';
+import StepTimeControl from '@components/plan/actual/StepTimeControl';
+import { radius } from '@theme/theme';
 
 function PileStepsModalAdapter({
   group,

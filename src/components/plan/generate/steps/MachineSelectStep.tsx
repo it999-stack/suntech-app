@@ -6,8 +6,9 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { CheckCircle2, Circle, Wrench, Truck } from 'lucide-react-native';
+import { Drill, Truck } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
+import Switch from '@components/shared/Switch';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { PlanDraft } from '@/types/plan';
 
@@ -32,13 +33,13 @@ function MachineRow({
 }: {
   machine: SimpleMachine;
   active: boolean;
-  onToggle: () => void;
+  onToggle: (next: boolean) => void;
   icon: React.ReactNode;
 }) {
   return (
     <Pressable
-      style={[styles.machineRow, active && styles.machineRowActive]}
-      onPress={onToggle}
+      style={styles.machineRow}
+      onPress={() => onToggle(!active)}
     >
       <View style={styles.machineIcon}>{icon}</View>
       <View style={styles.machineInfo}>
@@ -49,11 +50,7 @@ function MachineRow({
           <Text style={styles.machineDesc}>{machine.description}</Text>
         ) : null}
       </View>
-      {active ? (
-        <CheckCircle2 size={20} color={colors.accent} />
-      ) : (
-        <Circle size={20} color={colors.textSecondary} />
-      )}
+      <Switch value={active} onValueChange={onToggle} />
     </Pressable>
   );
 }
@@ -64,18 +61,18 @@ export default function MachineSelectStep({
   rigs,
   cranes,
 }: MachineSelectStepProps) {
-  function toggleRig(id: string) {
-    const next = draft.activeRigIds.includes(id)
-      ? draft.activeRigIds.filter((x) => x !== id)
-      : [...draft.activeRigIds, id];
-    onUpdate({ activeRigIds: next });
+  function toggleRig(id: string, next: boolean) {
+    const nextIds = next
+      ? [...draft.activeRigIds, id]
+      : draft.activeRigIds.filter((x) => x !== id);
+    onUpdate({ activeRigIds: nextIds });
   }
 
-  function toggleCrane(id: string) {
-    const next = draft.activeCraneIds.includes(id)
-      ? draft.activeCraneIds.filter((x) => x !== id)
-      : [...draft.activeCraneIds, id];
-    onUpdate({ activeCraneIds: next });
+  function toggleCrane(id: string, next: boolean) {
+    const nextIds = next
+      ? [...draft.activeCraneIds, id]
+      : draft.activeCraneIds.filter((x) => x !== id);
+    onUpdate({ activeCraneIds: nextIds });
   }
 
   return (
@@ -87,7 +84,7 @@ export default function MachineSelectStep({
       {/* Rigs */}
       <GlassCard innerStyle={styles.groupPad}>
         <View style={styles.groupHeader}>
-          <Wrench size={16} color={colors.accent} />
+          <Drill size={16} color={colors.accent} />
           <Text style={styles.groupLabel}>Rigs</Text>
           <Text style={styles.groupCount}>
             {draft.activeRigIds.length} / {rigs.length} active
@@ -101,8 +98,8 @@ export default function MachineSelectStep({
               key={r.id}
               machine={r}
               active={draft.activeRigIds.includes(r.id)}
-              onToggle={() => toggleRig(r.id)}
-              icon={<Wrench size={16} color={draft.activeRigIds.includes(r.id) ? colors.accent : colors.textSecondary} />}
+              onToggle={(next) => toggleRig(r.id, next)}
+              icon={<Drill size={16} color={draft.activeRigIds.includes(r.id) ? colors.accent : colors.textSecondary} />}
             />
           ))
         )}
@@ -125,7 +122,7 @@ export default function MachineSelectStep({
               key={c.id}
               machine={c}
               active={draft.activeCraneIds.includes(c.id)}
-              onToggle={() => toggleCrane(c.id)}
+              onToggle={(next) => toggleCrane(c.id, next)}
               icon={<Truck size={16} color={draft.activeCraneIds.includes(c.id) ? colors.accent : colors.textSecondary} />}
             />
           ))
@@ -167,14 +164,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: 'rgba(28,28,46,0.04)',
+    
     borderWidth: 1.5,
-    borderColor: 'transparent',
+    borderColor: 'rgba(28,28,46,0.06)',
     marginBottom: spacing.xs,
-  },
-  machineRowActive: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
   },
   machineIcon: { width: 28, alignItems: 'center' },
   machineInfo: { flex: 1 },

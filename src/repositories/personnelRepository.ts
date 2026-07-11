@@ -2,12 +2,12 @@
 // CRUD helpers for piling_personnel in local SQLite.
 
 import { eq } from 'drizzle-orm';
-import { initDb } from '../db/client';
+import { initDb } from '@db/client';
 import {
   pilingPersonnel,
   type NewPilingPersonnel,
   type PilingPersonnel,
-} from '../db/schema';
+} from '@db/schema';
 
 /**
  * Upsert a batch of personnel (replace on conflict by primary key).

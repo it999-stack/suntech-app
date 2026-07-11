@@ -10,17 +10,18 @@ import { Clock, Truck, Users, ListChecks, AlertTriangle } from 'lucide-react-nat
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
+
 import type { PlanDraft } from '@/types/plan';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { Step } from '@components/plan/generate/ProgressHeader';
-import type { PreviewPile } from '../preview/previewTypes';
+import type { PreviewPile } from '@app-types/previewTypes';
 import { formatMinutes, computeWorkingMinutes, computeElapsedMinutes } from '../preview/previewUtils';
 import SummaryAccordion from '../preview/SummaryAccordion';
-import PlanTimelineBar from '../preview/PlanTimelineBar';
+import MachineTimelineAccordion from '../preview/MachineTimelineAccordion';
 import PileAccordion from '../preview/PileAccordion';
 
 // Re-export for consumers
-export type { PreviewPile } from '../preview/previewTypes';
+export type { PreviewPile } from '@app-types/previewTypes';
 
 // ─── Simple data types for accordion details ──────────────────────────────────
 
@@ -155,6 +156,14 @@ export default function PreviewStep({
     return { rigLines, craneLines };
   }, [activeRigs, activeCranes]);
 
+  const pileLabelById = useMemo(() => {
+  const map: Record<string, string> = {};
+  piles.forEach((p) => {
+    map[p.checklistPileId] = `Pile ${p.code ?? p.checklistPileId}`;
+  });
+  return map;
+}, [piles]);
+
   // ── Supervisors detail ───────────────────────────────────────────────────
   const supervisorDetail = useMemo(() => {
     const shift1 = shifts[0];
@@ -212,53 +221,6 @@ export default function PreviewStep({
         </View>
       </GlassCard>
 
-      {/* ── Visual timeline ─────────────────────────────────────────────── */}
-      <PlanTimelineBar
-        windowStart={new Date(draft.planStartTime)}
-        windowEnd={new Date(endIso)}
-        steps={planSteps}
-        activeRigs={activeRigs}
-        activeCranes={activeCranes}
-      />
-
-      {/* ── Machines accordion ──────────────────────────────────────────── */}
-      <SummaryAccordion
-        icon={<Truck size={18} color={colors.accent} />}
-        title="Machines"
-        summary={`${activeRigCount} rig${activeRigCount === 1 ? '' : 's'} · ${activeCraneCount} crane${activeCraneCount === 1 ? '' : 's'} active`}
-        onEdit={() => onNavigateToStep('machines')}
-      >
-        {activeRigs.length > 0 && (
-          <View style={styles.machineGroup}>
-            <Text style={styles.detailSectionTitle}>Rigs</Text>
-            <View style={styles.chipWrap}>
-              {activeRigs.map((r) => (
-                <View key={r.id} style={[styles.machineChip, styles.machineChipRig]}>
-                  <View style={[styles.machineChipDot, styles.dotRig]} />
-                  <Text style={styles.machineChipText}>{r.machineNo}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-        {activeCranes.length > 0 && (
-          <View style={styles.machineGroup}>
-            <Text style={styles.detailSectionTitle}>Cranes</Text>
-            <View style={styles.chipWrap}>
-              {activeCranes.map((c) => (
-                <View key={c.id} style={[styles.machineChip, styles.machineChipCrane]}>
-                  <View style={[styles.machineChipDot, styles.dotCrane]} />
-                  <Text style={styles.machineChipText}>{c.machineNo}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-        {activeRigs.length === 0 && activeCranes.length === 0 && (
-          <Text style={styles.detailEmpty}>No machines selected for this plan.</Text>
-        )}
-      </SummaryAccordion>
-
       {/* ── Supervisors accordion ───────────────────────────────────────── */}
       <SummaryAccordion
         icon={<Users size={18} color={colors.accent} />}
@@ -280,27 +242,15 @@ export default function PreviewStep({
         />
       </SummaryAccordion>
 
-      {/* ── Steps accordion ─────────────────────────────────────────────── */}
-      <SummaryAccordion
-        icon={<ListChecks size={18} color={colors.accent} />}
-        title="Steps included"
-        summary={`${selectedStepsCount} of ${totalStepsCount} selected`}
-        onEdit={() => onNavigateToStep('steps')}
-      >
-        {selectedSteps.length === 0 ? (
-          <Text style={styles.detailEmpty}>No steps selected for this plan.</Text>
-        ) : (
-          selectedSteps.map((s) => (
-            <View key={s.id} style={styles.stepDetailRow}>
-              <View style={[styles.stepTrackDot, { backgroundColor: s.track === 'RIG' ? '#7c3aed' : '#0369a1' }]} />
-              <View style={styles.stepDetailInfo}>
-                <Text style={styles.stepDetailName}>{s.stepName}</Text>
-                <Text style={styles.stepDetailMeta}>{s.track} · #{s.sequenceOrder}</Text>
-              </View>
-            </View>
-          ))
-        )}
-      </SummaryAccordion>
+      {/* ── Visual timeline ─────────────────────────────────────────────── */}
+      <MachineTimelineAccordion
+        windowStart={new Date(draft.planStartTime)}
+        windowEnd={new Date(endIso)}
+        steps={planSteps}
+        activeRigs={activeRigs}
+        activeCranes={activeCranes}
+        pileLabelById={pileLabelById}
+      />
 
       {/* ── Duration warnings ───────────────────────────────────────────── */}
       {warningPileCodes.length > 0 && (

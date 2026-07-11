@@ -3,8 +3,8 @@
 import React from 'react';
 import { View, TextInput, StyleSheet } from 'react-native';
 import { Search } from 'lucide-react-native';
-import GlassCard from '../shared/GlassCard';
-import { colors, spacing, typography } from '../../theme/theme';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, typography } from '@theme/theme';
 
 interface Props {
   value: string;

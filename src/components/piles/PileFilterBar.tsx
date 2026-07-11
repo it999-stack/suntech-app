@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ScrollView, Pressable, Text, StyleSheet } from 'react-native';
-import { colors, spacing, radius, typography } from '../../theme/theme';
+import { colors, spacing, radius, typography } from '@theme/theme';
 
 export const PILE_FILTERS = [
   { key: 'all',         label: 'All'         },

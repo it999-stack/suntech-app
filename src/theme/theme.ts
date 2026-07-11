@@ -10,6 +10,9 @@ export const colors = {
   backdropMid: '#E0E7FF',
   backdropEnd: '#F5F3FF',
 
+  // border / divider / muted text
+  border: 'rgba(28,28,46,0.08)',
+
   // Glass surfaces
   glassFill: 'rgba(255,255,255,0.55)',
   glassFillStrong: 'rgba(255,255,255,0.72)',
@@ -36,6 +39,15 @@ export const colors = {
   // Base
   white: '#FFFFFF',
   black: '#000000',
+
+  // Machine visualizations (timelines, charts, chips)
+  machine: {
+    rigColors: ['#EA580C', '#F97316', '#FB923C', '#FDBA74'],
+    craneColors: ['#0369A1', '#0284C7', '#38BDF8', '#7DD3FC'],
+    break: '#fbbf24',
+    idle: '#c7c7d6',
+    unused: '#e4e4e7',
+  },
 } as const;
 
 export const spacing = {
@@ -48,11 +60,13 @@ export const spacing = {
   xxxl: 48,
 } as const;
 
+// Reduced to match the flatter, tighter-corner mockups (~8px controls,
+// ~12px cards) instead of the previous rounder 10/16/22/28 scale.
 export const radius = {
-  sm: 10,
-  md: 16,
-  lg: 22,
-  xl: 28,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
   pill: 999,
 } as const;
 

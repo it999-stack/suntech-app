@@ -3,11 +3,11 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { CheckCircle2, Clock, ArrowRight } from 'lucide-react-native';
-import GlassCard from '../../shared/GlassCard';
-import TimeStepper from '../../shared/TimeStepper';
-import { formatMinutes } from '../../../utils/formatTime';
-import { colors, spacing, radius, typography } from '../../../theme/theme';
-import { ActualEntry } from '../../../types/plan';
+import GlassCard from '@components/shared/GlassCard';
+import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import { formatMinutes } from '@utils/formatTime';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { ActualEntry } from '@app-types/plan';
 
 function nowAsMinutes(): number {
   const d = new Date();
@@ -24,6 +24,7 @@ export default function StepRow({ entry, onSetActualTime }: StepRowProps) {
   const handleSet = onSetActualTime ?? (() => {});
   const [editing, setEditing] = useState<'start' | 'end' | null>(null);
   const [draftMinutes, setDraftMinutes] = useState(entry.plannedStart);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const hasStart = entry.actualStart !== undefined;
   const hasEnd = entry.actualEnd !== undefined;
@@ -44,6 +45,7 @@ export default function StepRow({ entry, onSetActualTime }: StepRowProps) {
   }
 
   return (
+    <>
     <GlassCard style={styles.stepCard}>
       <View style={styles.stepHeaderRow}>
         <Text style={styles.stepTitle}>
@@ -110,7 +112,9 @@ export default function StepRow({ entry, onSetActualTime }: StepRowProps) {
 
       {editing && (
         <View style={styles.editorWrap}>
-          <TimeStepper minutes={draftMinutes} onChange={setDraftMinutes} step={5} />
+          <Pressable style={styles.timePickerBtn} onPress={() => setPickerOpen(true)}>
+            <Text style={styles.timePickerBtnText}>{formatMinutes(draftMinutes)}</Text>
+          </Pressable>
           <View style={styles.editorFooter}>
             <Pressable style={styles.editorCancel} onPress={() => setEditing(null)}>
               <Text style={styles.editorCancelText}>Cancel</Text>
@@ -124,6 +128,17 @@ export default function StepRow({ entry, onSetActualTime }: StepRowProps) {
         </View>
       )}
     </GlassCard>
+
+    <TimerSelectMenu
+      visible={pickerOpen}
+      onClose={() => setPickerOpen(false)}
+      onTimeSelect={(date) => {
+        const m = date.getHours() * 60 + date.getMinutes();
+        setDraftMinutes(m);
+      }}
+      initialDate={(() => { const d = new Date(); d.setHours(Math.floor(draftMinutes / 60), draftMinutes % 60, 0, 0); return d; })()}
+    />
+    </>
   );
 }
 
@@ -241,5 +256,17 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '700',
     color: colors.white,
+  },
+  timePickerBtn: {
+    backgroundColor: 'rgba(28,28,46,0.06)',
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+  },
+  timePickerBtnText: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.textSecondary,
   },
 });

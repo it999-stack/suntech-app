@@ -5,11 +5,11 @@ import { useEffect } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
-import { RootStackParamList } from '../types/navigation';
-import AuthStackNavigator from './AuthStackNavigator';
-import MainTabNavigator from './MainTabNavigator';
-import { useAuthStore } from '../store/authStore';
-import { colors, spacing } from '../theme/theme';
+import { RootStackParamList } from '@app-types/navigation';
+import { useAuthStore } from '@store/authStore';
+import { colors, spacing } from '@theme/theme';
+import MainTabNavigator from '@navigation/MainTabNavigator';
+import AuthStackNavigator from '@navigation/AuthStackNavigator';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 

@@ -3,9 +3,9 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
-import GlassCard from '../../shared/GlassCard';
-import { colors, spacing, radius, typography } from '../../../theme/theme';
-import { ActualEntry } from '../../../types/plan';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { ActualEntry } from '@app-types/plan';
 
 interface Props {
   pileCode: string;

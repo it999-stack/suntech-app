@@ -1,7 +1,7 @@
 // src/navigation/MainTabNavigator.tsx
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { MainTabParamList } from '../types/navigation';
+import { MainTabParamList } from '@app-types/navigation';
 import HomeStackNavigator from './HomeStackNavigator';
 import PilesStackNavigator from './PilesStackNavigator';
 import ProfileStackNavigator from './ProfileStackNavigator';

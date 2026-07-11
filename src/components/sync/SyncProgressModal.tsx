@@ -6,10 +6,10 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { Check, X as XIcon, RefreshCw } from 'lucide-react-native';
 import AppModal from '@/components/shared/AppModal';
-import { colors, spacing, radius, typography } from '../../theme/theme';
-import { useSyncStore } from '../../store/syncStore';
-import { getStepDoneLabel, TOTAL_SYNC_STEPS } from '../../sync/stepLabels';
-import { BOOTSTRAP_STEPS } from '../../sync/bootstrap/stepRegistry';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { useSyncStore } from '@store/syncStore';
+import { getStepDoneLabel, TOTAL_SYNC_STEPS } from '@sync/stepLabels';
+import { BOOTSTRAP_STEPS } from '@sync/bootstrap/stepRegistry';
 
 interface Props {
   visible: boolean;

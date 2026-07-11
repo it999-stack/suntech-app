@@ -1,5 +1,7 @@
 // src/types/siteSettings.ts
 
+import type { NonWorkingWindowBehavior } from '@/db/schema';
+
 export type Shift = {
   id: string;
   name: string;
@@ -13,6 +15,8 @@ export type NonWorkingWindow = {
   label: string;
   startMinutes: number;
   endMinutes: number;
+  /** How the planner treats this window: 'FIXED' (default) or 'AFTER_CURRENT_STEP'. */
+  behavior: NonWorkingWindowBehavior;
 };
 
 export type DiaDepthTemplate = {

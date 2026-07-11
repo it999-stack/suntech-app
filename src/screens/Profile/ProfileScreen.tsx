@@ -15,13 +15,13 @@ import {
   Info,
 } from 'lucide-react-native';
 
-import GlassCard from '../../components/shared/GlassCard';
+import GlassCard from '@components/shared/GlassCard';
 import SyncProgressModal from '@components/sync/SyncProgressModal';
-import { colors, spacing, radius, typography } from '../../theme/theme';
-import { ProfileStackParamList } from '../../types/navigation';
-import { useAuthStore } from '../../store/authStore';
-import { useSyncStore } from '../../store/syncStore';
-import { useSiteSettings } from '../../state/SiteSettingsContext';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { ProfileStackParamList } from '@app-types/navigation';
+import { useAuthStore } from '@store/authStore';
+import { useSyncStore } from '@store/syncStore';
+import { useSiteSettings } from '@state/SiteSettingsContext';
 
 const APP_VERSION = '0.1.0';
 

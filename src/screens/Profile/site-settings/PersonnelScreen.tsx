@@ -13,11 +13,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserCircle2 } from 'lucide-react-native';
 
-import { colors, spacing, radius, typography } from '../../../theme/theme';
-import GlassCard from '../../../components/shared/GlassCard';
-import { getPersonnelBySite } from '../../../repositories/personnelRepository';
-import { useAuthStore } from '../../../store/authStore';
-import type { PilingPersonnel } from '../../../db/schema';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import GlassCard from '@components/shared/GlassCard';
+import { getPersonnelBySite } from '@repositories/personnelRepository';
+import { useAuthStore } from '@store/authStore';
+import type { PilingPersonnel } from '@db/schema';
 
 function PersonnelCard({ person }: { person: PilingPersonnel }) {
   const isActive = person.isActive;

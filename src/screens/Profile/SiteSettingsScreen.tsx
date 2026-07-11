@@ -10,10 +10,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Clock, Layers, Wrench, ChevronRight, ListChecks, Users } from 'lucide-react-native';
 
-import GlassCard from '../../components/shared/GlassCard';
-import { colors, spacing, radius, typography } from '../../theme/theme';
-import { useSiteSettings } from '../../state/SiteSettingsContext';
-import { shiftDurationMinutes } from '../../types/siteSettings';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { useSiteSettings } from '@state/SiteSettingsContext';
+import { shiftDurationMinutes } from '@app-types/siteSettings';
 
 function MenuRow({
   icon,

@@ -8,26 +8,59 @@ import type { PlanStepWithMeta } from '@repositories/planRepository';
 export { formatDurationMinutes as formatMinutes } from '@/utils/formatTime';
 
 /**
- * Working time = sum of (durationMinutes + bufferMinutes) per step.
- * This correctly excludes non-working windows (lunch, shift change, etc.)
- * that were skipped by the planner when scheduling plannedStart/plannedEnd.
+ * Working time = total occupied time on the plan timeline.
  *
- * Falls back to (plannedEnd - plannedStart) for legacy rows where
- * durationMinutes is null — these will over-count break time, but that
- * only affects plans generated before this fix was deployed.
+ * Unlike summing every step duration, this merges overlapping work
+ * intervals across all machines so parallel work is only counted once.
+ *
+ * Example:
+ *
+ * Machine A: 08:00 ───── 12:00
+ * Machine B:      09:00 ───── 13:00
+ *
+ * Working = 5 hours
+ * NOT 8 hours.
  */
-export function computeWorkingMinutes(steps: PlanStepWithMeta[]): number {
-  return steps.reduce((sum, s) => {
-    if (s.durationMinutes !== null && s.durationMinutes !== undefined) {
-      // New rows: buffer + pure work time, no breaks included
-      return sum + s.durationMinutes + (s.bufferMinutes ?? 0);
+export function computeWorkingMinutes(
+  steps: PlanStepWithMeta[],
+): number {
+  const intervals = steps
+    .filter((s) => s.plannedStart && s.plannedEnd)
+    .map((s) => ({
+      start: new Date(s.plannedStart!).getTime(),
+      // Use pure work duration (durationMinutes + bufferMinutes) instead of
+      // plannedEnd so that FIXED non-working windows embedded inside a step's
+      // wall-clock span are NOT counted as working time.
+      end: new Date(s.plannedStart!).getTime() +
+        ((s.durationMinutes ?? 0) + (s.bufferMinutes ?? 0)) * 60_000,
+    }))
+    .filter((i) => i.end > i.start)
+    .sort((a, b) => a.start - b.start);
+
+  if (!intervals.length) return 0;
+
+  let total = 0;
+
+  let currentStart = intervals[0].start;
+  let currentEnd = intervals[0].end;
+
+  for (let i = 1; i < intervals.length; i++) {
+    const interval = intervals[i];
+
+    // Overlapping or touching interval
+    if (interval.start <= currentEnd) {
+      currentEnd = Math.max(currentEnd, interval.end);
+    } else {
+      total += currentEnd - currentStart;
+
+      currentStart = interval.start;
+      currentEnd = interval.end;
     }
-    // Legacy fallback: timestamp diff (may include break time)
-    if (!s.plannedStart || !s.plannedEnd) return sum;
-    const start = new Date(s.plannedStart).getTime();
-    const end = new Date(s.plannedEnd).getTime();
-    return sum + Math.max(0, (end - start) / 60000);
-  }, 0);
+  }
+
+  total += currentEnd - currentStart;
+
+  return Math.round(total / 60000);
 }
 
 /**

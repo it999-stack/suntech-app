@@ -1,14 +1,21 @@
 // src/screens/LoginScreen.tsx
 
 import { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  Pressable,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { HardHat } from 'lucide-react-native';
 
-import { colors, spacing, radius, typography, shadow } from '../../theme/theme';
-import { useAuthStore } from '../../store/authStore';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { useAuthStore } from '@store/authStore';
+import KeyboardAwareScreen from '@/components/shared/KeyboardAwareScreen';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -24,10 +31,7 @@ export default function LoginScreen() {
   return (
     <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
       <SafeAreaView style={styles.flex}>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        <KeyboardAwareScreen>
           <View style={styles.content}>
             <View style={styles.logoWrap}>
               <HardHat size={32} color={colors.accent} />
@@ -76,7 +80,7 @@ export default function LoginScreen() {
               </BlurView>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardAwareScreen>
       </SafeAreaView>
     </LinearGradient>
   );

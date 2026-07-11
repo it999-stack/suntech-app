@@ -2,8 +2,8 @@
 // Local SQLite access for cached piling_piles data.
 
 import { eq } from 'drizzle-orm';
-import { initDb } from '../db/client';
-import { pilingPiles, type NewPilingPile, type PilingPile } from '../db/schema';
+import { initDb } from '@db/client';
+import { pilingPiles, type NewPilingPile, type PilingPile } from '@db/schema';
 
 /**
  * Replace all piles for a site with a fresh batch from the server.

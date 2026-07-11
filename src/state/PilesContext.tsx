@@ -5,9 +5,9 @@
 // so they share the same loaded data without double-querying SQLite.
 
 import React, { createContext, useContext } from 'react';
-import { usePiles } from '../hooks/usePiles';
-import { useAuthStore } from '../store/authStore';
-import type { PilingPile } from '../db/schema';
+import { usePiles } from '@hooks/usePiles';
+import { useAuthStore } from '@store/authStore';
+import type { PilingPile } from '@db/schema';
 
 type PilesContextValue = {
   /** All piles for the user's site, loaded from local SQLite. */

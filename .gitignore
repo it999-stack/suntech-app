@@ -11,6 +11,9 @@ expo-env.d.ts
 
 # Native
 .kotlin/
+.kilo
+.idea
+.vscode/
 *.orig.*
 *.jks
 *.p8

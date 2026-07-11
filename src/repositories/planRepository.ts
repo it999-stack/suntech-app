@@ -1,8 +1,8 @@
 // src/repositories/planRepository.ts
 // CRUD helpers for pile_plan_steps and pile_actual_steps in local SQLite.
 
-import { eq, and } from 'drizzle-orm';
-import { initDb } from '../db/client';
+import { eq } from 'drizzle-orm';
+import { initDb } from '@db/client';
 import {
   pilePlanSteps,
   pileActualSteps,
@@ -13,8 +13,20 @@ import {
   type NewPilePlanStep,
   type PileActualStep,
   type NewPileActualStep,
-  type PilingStep,
-} from '../db/schema';
+} from '@db/schema';
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
+/** Fetch all checklist-pile ids for a checklist (shared by multiple queries). */
+async function getChecklistPileIds(checklistId: string): Promise<string[]> {
+  const db = await initDb();
+  const rows = await db
+    .select({ id: pilingChecklistPiles.id })
+    .from(pilingChecklistPiles)
+    .where(eq(pilingChecklistPiles.checklistId, checklistId))
+    .all();
+  return rows.map((r) => r.id);
+}
 
 // ─── Plan Steps ───────────────────────────────────────────────────────────────
 
@@ -46,22 +58,12 @@ export async function insertPlanSteps(steps: NewPilePlanStep[]): Promise<void> {
 /**
  * Delete all plan steps for a given checklist.
  * Used when regenerating a plan from scratch.
- * (Deletes via checklist_pile_id matching checklist_id.)
  */
-export async function deletePlanStepsForChecklist(
-  checklistId: string,
-): Promise<void> {
+export async function deletePlanStepsForChecklist(checklistId: string): Promise<void> {
   const db = await initDb();
-  // Fetch checklist_pile ids first, then delete their plan steps
-  const cpRows = await db
-    .select({ id: pilingChecklistPiles.id })
-    .from(pilingChecklistPiles)
-    .where(eq(pilingChecklistPiles.checklistId, checklistId))
-    .all();
-  for (const cp of cpRows) {
-    await db
-      .delete(pilePlanSteps)
-      .where(eq(pilePlanSteps.checklistPileId, cp.id));
+  const cpIds = await getChecklistPileIds(checklistId);
+  for (const cpId of cpIds) {
+    await db.delete(pilePlanSteps).where(eq(pilePlanSteps.checklistPileId, cpId));
   }
 }
 
@@ -81,7 +83,6 @@ export async function getPlanStepsForChecklistPile(
 
 /**
  * Get all plan steps for an entire checklist, joined with step metadata.
- * Returns rows grouped naturally by checklist_pile_id then step sequence.
  */
 export type PlanStepWithMeta = PilePlanStep & {
   stepName: string;
@@ -91,9 +92,9 @@ export type PlanStepWithMeta = PilePlanStep & {
   durationMinutes: number | null;
   /** Buffer before minutes for this step. Null for legacy rows; treat as 0. */
   bufferMinutes: number | null;
-  /** Machine (rig or crane) assigned to this step by the planner. Null for legacy rows. */
+  /** Machine assigned to this step by the planner. Null for legacy rows. */
   assignedMachineId: string | null;
-  /** Machine number label (e.g. "R-01") — joined from piling_machines. Empty string for legacy rows. */
+  /** Machine number label (e.g. "R-01") — joined from piling_machines. */
   assignedMachineNo: string;
 };
 
@@ -101,22 +102,13 @@ export async function getPlanStepsForChecklist(
   checklistId: string,
 ): Promise<PlanStepWithMeta[]> {
   const db = await initDb();
-
-  // Get checklist_pile ids for this checklist
-  const cpRows = await db
-    .select({ id: pilingChecklistPiles.id })
-    .from(pilingChecklistPiles)
-    .where(eq(pilingChecklistPiles.checklistId, checklistId))
-    .all();
-
-  if (!cpRows.length) return [];
+  const cpIds = await getChecklistPileIds(checklistId);
+  if (!cpIds.length) return [];
 
   const results: PlanStepWithMeta[] = [];
-
-  for (const cp of cpRows) {
+  for (const cpId of cpIds) {
     const rows = await db
       .select({
-      // plan step columns
         id: pilePlanSteps.id,
         checklistPileId: pilePlanSteps.checklistPileId,
         stepId: pilePlanSteps.stepId,
@@ -126,17 +118,15 @@ export async function getPlanStepsForChecklist(
         bufferMinutes: pilePlanSteps.bufferMinutes,
         assignedMachineId: pilePlanSteps.assignedMachineId,
         createdAt: pilePlanSteps.createdAt,
-        // step metadata
         stepName: pilingSteps.stepName,
         track: pilingSteps.track,
         sequenceOrder: pilingSteps.sequenceOrder,
-        // machine metadata (nullable join)
         assignedMachineNo: pilingMachines.machineNo,
       })
       .from(pilePlanSteps)
       .leftJoin(pilingSteps, eq(pilePlanSteps.stepId, pilingSteps.id))
       .leftJoin(pilingMachines, eq(pilePlanSteps.assignedMachineId, pilingMachines.id))
-      .where(eq(pilePlanSteps.checklistPileId, cp.id))
+      .where(eq(pilePlanSteps.checklistPileId, cpId))
       .orderBy(pilingSteps.sequenceOrder)
       .all();
 
@@ -213,18 +203,11 @@ export async function getActualStepsForChecklist(
   checklistId: string,
 ): Promise<ActualStepWithMeta[]> {
   const db = await initDb();
-
-  const cpRows = await db
-    .select({ id: pilingChecklistPiles.id })
-    .from(pilingChecklistPiles)
-    .where(eq(pilingChecklistPiles.checklistId, checklistId))
-    .all();
-
-  if (!cpRows.length) return [];
+  const cpIds = await getChecklistPileIds(checklistId);
+  if (!cpIds.length) return [];
 
   const results: ActualStepWithMeta[] = [];
-
-  for (const cp of cpRows) {
+  for (const cpId of cpIds) {
     const rows = await db
       .select({
         id: pileActualSteps.id,
@@ -241,7 +224,7 @@ export async function getActualStepsForChecklist(
       })
       .from(pileActualSteps)
       .leftJoin(pilingSteps, eq(pileActualSteps.stepId, pilingSteps.id))
-      .where(eq(pileActualSteps.checklistPileId, cp.id))
+      .where(eq(pileActualSteps.checklistPileId, cpId))
       .orderBy(pilingSteps.sequenceOrder)
       .all();
 
@@ -268,18 +251,10 @@ export async function getActualStepsForChecklist(
 /**
  * Delete all actual steps for a given checklist (via checklist_pile_id).
  */
-export async function deleteActualStepsForChecklist(
-  checklistId: string,
-): Promise<void> {
+export async function deleteActualStepsForChecklist(checklistId: string): Promise<void> {
   const db = await initDb();
-  const cpRows = await db
-    .select({ id: pilingChecklistPiles.id })
-    .from(pilingChecklistPiles)
-    .where(eq(pilingChecklistPiles.checklistId, checklistId))
-    .all();
-  for (const cp of cpRows) {
-    await db
-      .delete(pileActualSteps)
-      .where(eq(pileActualSteps.checklistPileId, cp.id));
+  const cpIds = await getChecklistPileIds(checklistId);
+  for (const cpId of cpIds) {
+    await db.delete(pileActualSteps).where(eq(pileActualSteps.checklistPileId, cpId));
   }
 }

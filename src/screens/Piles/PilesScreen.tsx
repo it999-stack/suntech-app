@@ -9,15 +9,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import SearchBar from '../../components/piles/SearchBar';
-import PileFilterBar, { PileFilterKey } from '../../components/piles/PileFilterBar';
-import PileAccordionItem, { PileItemData } from '../../components/piles/PileAccordionItem';
-import { colors, spacing, radius, typography, shadow } from '../../theme/theme';
-import { usePilesContext } from '../../state/PilesContext';
-import { usePlan } from '../../state/PlanContext';
-import { useAuthStore } from '../../store/authStore';
-import { getMachinesBySite } from '../../repositories/machinesRepository';
-import type { PilesStackParamList } from '../../types/navigation';
+import SearchBar from '@components/piles/SearchBar';
+import PileFilterBar, { PileFilterKey } from '@components/piles/PileFilterBar';
+import PileAccordionItem, { PileItemData } from '@components/piles/PileAccordionItem';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { usePilesContext } from '@state/PilesContext';
+import { usePlan } from '@state/PlanContext';
+import { useAuthStore } from '@store/authStore';
+import { getMachinesBySite } from '@repositories/machinesRepository';
+import type { PilesStackParamList } from '@app-types/navigation';
 
 type Props = NativeStackScreenProps<PilesStackParamList, 'PilesScreen'>;
 

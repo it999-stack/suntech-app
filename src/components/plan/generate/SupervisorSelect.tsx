@@ -3,9 +3,9 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { CheckCircle2, Circle } from 'lucide-react-native';
-import GlassCard from '../../shared/GlassCard';
-import { colors, spacing, typography } from '../../../theme/theme';
-import { AVAILABLE_SUPERVISORS } from '../../../types/plan';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, typography } from '@theme/theme';
+import { AVAILABLE_SUPERVISORS } from '@app-types/plan';
 
 interface SupervisorSelectProps {
   supervisor: string | null;

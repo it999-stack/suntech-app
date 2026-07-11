@@ -7,7 +7,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, Modal, ScrollView, ViewStyle } from 'react-native';
 import { X } from 'lucide-react-native';
-import { colors, spacing, radius, typography, shadow } from '../../theme/theme';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 
 interface Props {
   visible: boolean;

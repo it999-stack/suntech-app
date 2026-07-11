@@ -4,12 +4,12 @@
 // Direction: server → app
 // Server endpoint: GET /piling/sites/:siteId/personnel
 
-import type { ISyncStep } from '../bootstrap/ISyncStep';
-import type { SyncContext } from '../bootstrap/syncContext';
-import type { StepResult } from '../bootstrap/syncResult';
-import { apiClient } from '../../services/apiClient';
-import { savePersonnel } from '../../repositories/personnelRepository';
-import type { NewPilingPersonnel } from '../../db/schema';
+import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
+import type { SyncContext } from '@sync/bootstrap/syncContext';
+import type { StepResult } from '@sync/bootstrap/syncResult';
+import { apiClient } from '@services/apiClient';
+import { savePersonnel } from '@repositories/personnelRepository';
+import type { NewPilingPersonnel } from '@db/schema';
 
 export class SyncPersonnelStep implements ISyncStep {
   readonly name = 'personnel';

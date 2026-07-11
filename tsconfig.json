@@ -9,7 +9,15 @@
       "@navigation/*": ["./src/navigation/*"],
       "@repositories/*": ["./src/repositories/*"],
       "@services/*": ["./src/services/*"],
-      "@state/*": ["./src/state/*"]
+      "@state/*": ["./src/state/*"],
+      "@theme/*": ["./src/theme/*"],
+      "@utils/*": ["./src/utils/*"],
+      "@app-types/*": ["./src/types/*"],
+      "@store/*": ["./src/store/*"],
+      "@sync/*": ["./src/sync/*"],
+      "@db/*": ["./src/db/*"],
+      "@config/*": ["./src/config/*"],
+      "@hooks/*": ["./src/hooks/*"]
     }
   }
 }

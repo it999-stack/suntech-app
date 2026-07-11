@@ -13,31 +13,29 @@ import React, {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
 } from 'react';
 import {
   getChecklistByDate,
-  getChecklistById,
   getChecklistPiles,
   insertChecklist,
   updateChecklist,
   insertChecklistPiles,
   deleteChecklistPiles,
-} from '../repositories/checklistRepository';
+} from '@repositories/checklistRepository';
 import {
   getPlanStepsForChecklist,
   getActualStepsForChecklist,
   upsertActualStep,
   type PlanStepWithMeta,
   type ActualStepWithMeta,
-} from '../repositories/planRepository';
-import { generatePlan as runPlanner } from '../services/pilingPlannerService';
+} from '@repositories/planRepository';
+import { generatePlan as runPlanner } from '@services/pilingPlannerService';
 import type {
   PilingDailyChecklist,
   PilingChecklistPile,
-} from '../db/schema';
+} from '@db/schema';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -65,8 +63,10 @@ export type GeneratePlanInput = {
   /** pilingPersonnel.id of the night/shift-2 supervisor on duty. */
   supervisorId2: string | null;
   /** Ordered list of piles + machine assignments. */
-  piles: PileAssignmentInput[];  /** Ordered list of selected step ids to include in this plan. */
-  stepIds: string[];};
+  piles: PileAssignmentInput[];
+  /** Ordered list of selected step ids to include in this plan. */
+  stepIds: string[];
+};
 
 type PlanContextValue = {
   /** Checklist for the currently loaded date. */
@@ -96,7 +96,7 @@ type PlanContextValue = {
 
 const PlanContext = createContext<PlanContextValue | undefined>(undefined);
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function generateUuid(): string {
   return 'cl_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
@@ -104,10 +104,10 @@ function generateUuid(): string {
 
 function checklistStatusToPlanStatus(status: string): PlanStatus {
   switch (status) {
-    case 'PLANNED': return 'planned';
+    case 'PLANNED':     return 'planned';
     case 'IN_PROGRESS': return 'in_progress';
-    case 'COMPLETED': return 'completed';
-    default: return 'none';
+    case 'COMPLETED':   return 'completed';
+    default:            return 'none';
   }
 }
 
@@ -161,12 +161,13 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       try {
         const now = Date.now();
 
-        // 1. Get or create the checklist for this date
+        // 1. Get or create the checklist for this date.
+        //    Build the object directly from known data — no extra DB round-trip.
         let cl = await getChecklistByDate(siteId, input.date);
 
         if (!cl) {
           const newId = generateUuid();
-          await insertChecklist({
+          const newChecklist: PilingDailyChecklist = {
             id: newId,
             siteId,
             date: input.date,
@@ -179,11 +180,11 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             status: 'PLANNED',
             createdAt: now,
             updatedAt: now,
-          });
-          cl = await getChecklistByDate(siteId, input.date);
+          };
+          await insertChecklist(newChecklist);
+          cl = newChecklist;
         } else {
-          // Update existing checklist
-          await updateChecklist(cl.id, {
+          const updates = {
             shiftTypeId: null,
             planStartTime: input.planStartTime,
             planEndTime: input.planEndTime,
@@ -191,11 +192,11 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             supervisorId2: input.supervisorId2,
             status: 'PLANNED',
             updatedAt: now,
-          });
-          cl = await getChecklistByDate(siteId, input.date);
+          };
+          await updateChecklist(cl.id, updates);
+          // Merge updates into the local object — no re-fetch needed
+          cl = { ...cl, ...updates };
         }
-
-        if (!cl) throw new Error('Failed to create checklist');
 
         // 2. Replace pile assignments
         await deleteChecklistPiles(cl.id);
@@ -211,19 +212,19 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         }));
         await insertChecklistPiles(cpEntries);
 
-        // 3. Run the local planner — uses ALL non-working windows for the site automatically
+        // 3. Run the local planner — each pile is scheduled on its assigned
+        //    rig/crane (persisted on pilingChecklistPiles) and serialised if a
+        //    machine is reused.
         await runPlanner({
           checklistId: cl.id,
           planStartTime: input.planStartTime,
           siteId,
           selectedStepIds: input.stepIds,
-          rigMachineIds: [...new Set(input.piles.map((p) => p.rigId))],
-          craneMachineIds: [...new Set(input.piles.map((p) => p.craneId))],
         });
 
-        // 4. Reload state
-        await loadChecklist(siteId, input.date);
+        // 4. Reload state from DB (plan steps + actuals + piles)
         setChecklist(cl);
+        await loadChecklist(siteId, input.date);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to generate plan');
         throw err;
@@ -243,24 +244,19 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       field: 'actualStart' | 'actualEnd',
       isoTimestamp: string,
     ) => {
-      // Find existing actual to merge with
       const existing = actualSteps.find(
         (a) => a.checklistPileId === checklistPileId && a.stepId === stepId,
       );
 
-      const id = existing?.id ?? generateUuid();
-      const entry = {
-        id,
+      await upsertActualStep({
+        id: existing?.id ?? generateUuid(),
         checklistPileId,
         stepId,
         actualStart: field === 'actualStart' ? isoTimestamp : (existing?.actualStart ?? null),
         actualEnd: field === 'actualEnd' ? isoTimestamp : (existing?.actualEnd ?? null),
         remarks: existing?.remarks ?? null,
-      };
+      });
 
-      await upsertActualStep(entry);
-
-      // Refresh actuals in state
       if (checklist) {
         const refreshed = await getActualStepsForChecklist(checklist.id);
         setActualSteps(refreshed);

@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
-import { login as loginRequest, getMe, AuthUser } from '../services/authService';
+import { login as loginRequest, getMe, AuthUser } from '@services/authService';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';

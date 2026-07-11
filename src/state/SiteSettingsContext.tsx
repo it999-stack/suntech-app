@@ -5,8 +5,9 @@
 // app restarts and can be pushed to the server by SyncShiftsStep.
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Shift, NonWorkingWindow, DiaDepthTemplate } from '../types/siteSettings';
-import { getDimensionsBySite } from '../repositories/dimensionsRepository';
+import { Shift, NonWorkingWindow, DiaDepthTemplate } from '@app-types/siteSettings';
+import type { NonWorkingWindowBehavior } from '@db/schema';
+import { getDimensionsBySite } from '@repositories/dimensionsRepository';
 import {
   getAllShiftTypes,
   getNonWorkingWindowsBySite,
@@ -14,8 +15,8 @@ import {
   deleteShiftType,
   upsertNonWorkingWindow,
   deleteNonWorkingWindow,
-} from '../repositories/shiftsRepository';
-import { useAuthStore } from '../store/authStore';
+} from '@repositories/shiftsRepository';
+import { useAuthStore } from '@store/authStore';
 
 /** Convert "HH:MM" string to minutes-since-midnight. */
 function timeToMinutes(t: string): number {
@@ -32,6 +33,7 @@ type SiteSettingsContextValue = {
   deleteShift: (id: string) => void;
   windowsForShift: (shiftId: string) => NonWorkingWindow[];
   addWindow: (input: Omit<NonWorkingWindow, 'id'>) => void;
+  updateWindow: (id: string, input: Partial<Omit<NonWorkingWindow, 'id'>>) => void;
   deleteWindow: (id: string) => void;
   addTemplate: (input: Omit<DiaDepthTemplate, 'id'>) => void;
   deleteTemplate: (id: string) => void;
@@ -69,6 +71,7 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
     try {
       // Non-working windows for this site
       const windowRows = await getNonWorkingWindowsBySite(siteId);
+      console.log('Loaded non-working windows from DB:', windowRows);
       setWindows(
         windowRows.map((w) => ({
           id: w.id,
@@ -76,6 +79,7 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
           label: w.label,
           startMinutes: timeToMinutes(w.startTime),
           endMinutes: timeToMinutes(w.endTime),
+          behavior: (w.behavior) as NonWorkingWindowBehavior,
         }))
       );
     } catch (err) {
@@ -170,6 +174,7 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
       label: input.label,
       startTime: minutesToTime(input.startMinutes),
       endTime: minutesToTime(input.endMinutes),
+      behavior: input.behavior,
       syncedAt: Date.now(),
     }).catch((err) => console.warn('[SiteSettings] Failed to persist non-working window:', err));
   };
@@ -179,6 +184,27 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
     // Write-through to SQLite
     deleteNonWorkingWindow(id).catch((err) =>
       console.warn('[SiteSettings] Failed to delete non-working window:', err)
+    );
+  };
+
+  const updateWindow = (id: string, input: Partial<Omit<NonWorkingWindow, 'id'>>) => {
+    setWindows((prev) =>
+      prev.map((w) => {
+        if (w.id !== id) return w;
+        const updated = { ...w, ...input };
+        // Write-through to SQLite
+        upsertNonWorkingWindow({
+          id,
+          siteId: user?.siteId ?? '',
+          shiftTypeId: updated.shiftId,
+          label: updated.label,
+          startTime: minutesToTime(updated.startMinutes),
+          endTime: minutesToTime(updated.endMinutes),
+          behavior: updated.behavior,
+          syncedAt: Date.now(),
+        }).catch((err) => console.warn('[SiteSettings] Failed to update non-working window:', err));
+        return updated;
+      })
     );
   };
 
@@ -200,6 +226,7 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
       deleteShift,
       windowsForShift,
       addWindow,
+      updateWindow,
       deleteWindow,
       addTemplate,
       deleteTemplate,

@@ -2,8 +2,8 @@
 // Local SQLite access for cached piling_dimensions data.
 
 import { eq } from 'drizzle-orm';
-import { initDb } from '../db/client';
-import { pilingDimensions, type NewPilingDimension, type PilingDimension } from '../db/schema';
+import { initDb } from '@db/client';
+import { pilingDimensions, type NewPilingDimension, type PilingDimension } from '@db/schema';
 
 /**
  * Replace all dimensions for a site with a fresh batch from the server.

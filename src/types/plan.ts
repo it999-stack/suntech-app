@@ -67,7 +67,7 @@ export {
   formatPlanTime as fmtPlanTime,
   formatTime as fmtTime,
   formatDuration as fmtDuration,
-} from '../utils/formatTime';
+} from '@utils/formatTime';
 
 /** Default draft for a new plan. */
 export function defaultPlanDraft(today: string): PlanDraft {

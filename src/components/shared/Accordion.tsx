@@ -9,7 +9,7 @@ import React, { useState } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import GlassCard from './GlassCard';
-import { spacing } from '../../theme/theme';
+import { spacing } from '@theme/theme';
 
 interface AccordionProps {
   /** Content rendered inside the tappable header row (before the chevron). */

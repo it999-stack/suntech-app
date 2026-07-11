@@ -6,9 +6,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { CheckCircle2, Circle, TrendingDown, TrendingUp } from 'lucide-react-native';
-import GlassCard from '../../components/shared/GlassCard';
-import { colors, spacing, radius, typography, shadow } from '../../theme/theme';
-import { HomeStackParamList } from '../../types/navigation';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { HomeStackParamList } from '@app-types/navigation';
 
 type PlanDetailRouteProp = RouteProp<HomeStackParamList, 'PlanDetail'>;
 type Tab = 'timeline' | 'gap';

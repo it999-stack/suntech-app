@@ -1,6 +1,5 @@
 // src/components/plan/generate/ProgressHeader.tsx
 
-import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
@@ -68,16 +67,20 @@ export default function ProgressHeader({ step, onBack, onNext, nextDisabled }: P
           <View style={styles.sideBtnPlaceholder} />
         )}
       </View>
-      <Text style={styles.stepLabel}>
-        Step {idx + 1} of {total} · {STEP_LABEL[step]}
-      </Text>
-      <View style={styles.progressTrack}>
-        <View
-          style={[
-            styles.progressFill,
-            { width: `${((idx + 1) / total) * 100}%` },
-          ]}
-        />
+
+      <View style={styles.progressWrapper}>
+
+        <Text style={styles.stepLabel}>
+          Step {idx + 1} of {total} · {STEP_LABEL[step]}
+        </Text>
+        <View style={styles.progressTrack}>
+          <View
+            style={[
+              styles.progressFill,
+              { width: `${((idx + 1) / total) * 100}%` },
+            ]}
+          />
+        </View>
       </View>
     </View>
   );
@@ -106,6 +109,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: spacing.sm,
+  },
+
+  progressWrapper: {
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.xs,
   },
   progressTrack: {
     height: 6,

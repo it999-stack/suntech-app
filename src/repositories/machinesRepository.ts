@@ -2,12 +2,12 @@
 // CRUD helpers for piling_machines in local SQLite.
 
 import { eq, and } from 'drizzle-orm';
-import { initDb } from '../db/client';
+import { initDb } from '@db/client';
 import {
   pilingMachines,
   type NewPilingMachine,
   type PilingMachine,
-} from '../db/schema';
+} from '@db/schema';
 
 /**
  * Upsert a batch of machines (replace on conflict by primary key).

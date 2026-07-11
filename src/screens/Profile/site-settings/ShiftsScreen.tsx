@@ -7,13 +7,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { ChevronLeft, Clock, ChevronRight, Plus } from 'lucide-react-native';
 
-import GlassCard from '../../../components/shared/GlassCard';
-import AppModal from '../../../components/shared/AppModal';
-import TimeStepper from '../../../components/shared/TimeStepper';
-import { formatMinutes } from '../../../utils/formatTime';
-import { colors, spacing, radius, typography } from '../../../theme/theme';
-import { useSiteSettings } from '../../../state/SiteSettingsContext';
-import { shiftDurationMinutes } from '../../../types/siteSettings';
+import GlassCard from '@components/shared/GlassCard';
+import AppModal from '@components/shared/AppModal';
+import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import { formatMinutes } from '@utils/formatTime';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { useSiteSettings } from '@state/SiteSettingsContext';
+import { shiftDurationMinutes } from '@app-types/siteSettings';
 
 export default function ShiftsScreen() {
   const navigation = useNavigation<any>();
@@ -24,6 +24,9 @@ export default function ShiftsScreen() {
 
   const [startMinutes, setStartMinutes] = useState(7 * 60);
   const [endMinutes, setEndMinutes] = useState(19 * 60);
+
+  const [startPickerOpen, setStartPickerOpen] = useState(false);
+  const [endPickerOpen, setEndPickerOpen] = useState(false);
 
   // When the modal opens, seed start = last shift's end (or 07:00); end = start + 12 h
   useEffect(() => {
@@ -114,10 +117,14 @@ export default function ShiftsScreen() {
         />
 
         <View style={{ marginTop: spacing.md }}>
-          <TimeStepper minutes={startMinutes} onChange={handleStartChange} step={30} label="Shift Start" />
+          <Pressable style={styles.timePickerBtn} onPress={() => setStartPickerOpen(true)}>
+            <Text style={styles.timePickerBtnText}>{formatMinutes(startMinutes)}</Text>
+          </Pressable>
         </View>
         <View style={{ marginTop: spacing.md }}>
-          <TimeStepper minutes={endMinutes} onChange={setEndMinutes} step={30} label="Shift End" />
+          <Pressable style={styles.timePickerBtn} onPress={() => setEndPickerOpen(true)}>
+            <Text style={styles.timePickerBtnText}>{formatMinutes(endMinutes)}</Text>
+          </Pressable>
         </View>
 
         <Pressable
@@ -128,6 +135,25 @@ export default function ShiftsScreen() {
           <Text style={styles.saveButtonText}>Save shift</Text>
         </Pressable>
       </AppModal>
+
+      <TimerSelectMenu
+        visible={startPickerOpen}
+        onClose={() => setStartPickerOpen(false)}
+        onTimeSelect={(date) => {
+          const m = date.getHours() * 60 + date.getMinutes();
+          handleStartChange(m);
+        }}
+        initialDate={(() => { const d = new Date(); d.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0); return d; })()}
+      />
+      <TimerSelectMenu
+        visible={endPickerOpen}
+        onClose={() => setEndPickerOpen(false)}
+        onTimeSelect={(date) => {
+          const m = date.getHours() * 60 + date.getMinutes();
+          setEndMinutes(m);
+        }}
+        initialDate={(() => { const d = new Date(); d.setHours(Math.floor(endMinutes / 60), endMinutes % 60, 0, 0); return d; })()}
+      />
     </LinearGradient>
   );
 }
@@ -233,5 +259,17 @@ const styles = StyleSheet.create({
     ...typography.body,
     fontWeight: '700',
     color: colors.white,
+  },
+  timePickerBtn: {
+    backgroundColor: 'rgba(28,28,46,0.06)',
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+  },
+  timePickerBtnText: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.textSecondary,
   },
 });

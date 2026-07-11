@@ -1,16 +1,20 @@
 // src/components/plan/generate/steps/StartTimeStep.tsx
 //
-// Step 2 — the user picks a plan date and start time.
-// Start time is selected via the shared TimeStepper (− / + 30 min, tap-to-type).
-// The 24-hour plan window is shown live above the pickers.
+// Step 2 — the user picks a plan start time.
+// Two blocks now: a compact pressable "Start" card (date + time, opens
+// TimerSelectMenu), and below it a vertical timeline card that visualizes
+// the fixed 24-hour span down to the derived end.
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Calendar, Clock } from 'lucide-react-native';
+import { Calendar, ChevronRight, Clock } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
-import TimeStepper from '@components/shared/TimeStepper';
+import TimerSelectMenu from '@/components/shared/TimerSelectMenu';
+import { TimelineStopLog } from '@/components/shared/timeline/MachineStopTimeline';
 import { colors, spacing, radius, typography } from '@/theme/theme';
-import { type PlanDraft, planEndTime, fmtPlanTime } from '@/types/plan';
+import { type PlanDraft, planEndTime } from '@/types/plan';
+import type { TimelineStop } from '@/types/timeline';
+import { formatTime } from '@/utils/formatTime';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,20 +25,24 @@ function toLocalDateStr(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Convert an ISO timestamp to minutes-since-midnight (local). */
-function isoToMinutes(iso: string): number {
-  const d = new Date(iso);
-  return d.getHours() * 60 + d.getMinutes();
+/** Build an ISO timestamp from a Date object (used directly from the wheel picker). */
+function dateToIso(d: Date): string {
+  return d.toISOString();
 }
 
-/** Build an ISO timestamp from a YYYY-MM-DD date string and minutes-since-midnight. */
-function minutesToIso(date: string, mins: number): string {
-  const [y, mo, d] = date.split('-').map(Number);
-  const clampedMins = ((mins % 1440) + 1440) % 1440;
-  const h = Math.floor(clampedMins / 60);
-  const m = clampedMins % 60;
-  const dt = new Date(y, mo - 1, d, h, m, 0, 0);
-  return dt.toISOString();
+/**
+ * "Today" / "Tomorrow" / "Jul 13" label for an ISO timestamp, relative to now.
+ * Not in formatTime.ts (which only formats absolute dates) — kept local since
+ * it's specific to this banner's relative-day framing.
+ */
+function fmtPlanDate(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const tomorrow = new Date();
+  tomorrow.setDate(today.getDate() + 1);
+  if (toLocalDateStr(d) === toLocalDateStr(today)) return 'Today';
+  if (toLocalDateStr(d) === toLocalDateStr(tomorrow)) return 'Tomorrow';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -45,76 +53,82 @@ interface StartTimeStepProps {
 }
 
 export default function StartTimeStep({ draft, onUpdate }: StartTimeStepProps) {
-  const today = toLocalDateStr(new Date());
-  const tomorrow = (() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return toLocalDateStr(d);
-  })();
-
-  const currentMinutes = isoToMinutes(draft.planStartTime);
   const endIso = planEndTime(draft.planStartTime);
+  const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const windowStops = useMemo<TimelineStop[]>(
+    () => [
+      {
+        id: 'plan-window',
+        kind: 'active',
+        kindLabel: 'Start',
+        title: `${fmtPlanDate(draft.planStartTime)}, ${formatTime(draft.planStartTime)}`,
+        start: new Date(draft.planStartTime).getTime(),
+        end: new Date(endIso).getTime(),
+      },
+      {
+        id: 'plan-end',
+        kind: 'idle',
+        kindLabel: 'End',
+        title: `${fmtPlanDate(endIso)}, ${formatTime(endIso)}`,
+        subtitle: 'Plan window ends automatically',
+        showDuration: false,
+        start: new Date(endIso).getTime(),
+        end: new Date(endIso).getTime(),
+      },
+    ],
+    [draft.planStartTime, endIso],
+  );
 
-  function selectDate(date: string) {
-    // Keep the same time-of-day when switching date
-    onUpdate({ date, planStartTime: minutesToIso(date, currentMinutes) });
-  }
-
-  function handleTimeChange(mins: number) {
-    onUpdate({ planStartTime: minutesToIso(draft.date, mins) });
+  function handleTimeChange(picked: Date) {
+    onUpdate({
+      date: toLocalDateStr(picked),
+      planStartTime: dateToIso(picked),
+    });
   }
 
   return (
     <>
-      {/* 24-hour window banner */}
-      <GlassCard innerStyle={styles.bannerPad}>
-        <View style={styles.bannerRow}>
-          <Clock size={18} color={colors.accent} />
-          <Text style={styles.bannerLabel}>24-Hour Plan Window</Text>
-        </View>
-        <View style={styles.windowRow}>
-          <View style={styles.windowBlock}>
-            <Text style={styles.windowTime}>{fmtPlanTime(draft.planStartTime)}</Text>
-            <Text style={styles.windowSub}>Start</Text>
-          </View>
-          <Text style={styles.windowArrow}>→</Text>
-          <View style={styles.windowBlock}>
-            <Text style={styles.windowTime}>{fmtPlanTime(endIso)}</Text>
-            <Text style={styles.windowSub}>End (+24 h)</Text>
-          </View>
-        </View>
-      </GlassCard>
+      {/* Compact Start card — the single tap target that opens the wheel picker */}
+      <Pressable onPress={() => setTimePickerOpen(true)}>
+        {({ pressed }) => (
+          <GlassCard innerStyle={[styles.startPad, pressed && styles.startPadPressed]}>
+            <View style={styles.startRow}>
+              <View style={styles.startIconWrap}>
+                <Calendar size={20} color={colors.accent} />
+              </View>
+              <View style={styles.startTextWrap}>
+                <Text style={styles.startLabel}>Start</Text>
+                <Text style={styles.startValue}>
+                  {fmtPlanDate(draft.planStartTime)}, {formatTime(draft.planStartTime)}
+                </Text>
+              </View>
+              <ChevronRight size={18} color={colors.textSecondary} />
+            </View>
+          </GlassCard>
+        )}
+      </Pressable>
 
-      {/* Date selection */}
-      <GlassCard innerStyle={styles.sectionPad}>
-        <View style={styles.sectionHeader}>
-          <Calendar size={16} color={colors.accent} />
-          <Text style={styles.sectionLabel}>Plan Date</Text>
-        </View>
-        <View style={styles.chipRow}>
-          {[today, tomorrow].map((d) => (
-            <Pressable
-              key={d}
-              style={[styles.dateChip, draft.date === d && styles.dateChipActive]}
-              onPress={() => selectDate(d)}
-            >
-              <Text style={[styles.dateChipText, draft.date === d && styles.dateChipTextActive]}>
-                {d === today ? 'Today' : 'Tomorrow'}
-              </Text>
-              <Text style={[styles.dateChipSub, draft.date === d && styles.dateChipSubActive]}>
-                {d}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </GlassCard>
+      {/* Uses the same stop-log component and card treatment as the machine timeline. */}
+      <Pressable onPress={() => setTimePickerOpen(true)}>
+        {({ pressed }) => (
+          <GlassCard borderless innerStyle={[styles.timelinePad, pressed && styles.timelinePadPressed]}>
+            <View style={styles.timelineHeader}>
+              <Clock size={16} color={colors.accent} />
+              <View>
+                <Text style={styles.timelineTitle}>Plan Timeline</Text>
+                <Text style={styles.timelineSubtitle}>24-hour window · tap to change start time</Text>
+              </View>
+            </View>
+            <TimelineStopLog stops={windowStops} activeColor={colors.accent} />
+          </GlassCard>
+        )}
+      </Pressable>
 
-      {/* Time picker — reuses TimeStepper */}
-      <TimeStepper
-        label="Start Time"
-        minutes={currentMinutes}
-        onChange={handleTimeChange}
-        step={30}
+      <TimerSelectMenu
+        visible={timePickerOpen}
+        onClose={() => setTimePickerOpen(false)}
+        onTimeSelect={handleTimeChange}
+        initialDate={new Date(draft.planStartTime)}
       />
     </>
   );
@@ -123,81 +137,126 @@ export default function StartTimeStep({ draft, onUpdate }: StartTimeStepProps) {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  bannerPad: { padding: spacing.lg },
-  bannerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.md,
-  },
-  bannerLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.accent,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  windowRow: {
+  // Start card
+  startPad: { padding: spacing.lg },
+  startPadPressed: { backgroundColor: 'rgba(28,28,46,0.04)' },
+  startRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
   },
-  windowBlock: { flex: 1 },
-  windowTime: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  windowSub: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  windowArrow: {
-    ...typography.h2,
-    color: colors.textSecondary,
-  },
-
-  sectionPad: { padding: spacing.lg },
-  sectionHeader: {
-    flexDirection: 'row',
+  startIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentSoft,
     alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.sm,
+    justifyContent: 'center',
   },
-  sectionLabel: {
+  startTextWrap: { flex: 1 },
+  startLabel: {
     ...typography.caption,
     fontWeight: '700',
     color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  startValue: {
+    ...typography.body,
+    fontWeight: '700',
+    fontSize: 17,
+    color: colors.textPrimary,
   },
 
-  chipRow: { flexDirection: 'row', gap: spacing.sm },
-  dateChip: {
-    flex: 1,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-    backgroundColor: 'rgba(28,28,46,0.06)',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+  // Timeline card
+  timelinePad: { padding: spacing.lg, marginTop: spacing.md },
+  timelinePadPressed: { backgroundColor: 'rgba(28,28,46,0.04)' },
+  timelineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  timelineTitle: { ...typography.body, fontWeight: '800', color: colors.textPrimary },
+  timelineSubtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  timelineRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  timelineRail: {
+    width: 16,
     alignItems: 'center',
   },
-  dateChipActive: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
+  dotStart: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.accent,
+    marginTop: 4,
   },
-  dateChipText: {
+  dotEnd: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    backgroundColor: 'rgba(28,28,46,0.25)',
+    marginBottom: 4,
+  },
+  railLine: {
+    width: 1.5,
+    flex: 1,
+    minHeight: 18,
+    backgroundColor: 'rgba(28,28,46,0.15)',
+  },
+  lockWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(28,28,46,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 2,
+  },
+  timelineTextCol: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  timelineEntry: {},
+  timelineEntryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 3,
+  },
+  timelineEntryLabel: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.accent,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    fontSize: 11,
+  },
+  timelineEntryLabelMuted: { color: colors.textSecondary },
+  timelineEntryValue: {
     ...typography.body,
     fontWeight: '600',
     color: colors.textPrimary,
   },
-  dateChipTextActive: { color: colors.accent },
-  dateChipSub: {
+  timelineEntryValueMuted: {
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  durationPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(28,28,46,0.05)',
+    marginVertical: spacing.sm,
+  },
+  durationPillText: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
+    fontSize: 11,
   },
-  dateChipSubActive: { color: colors.accent },
 });

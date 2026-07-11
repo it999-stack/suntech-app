@@ -3,17 +3,22 @@
 // piling_checklist_personnel in local SQLite.
 
 import { eq, and } from 'drizzle-orm';
-import { initDb } from '../db/client';
+import { initDb } from '@db/client';
 import {
   pilingDailyChecklists,
   pilingChecklistPiles,
   pilingChecklistPersonnel,
+  pilePlanSteps,
+  pileActualSteps,
   type PilingDailyChecklist,
   type NewPilingDailyChecklist,
   type PilingChecklistPile,
   type NewPilingChecklistPile,
+  type PilingChecklistPersonnel,
   type NewPilingChecklistPersonnel,
-} from '../db/schema';
+  type PilePlanStep,
+  type PileActualStep,
+} from '@db/schema';
 
 // ─── Daily Checklists ─────────────────────────────────────────────────────────
 

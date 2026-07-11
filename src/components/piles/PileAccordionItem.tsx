@@ -7,10 +7,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Cpu, Truck } from 'lucide-react-native';
-import { formatTimeRange } from '../../utils/formatTime';
-import Accordion from '../shared/Accordion';
-import GlassCard from '../shared/GlassCard';
-import { colors, spacing, radius, typography } from '../../theme/theme';
+import { formatTimeRange } from '@utils/formatTime';
+import Accordion from '@components/shared/Accordion';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, radius, typography } from '@theme/theme';
 
 export type Track = 'RIG' | 'CRANE';
 export type StepStatus = 'done' | 'upcoming';

@@ -1,8 +1,8 @@
 // src/repositories/shiftsRepository.ts
 // CRUD helpers for piling_shift_types and piling_non_working_windows in local SQLite.
 
-import { eq, and } from 'drizzle-orm';
-import { initDb } from '../db/client';
+import { eq, and, sql } from 'drizzle-orm';
+import { initDb } from '@db/client';
 import {
   pilingShiftTypes,
   pilingNonWorkingWindows,
@@ -10,7 +10,8 @@ import {
   type NewPilingNonWorkingWindow,
   type PilingShiftType,
   type PilingNonWorkingWindow,
-} from '../db/schema';
+  type NonWorkingWindowBehavior,
+} from '@db/schema';
 
 // ─── Shift Types ──────────────────────────────────────────────────────────────
 
@@ -27,10 +28,10 @@ export async function saveShiftTypes(rows: NewPilingShiftType[]): Promise<void> 
     .onConflictDoUpdate({
       target: pilingShiftTypes.id,
       set: {
-        name: pilingShiftTypes.name,
-        startTime: pilingShiftTypes.startTime,
-        endTime: pilingShiftTypes.endTime,
-        syncedAt: pilingShiftTypes.syncedAt,
+        name: sql`excluded.name`,
+        startTime: sql`excluded.start_time`,
+        endTime: sql`excluded.end_time`,
+        syncedAt: sql`excluded.synced_at`,
       },
     });
 }
@@ -46,10 +47,10 @@ export async function upsertShiftType(row: NewPilingShiftType): Promise<void> {
     .onConflictDoUpdate({
       target: pilingShiftTypes.id,
       set: {
-        name: pilingShiftTypes.name,
-        startTime: pilingShiftTypes.startTime,
-        endTime: pilingShiftTypes.endTime,
-        syncedAt: pilingShiftTypes.syncedAt,
+        name: sql`excluded.name`,
+        startTime: sql`excluded.start_time`,
+        endTime: sql`excluded.end_time`,
+        syncedAt: sql`excluded.synced_at`,
       },
     });
 }
@@ -87,7 +88,11 @@ export async function saveNonWorkingWindows(
     .delete(pilingNonWorkingWindows)
     .where(eq(pilingNonWorkingWindows.siteId, siteId));
   if (rows.length) {
-    await db.insert(pilingNonWorkingWindows).values(rows);
+    const normalized: NewPilingNonWorkingWindow[] = rows.map((r) => ({
+      ...r,
+      behavior: (r.behavior ?? 'FIXED') as NonWorkingWindowBehavior,
+    }));
+    await db.insert(pilingNonWorkingWindows).values(normalized);
   }
 }
 
@@ -116,10 +121,11 @@ export async function upsertNonWorkingWindow(row: NewPilingNonWorkingWindow): Pr
     .onConflictDoUpdate({
       target: pilingNonWorkingWindows.id,
       set: {
-        label: pilingNonWorkingWindows.label,
-        startTime: pilingNonWorkingWindows.startTime,
-        endTime: pilingNonWorkingWindows.endTime,
-        syncedAt: pilingNonWorkingWindows.syncedAt,
+        label: sql`excluded.label`,
+        startTime: sql`excluded.start_time`,
+        endTime: sql`excluded.end_time`,
+        behavior: sql`excluded.behavior`,
+        syncedAt: sql`excluded.synced_at`,
       },
     });
 }

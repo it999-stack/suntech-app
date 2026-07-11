@@ -13,11 +13,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Drill, Construction } from 'lucide-react-native';
 
-import { colors, spacing, radius, typography } from '../../../theme/theme';
-import GlassCard from '../../../components/shared/GlassCard';
-import { getMachinesBySite } from '../../../repositories/machinesRepository';
-import { useAuthStore } from '../../../store/authStore';
-import type { PilingMachine } from '../../../db/schema';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import GlassCard from '@components/shared/GlassCard';
+import { getMachinesBySite } from '@repositories/machinesRepository';
+import { useAuthStore } from '@store/authStore';
+import type { PilingMachine } from '@db/schema';
 
 // ── Per-type visual identity ───────────────────────────────────────────────
 // Keeps icon + gradient + label logic in one place, so adding a new

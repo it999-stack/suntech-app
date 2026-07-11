@@ -61,6 +61,12 @@ export type NewPilingShiftType = typeof pilingShiftTypes.$inferInsert;
 
 // ─── Piling Non-Working Windows (synced from server) ─────────────────────────
 
+/** How the planner should treat a non-working window during scheduling. */
+export type NonWorkingWindowBehavior =
+  | 'FIXED'               // break stays at its scheduled time; steps are split around it
+  | 'AFTER_CURRENT_STEP'; // if a step is in progress when the break starts, the step runs
+                          // through and the break is deferred to start right after the step ends
+
 /**
  * Local cache of piling_non_working_windows fetched from the server.
  * Scoped to a site + shift type.
@@ -72,6 +78,7 @@ export const pilingNonWorkingWindows = sqliteTable('piling_non_working_windows',
   label: text('label').notNull(),
   startTime: text('start_time').notNull(), // "HH:MM"
   endTime: text('end_time').notNull(),     // "HH:MM"
+  behavior: text('behavior').notNull().default('FIXED'), // NonWorkingWindowBehavior
   syncedAt: integer('synced_at').notNull(),
 });
 

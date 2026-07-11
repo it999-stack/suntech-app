@@ -12,14 +12,14 @@
 //   - Shift types and their windows must already be persisted in local SQLite
 //     (SiteSettingsContext write-through mutations ensure this).
 
-import type { ISyncStep } from '../bootstrap/ISyncStep';
-import type { SyncContext } from '../bootstrap/syncContext';
-import type { StepResult } from '../bootstrap/syncResult';
-import { apiClient } from '../../services/apiClient';
+import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
+import type { SyncContext } from '@sync/bootstrap/syncContext';
+import type { StepResult } from '@sync/bootstrap/syncResult';
+import { apiClient } from '@services/apiClient';
 import {
   getAllShiftTypes,
   getNonWorkingWindowsBySite,
-} from '../../repositories/shiftsRepository';
+} from '@repositories/shiftsRepository';
 
 /** Convert minutes-since-midnight → "HH:MM" */
 function minutesToTime(totalMinutes: number): string {

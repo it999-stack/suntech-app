@@ -6,9 +6,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { ChevronLeft, Layers } from 'lucide-react-native';
-import GlassCard from '../../../components/shared/GlassCard';
-import { colors, spacing, radius, typography } from '@/theme/theme';
-import { useSiteSettings } from '../../../state/SiteSettingsContext';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { useSiteSettings } from '@state/SiteSettingsContext';
 
 export default function TemplatesScreen() {
   const navigation = useNavigation<any>();

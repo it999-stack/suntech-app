@@ -6,11 +6,11 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { CheckCircle2, Circle, ArrowRight } from 'lucide-react-native';
-import AppModal from '../../shared/AppModal';
-import StepTimeControl from './StepTimeControl';
-import { formatMinutes } from '../../../utils/formatTime';
-import { colors, spacing, radius, typography } from '../../../theme/theme';
-import { ActualEntry } from '../../../types/plan';
+import AppModal from '@components/shared/AppModal';
+import StepTimeControl from '@components/plan/actual/StepTimeControl';
+import { formatMinutes } from '@utils/formatTime';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { ActualEntry } from '@app-types/plan';
 
 interface Props {
   visible: boolean;

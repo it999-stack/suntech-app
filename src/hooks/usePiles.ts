@@ -4,8 +4,8 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { getPilesBySite } from '../repositories/pilesRepository';
-import type { PilingPile } from '../db/schema';
+import { getPilesBySite } from '@repositories/pilesRepository';
+import type { PilingPile } from '@db/schema';
 
 type UsePilesResult = {
   piles: PilingPile[];

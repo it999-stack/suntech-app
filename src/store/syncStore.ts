@@ -3,9 +3,9 @@
 // All sync logic lives in src/sync/ — this store is just state + orchestration glue.
 
 import { create } from 'zustand';
-import { runBootstrapSync } from '../sync/bootstrap/bootstrapSync';
-import { getLastSyncTime } from '../repositories/pilesRepository';
-import type { StepResult } from '../sync/bootstrap/syncResult';
+import { runBootstrapSync } from '@sync/bootstrap/bootstrapSync';
+import { getLastSyncTime } from '@repositories/pilesRepository';
+import type { StepResult } from '@sync/bootstrap/syncResult';
 
 type SyncState = {
   isSyncing: boolean;

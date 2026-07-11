@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Pressable, Text, StyleSheet } from 'react-native';
-import { colors, spacing, radius, typography } from '../../../theme/theme';
+import { colors, spacing, radius, typography } from '@theme/theme';
 
 interface ChipProps {
   label: string;

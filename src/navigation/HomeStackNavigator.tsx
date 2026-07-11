@@ -1,12 +1,12 @@
 // src/navigation/HomeStackNavigator.tsx
 
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { HomeStackParamList } from '../types/navigation';
-import HomeScreen from '../screens/Home/HomeScreen';
-import PlanHistoryScreen from '../screens/Home/PlanHistoryScreen';
-import PlanDetailScreen from '../screens/Home/PlanDetailScreen';
-import FillActualsScreen from '../screens/Home/FillActualScreen';
-import GeneratePlanScreen from '../screens/Home/GeneratePlanScreen';
+import { HomeStackParamList } from '@app-types/navigation';
+import HomeScreen from '@screens/Home/HomeScreen';
+import PlanHistoryScreen from '@screens/Home/PlanHistoryScreen';
+import PlanDetailScreen from '@screens/Home/PlanDetailScreen';
+import FillActualsScreen from '@screens/Home/FillActualScreen';
+import GeneratePlanScreen from '@screens/Home/GeneratePlanScreen';
 
 const Stack = createNativeStackNavigator<HomeStackParamList>();
 

@@ -4,11 +4,11 @@
 // The orchestrator (bootstrapSync.ts) never needs to change.
 
 import type { ISyncStep } from './ISyncStep';
-import { SyncPilesStep } from '../steps/syncPiles';
-import { SyncDimensionsStep } from '../steps/syncDimensions';
-import { SyncShiftsStep } from '../steps/syncShifts';
-import { SyncMachinesStep } from '../steps/syncMachines';
-import { SyncPersonnelStep } from '../steps/syncPersonnel';
+import { SyncPilesStep } from '@sync/steps/syncPiles';
+import { SyncDimensionsStep } from '@sync/steps/syncDimensions';
+import { SyncShiftsStep } from '@sync/steps/syncShifts';
+import { SyncMachinesStep } from '@sync/steps/syncMachines';
+import { SyncPersonnelStep } from '@sync/steps/syncPersonnel';
 
 export const BOOTSTRAP_STEPS: ISyncStep[] = [
   new SyncPilesStep(),

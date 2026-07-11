@@ -78,17 +78,18 @@ export async function initDb() {
     );
   `);
 
-  await sqlite.execAsync(`
-    CREATE TABLE IF NOT EXISTS piling_non_working_windows (
-      id            TEXT PRIMARY KEY NOT NULL,
-      site_id       TEXT NOT NULL,
-      shift_type_id TEXT NOT NULL,
-      label         TEXT NOT NULL,
-      start_time    TEXT NOT NULL,
-      end_time      TEXT NOT NULL,
-      synced_at     INTEGER NOT NULL
-    );
-  `);
+    await sqlite.execAsync(`
+      CREATE TABLE IF NOT EXISTS piling_non_working_windows (
+        id            TEXT PRIMARY KEY NOT NULL,
+        site_id       TEXT NOT NULL,
+        shift_type_id TEXT NOT NULL,
+        label         TEXT NOT NULL,
+        start_time    TEXT NOT NULL,
+        end_time      TEXT NOT NULL,
+        behavior      TEXT NOT NULL DEFAULT 'FIXED',
+        synced_at     INTEGER NOT NULL
+      );
+    `);
 
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS piling_machines (
@@ -257,6 +258,13 @@ export async function initDb() {
     } catch {
       // Already exists — safe to ignore
     }
+    try {
+      await sqlite.execAsync(
+        `ALTER TABLE piling_non_working_windows ADD COLUMN behavior TEXT NOT NULL DEFAULT 'FIXED';`,
+      );
+    } catch {
+      // Already exists — safe to ignore
+    }
   }
 
   // ── Seed default piling steps (INSERT OR IGNORE = idempotent) ───────────
@@ -309,6 +317,7 @@ async function seedDefaultShiftData(sqlite: SQLite.SQLiteDatabase) {
       label,
       start_time,
       end_time,
+      behavior,
       synced_at
     ) VALUES
       (
@@ -318,6 +327,7 @@ async function seedDefaultShiftData(sqlite: SQLite.SQLiteDatabase) {
         'Morning Shift Change',
         '08:00',
         '09:00',
+        'FIXED',
         ${now}
       ),
       (
@@ -327,6 +337,7 @@ async function seedDefaultShiftData(sqlite: SQLite.SQLiteDatabase) {
         'Lunch Break',
         '13:00',
         '14:00',
+        'AFTER_CURRENT_STEP',
         ${now}
       ),
       (
@@ -336,6 +347,7 @@ async function seedDefaultShiftData(sqlite: SQLite.SQLiteDatabase) {
         'Evening Shift Change',
         '20:00',
         '21:00',
+        'FIXED',
         ${now}
       );
   `);

@@ -11,13 +11,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { CommonActions } from '@react-navigation/native';
 import { ClipboardList, Signpost, Settings, Sparkles, Pencil } from 'lucide-react-native';
-import GlassCard from '../../components/shared/GlassCard';
-import { colors, spacing, radius, typography, shadow } from '../../theme/theme';
-import { usePlan } from '../../state/PlanContext';
-import { useAuthStore } from '../../store/authStore';
-import { getPersonnelBySite } from '../../repositories/personnelRepository';
-import { formatTime } from '../../utils/formatTime';
-import type { PilingPersonnel } from '../../db/schema';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { usePlan } from '@state/PlanContext';
+import { useAuthStore } from '@store/authStore';
+import { getPersonnelBySite } from '@repositories/personnelRepository';
+import { formatTime } from '@utils/formatTime';
+import type { PilingPersonnel } from '@db/schema';
 
 function toLocalDateStr(d: Date): string {
   const y = d.getFullYear();

@@ -1,12 +1,12 @@
 // src/sync/steps/syncPiles.ts
 // Syncs piling_piles for the user's site from server into local SQLite.
 
-import type { ISyncStep } from '../bootstrap/ISyncStep';
-import type { SyncContext } from '../bootstrap/syncContext';
-import type { StepResult } from '../bootstrap/syncResult';
-import { apiClient } from '../../services/apiClient';
-import { savePiles } from '../../repositories/pilesRepository';
-import type { NewPilingPile } from '../../db/schema';
+import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
+import type { SyncContext } from '@sync/bootstrap/syncContext';
+import type { StepResult } from '@sync/bootstrap/syncResult';
+import { apiClient } from '@services/apiClient';
+import { savePiles } from '@repositories/pilesRepository';
+import type { NewPilingPile } from '@db/schema';
 
 export class SyncPilesStep implements ISyncStep {
   readonly name = 'piles';

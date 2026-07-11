@@ -10,8 +10,9 @@ import Accordion from '@components/shared/Accordion';
 import StepTimelineRow from './StepTimelineRow';
 import { fmtDuration } from '@/types/plan';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
-import type { PreviewPile } from './previewTypes';
+import type { PreviewPile } from '@app-types/previewTypes';
 import { colors, spacing, typography } from '@/theme/theme';
+import { formatDurationMinutes } from '@/utils/formatTime';
 
 interface PileAccordionProps {
   pile: PreviewPile;
@@ -20,23 +21,19 @@ interface PileAccordionProps {
 
 export default function PileAccordion({ pile, steps }: PileAccordionProps) {
   // Sum pure working minutes stored by the planner (excludes break time).
-  // Fall back to wall-clock diff only for legacy rows that pre-date this field.
-  const totalDuration = (() => {
-    if (steps.length === 0) return '—';
-    const allHaveDuration = steps.every((s) => s.durationMinutes != null);
-    if (allHaveDuration) {
-      const totalMin = steps.reduce((sum, s) => sum + (s.durationMinutes ?? 0), 0);
-      const h = Math.floor(totalMin / 60);
-      const m = totalMin % 60;
-      if (h === 0) return `${m}m`;
-      if (m === 0) return `${h}h`;
-      return `${h}h ${m}m`;
-    }
-    // Legacy fallback: wall-clock span from first start to last end
-    const firstStart = steps[0]?.plannedStart ?? null;
-    const lastEnd = steps[steps.length - 1]?.plannedEnd ?? null;
-    return firstStart && lastEnd ? fmtDuration(firstStart, lastEnd) : '—';
-  })();
+
+  const totalMin = steps.reduce((sum, s) => {
+    if (!s.plannedStart || !s.plannedEnd) return sum;
+
+    return (
+      sum +
+      (new Date(s.plannedEnd).getTime() -
+        new Date(s.plannedStart).getTime()) /
+        60000
+    );
+  }, 0);
+
+  const totalDuration = formatDurationMinutes(totalMin);
 
   return (
     <Accordion

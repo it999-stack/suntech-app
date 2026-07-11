@@ -9,16 +9,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, ChevronRight, ChevronLeft, Trash2 } from 'lucide-react-native';
-import GlassCard from '../../components/shared/GlassCard';
-import { colors, spacing, radius, typography } from '../../theme/theme';
-import { HomeStackParamList } from '../../types/navigation';
-import { useAuthStore } from '../../store/authStore';
-import { getChecklistsBySite, getChecklistPiles } from '../../repositories/checklistRepository';
-import { deletePlanStepsForChecklist, deleteActualStepsForChecklist } from '../../repositories/planRepository';
-import { initDb } from '../../db/client';
-import { pilingDailyChecklists, pilingChecklistPiles } from '../../db/schema';
 import { eq } from 'drizzle-orm';
-import type { PilingDailyChecklist } from '../../db/schema';
+import GlassCard from '@components/shared/GlassCard';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import { HomeStackParamList } from '@app-types/navigation';
+import { useAuthStore } from '@store/authStore';
+import { getChecklistsBySite, getChecklistPiles } from '@repositories/checklistRepository';
+import { deletePlanStepsForChecklist, deleteActualStepsForChecklist } from '@repositories/planRepository';
+import { initDb } from '@db/client';
+import { pilingDailyChecklists, pilingChecklistPiles } from '@db/schema';
+import type { PilingDailyChecklist } from '@db/schema';
 
 type HomeNav = NativeStackNavigationProp<HomeStackParamList, 'PlanHistory'>;
 

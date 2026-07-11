@@ -94,7 +94,7 @@ export default function GeneratePlanScreen() {
   useEffect(() => {
     if (!siteId) return;
     let cancelled = false;
-    (async () => {
+  (async () => {
       setDataLoading(true);
       try {
         const [pilesRaw, stepsRaw, rigsRaw, cranesRaw, personnelRaw, shiftsRaw] = await Promise.all([
@@ -248,24 +248,27 @@ export default function GeneratePlanScreen() {
       return;
     }
 
-    try {
-      const selectedPiles = piles.filter((p) => draft.selectedPileIds.includes(p.id));
-      const previewPilesInput = selectedPiles.map((pile) => ({
-        checklistPileId: pile.id,
-        pileId: pile.id,
-        pileIdCode: pile.code,
-        dia: pile.dia,
-        depth: pile.depth,
-      }));
+      try {
+        const selectedPiles = piles.filter((p) => draft.selectedPileIds.includes(p.id));
+        const previewPilesInput = selectedPiles.map((pile) => {
+          const assignment = draft.assignments[pile.id];
+          return {
+            checklistPileId: pile.id,
+            pileId: pile.id,
+            pileIdCode: pile.code,
+            dia: pile.dia,
+            depth: pile.depth,
+            rigId: assignment?.rig ?? '',
+            craneId: assignment?.crane ?? '',
+          };
+        });
 
-      const { planRows, warningPileIds } = await generatePlanPreview({
-        piles: previewPilesInput,
-        planStartTime: draft.planStartTime,
-        siteId,
-        selectedStepIds: draft.selectedStepIds,
-        rigMachineIds: draft.activeRigIds,
-        craneMachineIds: draft.activeCraneIds,
-      });
+        const { planRows, warningPileIds } = await generatePlanPreview({
+          piles: previewPilesInput,
+          planStartTime: draft.planStartTime,
+          siteId,
+          selectedStepIds: draft.selectedStepIds,
+        });
 
       setPreviewSteps(planRows as PlanStepWithMeta[]);
       setPreviewWarningPileIds(warningPileIds);
@@ -389,28 +392,9 @@ export default function GeneratePlanScreen() {
           nextDisabled={!canContinue || isGenerating}
         />
 
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {step === 'intro' && (
-            <IntroStep />
-          )}
-
-          {step === 'start' && (
-            <StartTimeStep draft={draft} onUpdate={updateDraft} />
-          )}
-
-          {step === 'machines' && (
-            <MachineSelectStep
-              draft={draft}
-              onUpdate={updateDraft}
-              rigs={rigs}
-              cranes={cranes}
-            />
-          )}
-
-          {step === 'piles' && (
+        {/* Piles step owns its own FlatList — must NOT be inside a ScrollView */}
+        {step === 'piles' ? (
+          <View style={styles.pilesStepContainer}>
             <PileAssignStep
               draft={draft}
               onUpdate={updateDraft}
@@ -418,84 +402,107 @@ export default function GeneratePlanScreen() {
               activeRigs={activeRigs}
               activeCranes={activeCranes}
             />
-          )}
+            {planError ? <Text style={styles.errorText}>{planError}</Text> : null}
+          </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {step === 'intro' && (
+              <IntroStep />
+            )}
 
-          {step === 'steps' && (
-            <StepSelectStep
-              draft={draft}
-              onUpdate={updateDraft}
-              steps={steps}
-            />
-          )}
+            {step === 'start' && (
+              <StartTimeStep draft={draft} onUpdate={updateDraft} />
+            )}
 
-          {step === 'supervisors' && (
-            <SupervisorStep
-              draft={draft}
-              onUpdate={updateDraft}
-              personnel={personnel.map((p) => ({
-                id: p.id,
-                name: p.name,
-                designation: p.designation,
-              }))}
-              shifts={shifts.map((s) => ({
-                id: s.id,
-                name: s.name,
-                startTime: s.startTime,
-                endTime: s.endTime,
-              }))}
-            />
-          )}
+            {step === 'machines' && (
+              <MachineSelectStep
+                draft={draft}
+                onUpdate={updateDraft}
+                rigs={rigs}
+                cranes={cranes}
+              />
+            )}
 
-          {step === 'preview' && (
-            <PreviewStep
-              draft={draft}
-              planSteps={previewSteps}
-              piles={builtPreviewPiles}
-              supervisor1Name={supervisor1Name}
-              supervisor2Name={supervisor2Name}
-              activeRigCount={draft.activeRigIds.length}
-              activeCraneCount={draft.activeCraneIds.length}
-              totalStepsCount={steps.length}
-              onNavigateToStep={(s) => setStep(s)}
-              activeRigs={rigs.filter((r) => draft.activeRigIds.includes(r.id)).map((r) => ({
-                id: r.id,
-                machineNo: r.machineNo,
-                type: 'RIG' as const,
-              }))}
-              activeCranes={cranes.filter((c) => draft.activeCraneIds.includes(c.id)).map((c) => ({
-                id: c.id,
-                machineNo: c.machineNo,
-                type: 'CRANE' as const,
-              }))}
-              personnel={personnel.map((p) => ({
-                id: p.id,
-                name: p.name,
-                designation: p.designation,
-              }))}
-              shifts={shifts.map((s) => ({
-                id: s.id,
-                name: s.name,
-                startTime: s.startTime,
-                endTime: s.endTime,
-              }))}
-              selectedSteps={steps
-                .filter((s) => draft.selectedStepIds.includes(s.id))
-                .map((s) => ({
-                  id: s.id,
-                  stepName: s.stepName,
-                  track: s.track,
-                  sequenceOrder: s.sequenceOrder,
+            {step === 'steps' && (
+              <StepSelectStep
+                draft={draft}
+                onUpdate={updateDraft}
+                steps={steps}
+              />
+            )}
+
+            {step === 'supervisors' && (
+              <SupervisorStep
+                draft={draft}
+                onUpdate={updateDraft}
+                personnel={personnel.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  designation: p.designation,
                 }))}
-              warningPileCodes={piles
-                .filter((p) => previewWarningPileIds.includes(p.id))
-                .map((p) => p.code)}
-            />
-          )}
+                shifts={shifts.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  startTime: s.startTime,
+                  endTime: s.endTime,
+                }))}
+              />
+            )}
 
-          {planError ? (
-            <Text style={styles.errorText}>{planError}</Text>
-          ) : null}
-        </ScrollView>
+            {step === 'preview' && (
+              <PreviewStep
+                draft={draft}
+                planSteps={previewSteps}
+                piles={builtPreviewPiles}
+                supervisor1Name={supervisor1Name}
+                supervisor2Name={supervisor2Name}
+                activeRigCount={draft.activeRigIds.length}
+                activeCraneCount={draft.activeCraneIds.length}
+                totalStepsCount={steps.length}
+                onNavigateToStep={(s) => setStep(s)}
+                activeRigs={rigs.filter((r) => draft.activeRigIds.includes(r.id)).map((r) => ({
+                  id: r.id,
+                  machineNo: r.machineNo,
+                  type: 'RIG' as const,
+                }))}
+                activeCranes={cranes.filter((c) => draft.activeCraneIds.includes(c.id)).map((c) => ({
+                  id: c.id,
+                  machineNo: c.machineNo,
+                  type: 'CRANE' as const,
+                }))}
+                personnel={personnel.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  designation: p.designation,
+                }))}
+                shifts={shifts.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  startTime: s.startTime,
+                  endTime: s.endTime,
+                }))}
+                selectedSteps={steps
+                  .filter((s) => draft.selectedStepIds.includes(s.id))
+                  .map((s) => ({
+                    id: s.id,
+                    stepName: s.stepName,
+                    track: s.track,
+                    sequenceOrder: s.sequenceOrder,
+                  }))}
+                warningPileCodes={piles
+                  .filter((p) => previewWarningPileIds.includes(p.id))
+                  .map((p) => p.code)}
+              />
+            )}
+
+            {planError ? (
+              <Text style={styles.errorText}>{planError}</Text>
+            ) : null}
+          </ScrollView>
+        )}
 
         <View style={styles.footer}>
           <Pressable
@@ -648,5 +655,11 @@ const styles = StyleSheet.create({
     ...typography.body,
     fontWeight: '700',
     color: colors.white,
+  },
+  pilesStepContainer: {
+    flex: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
   },
 });

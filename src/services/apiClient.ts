@@ -1,8 +1,8 @@
 // src/services/apiClient.ts
 
 import axios from 'axios';
-import { API_BASE_URL } from '../config/env';
-import { useAuthStore } from '../store/authStore';
+import { API_BASE_URL } from '@config/env';
+import { useAuthStore } from '@store/authStore';
 
 // Shared axios instance — use this for every authenticated call
 // (piles, checklists, sync push/pull), not just auth, so the token
