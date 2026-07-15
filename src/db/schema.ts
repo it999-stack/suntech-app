@@ -3,6 +3,41 @@
 
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
+/** A named work zone within a piling site, such as "Zone A" or "Tower 1". */
+export const pilingAreas = sqliteTable('piling_areas', {
+  id: text('id').primaryKey(),
+  siteId: text('site_id').notNull(),
+  name: text('name').notNull(),
+  code: text('code'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export type PilingArea = typeof pilingAreas.$inferSelect;
+export type NewPilingArea = typeof pilingAreas.$inferInsert;
+
+/**
+ * The unfinished work item for a physical pile. This is deliberately separate
+ * from daily checklist records so a step can resume on a later plan.
+ */
+export const pileWorkProgress = sqliteTable('pile_work_progress', {
+  id: text('id').primaryKey(),
+  pileId: text('pile_id').notNull().unique(),
+  stepId: text('step_id').notNull(),
+  remainingMinutes: integer('remaining_minutes').notNull(),
+  status: text('status').notNull().default('PENDING_RESUME'),
+  lastChecklistPileId: text('last_checklist_pile_id'),
+  lastRigId: text('last_rig_id'),
+  lastCraneId: text('last_crane_id'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export type PileWorkProgress = typeof pileWorkProgress.$inferSelect;
+export type NewPileWorkProgress = typeof pileWorkProgress.$inferInsert;
+
 // ─── Piling Piles (synced from server) ───────────────────────────────────────
 
 /**
@@ -13,12 +48,12 @@ import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 export const pilingPiles = sqliteTable('piling_piles', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
+  areaId: text('area_id'),
   pileIdCode: text('pile_id_code').notNull(),
   areaLocation: text('area_location'),
-  dia: integer('dia').notNull(),
-  depth: integer('depth').notNull(),
+  dimensionId: text('dimension_id').notNull(),
   notes: text('notes'),
-  syncedAt: integer('synced_at').notNull(), // unix ms — when this row was last synced
+  syncedAt: integer('synced_at').notNull(),
 });
 
 export type PilingPile = typeof pilingPiles.$inferSelect;
@@ -46,13 +81,14 @@ export type NewPilingDimension = typeof pilingDimensions.$inferInsert;
 
 /**
  * Local cache of piling_shift_types fetched from the server.
- * Global reference data (not site-scoped on the server, but we scope by usage).
+ * Local cache of piling_shift_types fetched from the server for the currently assigned site.
  */
 export const pilingShiftTypes = sqliteTable('piling_shift_types', {
   id: text('id').primaryKey(),
+  siteId: text('site_id').notNull(),
   name: text('name').notNull(),
-  startTime: text('start_time').notNull(), // "HH:MM" e.g. "07:00"
-  endTime: text('end_time').notNull(),     // "HH:MM" e.g. "19:00"
+  startTime: text('start_time').notNull(),
+  endTime: text('end_time').notNull(),
   syncedAt: integer('synced_at').notNull(),
 });
 
@@ -63,9 +99,8 @@ export type NewPilingShiftType = typeof pilingShiftTypes.$inferInsert;
 
 /** How the planner should treat a non-working window during scheduling. */
 export type NonWorkingWindowBehavior =
-  | 'FIXED'               // break stays at its scheduled time; steps are split around it
-  | 'AFTER_CURRENT_STEP'; // if a step is in progress when the break starts, the step runs
-                          // through and the break is deferred to start right after the step ends
+  | 'FIXED'
+  | 'AFTER_CURRENT_STEP';
 
 /**
  * Local cache of piling_non_working_windows fetched from the server.
@@ -73,12 +108,11 @@ export type NonWorkingWindowBehavior =
  */
 export const pilingNonWorkingWindows = sqliteTable('piling_non_working_windows', {
   id: text('id').primaryKey(),
-  siteId: text('site_id').notNull(),
   shiftTypeId: text('shift_type_id').notNull(),
   label: text('label').notNull(),
-  startTime: text('start_time').notNull(), // "HH:MM"
-  endTime: text('end_time').notNull(),     // "HH:MM"
-  behavior: text('behavior').notNull().default('FIXED'), // NonWorkingWindowBehavior
+  startTime: text('start_time').notNull(),
+  endTime: text('end_time').notNull(),
+  behavior: text('behavior').notNull().default('FIXED'),
   syncedAt: integer('synced_at').notNull(),
 });
 
@@ -95,8 +129,8 @@ export const pilingMachines = sqliteTable('piling_machines', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   machineNo: text('machine_no').notNull(),
-  type: text('type').notNull(),         // "RIG" | "CRANE"
-  status: text('status').notNull(),     // "ACTIVE" | "INACTIVE"
+  type: text('type').notNull(),
+  status: text('status').notNull(),
   syncedAt: integer('synced_at').notNull(),
 });
 
@@ -128,32 +162,31 @@ export type NewPilingPersonnel = typeof pilingPersonnel.$inferInsert;
 /**
  * Default workflow steps for piling operations.
  * These are seeded once on initDb() and never synced from server.
- * Users can see/manage duration templates per step from Site Settings.
  */
 export const pilingSteps = sqliteTable('piling_steps', {
-  id: text('id').primaryKey(),                       // deterministic short id e.g. 'step_casing'
-  stepName: text('step_name').notNull().unique(),    // e.g. 'Casing'
+  id: text('id').primaryKey(),
+  stepName: text('step_name').notNull().unique(),
   sequenceOrder: integer('sequence_order').notNull(),
-  track: text('track').notNull(),                    // 'RIG' | 'CRANE'
+  track: text('track').notNull(),
 });
 
 export type PilingStep = typeof pilingSteps.$inferSelect;
 export type NewPilingStep = typeof pilingSteps.$inferInsert;
 
-// ─── Piling Step Duration Templates (user-configured) ─────────────────────────
+// ─── Piling Step Duration Templates (synced from server) ──────────────────────
 
 /**
- * User-configured duration templates per step × dimension.
+ * Duration templates per step × dimension, synced from server.
  * dimensionId → pilingDimensions.id (carries the dia/depth; no redundant columns).
- * e.g. Boring at dimension_id=<600/18m row> → 90 min.
- * Written locally, never synced to server (yet).
+ * e.g. Boring at dimension_id=<600/18mm row> → 90 min.
  */
 export const pilingStepDurationTemplates = sqliteTable('piling_step_duration_templates', {
-  id: text('id').primaryKey(),                              // uuid generated on insert
-  stepId: text('step_id').notNull(),                        // → pilingSteps.id
-  dimensionId: text('dimension_id').notNull(),              // → pilingDimensions.id
+  id: text('id').primaryKey(),
+  stepId: text('step_id').notNull(),
+  dimensionId: text('dimension_id').notNull(),
   durationMinutes: integer('duration_minutes').notNull(),
   bufferBeforeMinutes: integer('buffer_before_minutes').notNull().default(0),
+  syncedAt: integer('synced_at').notNull(),
 });
 
 export type PilingStepDurationTemplate = typeof pilingStepDurationTemplates.$inferSelect;
@@ -170,18 +203,18 @@ export type NewPilingStepDurationTemplate = typeof pilingStepDurationTemplates.$
  * status: 'DRAFT' | 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED'
  */
 export const pilingDailyChecklists = sqliteTable('piling_daily_checklists', {
-  id: text('id').primaryKey(),                    // uuid generated on create
+  id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
-  date: text('date').notNull(),                   // "YYYY-MM-DD"
-  shiftTypeId: text('shift_type_id'),             // optional — chosen at plan time
-  planStartTime: text('plan_start_time'),         // ISO timestamp — 24hr plan anchor start
-  planEndTime: text('plan_end_time'),             // ISO timestamp — 24hr plan anchor end
-  supervisorId: text('supervisor_id'),            // → pilingPersonnel.id (day/shift-1 supervisor)
-  supervisorId2: text('supervisor_id_2'),         // → pilingPersonnel.id (night/shift-2 supervisor)
+  date: text('date').notNull(),
+  shiftTypeId: text('shift_type_id'),
+  planStartTime: text('plan_start_time'),
+  planEndTime: text('plan_end_time'),
+  supervisorId: text('supervisor_id'),
+  supervisorId2: text('supervisor_id_2'),
   notes: text('notes'),
-  status: text('status').notNull().default('DRAFT'), // 'DRAFT' | 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED'
-  createdAt: integer('created_at').notNull(),     // unix ms
-  updatedAt: integer('updated_at').notNull(),     // unix ms
+  status: text('status').notNull().default('DRAFT'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
 });
 
 export type PilingDailyChecklist = typeof pilingDailyChecklists.$inferSelect;
@@ -194,8 +227,8 @@ export type NewPilingDailyChecklist = typeof pilingDailyChecklists.$inferInsert;
  */
 export const pilingChecklistPersonnel = sqliteTable('piling_checklist_personnel', {
   id: text('id').primaryKey(),
-  checklistId: text('checklist_id').notNull(),   // → pilingDailyChecklists.id
-  personnelId: text('personnel_id').notNull(),   // → pilingPersonnel.id
+  checklistId: text('checklist_id').notNull(),
+  personnelId: text('personnel_id').notNull(),
 });
 
 export type PilingChecklistPersonnel = typeof pilingChecklistPersonnel.$inferSelect;
@@ -210,13 +243,13 @@ export type NewPilingChecklistPersonnel = typeof pilingChecklistPersonnel.$infer
  * status: lifecycle of this pile on this day.
  */
 export const pilingChecklistPiles = sqliteTable('piling_checklist_piles', {
-  id: text('id').primaryKey(),                    // uuid generated on insert
-  checklistId: text('checklist_id').notNull(),    // → pilingDailyChecklists.id
-  pileId: text('pile_id').notNull(),              // → pilingPiles.id
-  seqNo: integer('seq_no').notNull(),             // 1-based ordering
-  rigId: text('rig_id').notNull(),                // → pilingMachines.id (type=RIG)
-  craneId: text('crane_id').notNull(),            // → pilingMachines.id (type=CRANE)
-  status: text('status').notNull().default('NOT_STARTED'), // 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+  id: text('id').primaryKey(),
+  checklistId: text('checklist_id').notNull(),
+  pileId: text('pile_id').notNull(),
+  seqNo: integer('seq_no').notNull(),
+  rigId: text('rig_id').notNull(),
+  craneId: text('crane_id').notNull(),
+  status: text('status').notNull().default('NOT_STARTED'),
   createdAt: integer('created_at').notNull(),
 });
 
@@ -232,16 +265,13 @@ export type NewPilingChecklistPile = typeof pilingChecklistPiles.$inferInsert;
  */
 export const pilePlanSteps = sqliteTable('pile_plan_steps', {
   id: text('id').primaryKey(),
-  checklistPileId: text('checklist_pile_id').notNull(), // → pilingChecklistPiles.id
-  stepId: text('step_id').notNull(),                    // → pilingSteps.id
-  plannedStart: text('planned_start').notNull(),        // ISO timestamp
-  plannedEnd: text('planned_end').notNull(),            // ISO timestamp
-  /** Pure working minutes for this step — excludes break time swallowed by skipNonWorkingWindows. */
-  durationMinutes: integer('duration_minutes'),         // null for rows created before this migration
-  /** Buffer before minutes for this step — time reserved before the step starts (e.g. setup). */
-  bufferMinutes: integer('buffer_minutes'),             // null for legacy rows; treat as 0
-  /** Which machine (rig or crane) was assigned to this step by the planner. */
-  assignedMachineId: text('assigned_machine_id'),       // → pilingMachines.id; null for legacy rows
+  checklistPileId: text('checklist_pile_id').notNull(),
+  stepId: text('step_id').notNull(),
+  plannedStart: text('planned_start').notNull(),
+  plannedEnd: text('planned_end').notNull(),
+  durationMinutes: integer('duration_minutes'),
+  bufferMinutes: integer('buffer_minutes'),
+  assignedMachineId: text('assigned_machine_id'),
   createdAt: integer('created_at').notNull(),
 });
 
@@ -256,10 +286,10 @@ export type NewPilePlanStep = typeof pilePlanSteps.$inferInsert;
  */
 export const pileActualSteps = sqliteTable('pile_actual_steps', {
   id: text('id').primaryKey(),
-  checklistPileId: text('checklist_pile_id').notNull(), // → pilingChecklistPiles.id
-  stepId: text('step_id').notNull(),                    // → pilingSteps.id
-  actualStart: text('actual_start'),                    // ISO timestamp, nullable
-  actualEnd: text('actual_end'),                        // ISO timestamp, nullable
+  checklistPileId: text('checklist_pile_id').notNull(),
+  stepId: text('step_id').notNull(),
+  actualStart: text('actual_start'),
+  actualEnd: text('actual_end'),
   remarks: text('remarks'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),

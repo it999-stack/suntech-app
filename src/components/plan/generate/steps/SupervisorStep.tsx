@@ -1,13 +1,7 @@
-// src/components/plan/generate/steps/SupervisorStep.tsx
-//
-// Step 5 — pick supervisors for Shift 1 (day) and Shift 2 (night).
-// Shift labels + times are read from DB shifts passed as props.
-// Both slots are optional (None / Skip is always available).
-
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { User } from 'lucide-react-native';
-import GlassCard from '@components/shared/GlassCard';
+import Accordion from '@components/shared/Accordion';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { PlanDraft } from '@/types/plan';
 
@@ -28,11 +22,37 @@ interface SupervisorStepProps {
   draft: PlanDraft;
   onUpdate: (patch: Partial<PlanDraft>) => void;
   personnel: SimplePersonnel[];
-  /** All shift types from DB — used to show shift labels (Shift 1, Shift 2). */
   shifts: SimpleShift[];
 }
 
-// ─── Personnel picker list ────────────────────────────────────────────────────
+const LIST_MAX_HEIGHT = 260;
+
+function PersonnelRow({
+  label,
+  sublabel,
+  active,
+  onPress,
+}: {
+  label: string;
+  sublabel?: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={[styles.personRow, active && styles.personRowActive]}
+      onPress={onPress}
+    >
+      <View style={styles.personIcon}>
+        <User size={16} color={active ? colors.accent : colors.textSecondary} />
+      </View>
+      <View style={styles.personInfo}>
+        <Text style={[styles.personName, active && styles.personNameActive]}>{label}</Text>
+        {sublabel ? <Text style={styles.personDesig}>{sublabel}</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
 
 function PersonnelList({
   personnel,
@@ -44,41 +64,32 @@ function PersonnelList({
   onSelect: (id: string | null) => void;
 }) {
   return (
-    <View style={styles.list}>
-      <Pressable
-        style={[styles.personRow, selectedId === null && styles.personRowActive]}
+    <ScrollView
+      style={styles.list}
+      contentContainerStyle={styles.listContent}
+      nestedScrollEnabled
+      showsVerticalScrollIndicator
+    >
+      <PersonnelRow
+        label="None / Skip"
+        active={selectedId === null}
         onPress={() => onSelect(null)}
-      >
-        <View style={styles.personIcon}>
-          <User size={16} color={selectedId === null ? colors.accent : colors.textSecondary} />
-        </View>
-        <Text style={[styles.personName, selectedId === null && styles.personNameActive]}>
-          None / Skip
-        </Text>
-      </Pressable>
-
-      {personnel.map((p) => (
-        <Pressable
-          key={p.id}
-          style={[styles.personRow, selectedId === p.id && styles.personRowActive]}
-          onPress={() => onSelect(p.id)}
-        >
-          <View style={styles.personIcon}>
-            <User size={16} color={selectedId === p.id ? colors.accent : colors.textSecondary} />
-          </View>
-          <View style={styles.personInfo}>
-            <Text style={[styles.personName, selectedId === p.id && styles.personNameActive]}>
-              {p.name}
-            </Text>
-            <Text style={styles.personDesig}>{p.designation}</Text>
-          </View>
-        </Pressable>
+      />
+      <View style={{ height: spacing.xs }} />
+      {personnel.map((item, idx) => (
+        <React.Fragment key={item.id}>
+          <PersonnelRow
+            label={item.name}
+            sublabel={item.designation}
+            active={selectedId === item.id}
+            onPress={() => onSelect(item.id)}
+          />
+          {idx < personnel.length - 1 ? <View style={{ height: spacing.xs }} /> : null}
+        </React.Fragment>
       ))}
-    </View>
+    </ScrollView>
   );
 }
-
-// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SupervisorStep({
   draft,
@@ -86,7 +97,6 @@ export default function SupervisorStep({
   personnel,
   shifts,
 }: SupervisorStepProps) {
-  // Use first two shifts from DB to label the slots, or fall back to generic labels
   const shift1 = shifts[0];
   const shift2 = shifts[1];
 
@@ -103,47 +113,40 @@ export default function SupervisorStep({
         Assign a supervisor for each shift. Both are optional.
       </Text>
 
-      {/* Shift 1 supervisor */}
-      <GlassCard innerStyle={styles.slotPad}>
-        <View style={styles.slotHeader}>
-          <Text style={styles.slotLabel}>{slot1Label}</Text>
+      <Accordion
+        defaultOpen
+        header={<Text style={styles.slotLabel}>{slot1Label}</Text>}
+      >
+        <View style={{ maxHeight: LIST_MAX_HEIGHT }}>
+          <PersonnelList
+            personnel={personnel}
+            selectedId={draft.supervisorId}
+            onSelect={(id) => onUpdate({ supervisorId: id })}
+          />
         </View>
-        <PersonnelList
-          personnel={personnel}
-          selectedId={draft.supervisorId}
-          onSelect={(id) => onUpdate({ supervisorId: id })}
-        />
-      </GlassCard>
+      </Accordion>
 
-      {/* Shift 2 supervisor */}
-      <GlassCard innerStyle={styles.slotPad}>
-        <View style={styles.slotHeader}>
-          <Text style={styles.slotLabel}>{slot2Label}</Text>
+      <Accordion
+        defaultOpen
+        header={<Text style={styles.slotLabel}>{slot2Label}</Text>}
+      >
+        <View style={{ maxHeight: LIST_MAX_HEIGHT }}>
+          <PersonnelList
+            personnel={personnel}
+            selectedId={draft.supervisorId2}
+            onSelect={(id) => onUpdate({ supervisorId2: id })}
+          />
         </View>
-        <PersonnelList
-          personnel={personnel}
-          selectedId={draft.supervisorId2}
-          onSelect={(id) => onUpdate({ supervisorId2: id })}
-        />
-      </GlassCard>
+      </Accordion>
     </>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   hint: {
     ...typography.caption,
     color: colors.textSecondary,
     marginBottom: spacing.xs,
-  },
-  slotPad: { padding: spacing.lg },
-  slotHeader: {
-    marginBottom: spacing.md,
-    paddingBottom: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(28,28,46,0.08)',
   },
   slotLabel: {
     ...typography.caption,
@@ -152,7 +155,8 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  list: { gap: spacing.xs },
+  list: { flexGrow: 0 },
+  listContent: { gap: spacing.xs, paddingBottom: spacing.xs },
   personRow: {
     flexDirection: 'row',
     alignItems: 'center',

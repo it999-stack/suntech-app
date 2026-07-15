@@ -1,7 +1,4 @@
 // src/screens/Piles/PilesScreen.tsx
-//
-// Shows all piles (All Piles mode) or today's planned piles (Today's Target mode).
-// Accepts initialView and initialFilter route params from HomeScreen deep-links.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
@@ -13,15 +10,27 @@ import SearchBar from '@components/piles/SearchBar';
 import PileFilterBar, { PileFilterKey } from '@components/piles/PileFilterBar';
 import PileAccordionItem, { PileItemData } from '@components/piles/PileAccordionItem';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
-import { usePilesContext } from '@state/PilesContext';
+import { usePilesAreasStore } from '@store/pilesAreasStore';
 import { usePlan } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
 import { getMachinesBySite } from '@repositories/machinesRepository';
 import type { PilesStackParamList } from '@app-types/navigation';
+import EmptyState from '@/components/shared/EmptyState';
 
 type Props = NativeStackScreenProps<PilesStackParamList, 'PilesScreen'>;
 
 type ViewMode = 'all' | 'today';
+
+// Steps carry plannedStart/plannedEnd as ISO-ish datetime strings, so a
+// straight ascending string/Date comparison sorts them chronologically.
+// Any step missing a plannedStart sinks to the end rather than throwing
+// off the order of the ones that do have a time.
+function byPlannedStartAsc<T extends { plannedStart?: string }>(a: T, b: T): number {
+  if (!a.plannedStart && !b.plannedStart) return 0;
+  if (!a.plannedStart) return 1;
+  if (!b.plannedStart) return -1;
+  return new Date(a.plannedStart).getTime() - new Date(b.plannedStart).getTime();
+}
 
 function ViewToggle({ active, onChange }: { active: ViewMode; onChange: (v: ViewMode) => void }) {
   return (
@@ -51,10 +60,16 @@ export default function PilesScreen() {
   const initialView = route.params?.initialView ?? 'today';
   const initialFilter = (route.params?.initialFilter as PileFilterKey | undefined) ?? 'all';
 
-  const { piles, isLoading: pilesLoading, error } = usePilesContext();
+  const user = useAuthStore((s) => s.user);
+
+  const { piles, isLoading: pilesLoading, error, loadAll } = usePilesAreasStore();
   const { checklistPiles, planSteps, actualSteps } = usePlan();
 
-  const user = useAuthStore((s) => s.user);
+  // Load piles + areas for the current site on mount and whenever siteId changes.
+  useEffect(() => {
+    loadAll(user?.siteId);
+  }, [user?.siteId, loadAll]);
+
   const [machineMap, setMachineMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
@@ -68,100 +83,106 @@ export default function PilesScreen() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<PileFilterKey>(initialFilter);
 
-  // ── Build "Today's Target" items from plan context ─────────────────────────
-  const todayItems = useMemo<PileItemData[]>(() => {
-    return checklistPiles.map((cp) => {
-      const pile = piles.find((p) => p.id === cp.pileId);
-      const pileSteps = planSteps.filter((s) => s.checklistPileId === cp.id);
-      // actualSteps are keyed by checklistPileId + stepId
-      const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
+// ── Build "Today's Target" items from plan context ─────────────────────────
+   const todayItems = useMemo<PileItemData[]>(() => {
+     return checklistPiles.map((cp) => {
+       const pile = piles.find((p) => p.id === cp.pileId);
+       const pileSteps = planSteps
+         .filter((s) => s.checklistPileId === cp.id)
+         .slice()
+         .sort(byPlannedStartAsc);
+       // actualSteps are keyed by checklistPileId + stepId
+       const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
 
-      // Derive pile status
-      let status: PileItemData['status'] = 'pending';
-      if (pileActuals.some((a) => a.actualStart && !a.actualEnd)) status = 'in_progress';
-      else if (
-        pileSteps.length > 0 &&
-        pileActuals.filter((a) => a.actualEnd).length === pileSteps.length
-      ) status = 'completed';
+       // Derive pile status
+       let status: PileItemData['status'] = 'pending';
+       if (pileActuals.some((a) => a.actualStart && !a.actualEnd)) status = 'in_progress';
+       else if (
+         pileSteps.length > 0 &&
+         pileActuals.filter((a) => a.actualEnd).length === pileSteps.length
+       ) status = 'completed';
 
-      return {
-        id: cp.id,
-        code: pile?.pileIdCode ?? cp.pileId,
-        dia: pile?.dia ?? 0,
-        depth: pile?.depth ?? 0,
-        rig: machineMap.get(cp.rigId) ?? '—',
-        crane: machineMap.get(cp.craneId) ?? '—',
-        status,
-        steps: pileSteps.map((s) => {
-          const actual = pileActuals.find((a) => a.stepId === s.stepId);
-          return {
-            id: s.id,
-            name: s.stepName ?? '',
-            track: (s.track ?? 'RIG') as 'RIG' | 'CRANE',
-            start: s.plannedStart,
-            end: s.plannedEnd,
-            status: actual?.actualEnd ? 'done' : 'upcoming',
-          } satisfies import('../../components/piles/PileAccordionItem').PlanStep;
-        }),
-      };
-    });
-  }, [checklistPiles, piles, planSteps, actualSteps, machineMap]);
+       return {
+         id: cp.id,
+         code: pile?.code ?? cp.pileId,
+         dia: pile?.dia ?? 0,
+         depth: pile?.depth ?? 0,
+         rig: machineMap.get(cp.rigId) ?? '—',
+         crane: machineMap.get(cp.craneId) ?? '—',
+         status,
+         steps: pileSteps.map((s) => {
+           const actual = pileActuals.find((a) => a.stepId === s.stepId);
+           return {
+             id: s.id,
+             name: s.stepName ?? '',
+             track: (s.track ?? 'RIG') as 'RIG' | 'CRANE',
+             start: s.plannedStart,
+             end: s.plannedEnd,
+             status: actual?.actualEnd ? 'done' : 'upcoming',
+           } satisfies import('../../components/piles/PileAccordionItem').PlanStep;
+         }),
+       };
+     });
+   }, [checklistPiles, piles, planSteps, actualSteps, machineMap]);
 
-  // ── Build "All Piles" items ─────────────────────────────────────────────────
-  // Cross-reference with today's plan so piles that are planned show live status.
-  const allItems = useMemo<PileItemData[]>(
-    () =>
-      piles.map((p) => {
-        // Check if this pile is in today's plan
-        const cp = checklistPiles.find((c) => c.pileId === p.id);
-        if (!cp) {
-          // Not planned today — show as pending with no steps
-          return {
-            id: p.id,
-            code: p.pileIdCode,
-            dia: p.dia,
-            depth: p.depth,
-            rig: '—',
-            crane: '—',
-            status: 'pending' as const,
-            steps: [],
-          };
-        }
+   // ── Build "All Piles" items ─────────────────────────────────────────────────
+   // Cross-reference with today's plan so piles that are planned show live status.
+   const allItems = useMemo<PileItemData[]>(
+     () =>
+       piles.map((p) => {
+         // Check if this pile is in today's plan
+         const cp = checklistPiles.find((c) => c.pileId === p.id);
+         if (!cp) {
+           // Not planned today — show as pending with no steps
+           return {
+             id: p.id,
+             code: p.code,
+             dia: p.dia,
+             depth: p.depth,
+             rig: '—',
+             crane: '—',
+             status: 'pending' as const,
+             steps: [],
+           };
+         }
 
-        // Planned today — derive live status from actuals
-        const pileSteps = planSteps.filter((s) => s.checklistPileId === cp.id);
-        const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
+         // Planned today — derive live status from actuals
+         const pileSteps = planSteps
+           .filter((s) => s.checklistPileId === cp.id)
+           .slice()
+           .sort(byPlannedStartAsc);
+         const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
 
-        let status: PileItemData['status'] = 'pending';
-        if (pileActuals.some((a) => a.actualStart && !a.actualEnd)) status = 'in_progress';
-        else if (
-          pileSteps.length > 0 &&
-          pileActuals.filter((a) => a.actualEnd).length === pileSteps.length
-        ) status = 'completed';
+         let status: PileItemData['status'] = 'pending';
+         if (pileActuals.some((a) => a.actualStart && !a.actualEnd)) status = 'in_progress';
+         else if (
+           pileSteps.length > 0 &&
+           pileActuals.filter((a) => a.actualEnd).length === pileSteps.length
+         ) status = 'completed';
 
-        return {
-          id: p.id,
-          code: p.pileIdCode,
-          dia: p.dia,
-          depth: p.depth,
-          rig: machineMap.get(cp.rigId) ?? '—',
-          crane: machineMap.get(cp.craneId) ?? '—',
-          status,
-          steps: pileSteps.map((s) => {
-            const actual = pileActuals.find((a) => a.stepId === s.stepId);
-            return {
-              id: s.id,
-              name: s.stepName ?? '',
-              track: (s.track ?? 'RIG') as 'RIG' | 'CRANE',
-              start: s.plannedStart,
-              end: s.plannedEnd,
-              status: actual?.actualEnd ? 'done' : 'upcoming',
-            } satisfies import('../../components/piles/PileAccordionItem').PlanStep;
-          }),
-        };
-      }),
-    [piles, checklistPiles, planSteps, actualSteps, machineMap],
-  );
+         return {
+           id: p.id,
+           code: p.code,
+           dia: p.dia,
+           depth: p.depth,
+           rig: machineMap.get(cp.rigId) ?? '—',
+           crane: machineMap.get(cp.craneId) ?? '—',
+           status,
+           steps: pileSteps.map((s) => {
+             const actual = pileActuals.find((a) => a.stepId === s.stepId);
+             return {
+               id: s.id,
+               name: s.stepName ?? '',
+               track: (s.track ?? 'RIG') as 'RIG' | 'CRANE',
+               start: s.plannedStart,
+               end: s.plannedEnd,
+               status: actual?.actualEnd ? 'done' : 'upcoming',
+             } satisfies import('../../components/piles/PileAccordionItem').PlanStep;
+           }),
+         };
+       }),
+     [piles, checklistPiles, planSteps, actualSteps, machineMap],
+   );
 
   // ── Filter ──────────────────────────────────────────────────────────────────
   const sourceItems = viewMode === 'today' ? todayItems : allItems;
@@ -174,6 +195,35 @@ export default function PilesScreen() {
   }, [sourceItems, query, filter]);
 
   const shownCount = filtered.length;
+
+  function getEmptyStateContent() {
+    if (viewMode === 'today' && checklistPiles.length === 0) {
+      return {
+        icon: 'calendar' as const,
+        title: 'No plan generated',
+        message: 'Go to Home to create a plan for today.',
+      };
+    }
+    if (viewMode === 'today') {
+      return {
+        icon: 'search' as const,
+        title: 'No matches',
+        message: 'No piles match your filter.',
+      };
+    }
+    if (piles.length === 0) {
+      return {
+        icon: 'download' as const,
+        title: 'No piles synced',
+        message: 'No piles synced yet. Pull data from the Profile tab.',
+      };
+    }
+    return {
+      icon: 'search' as const,
+      title: 'No matches',
+      message: 'No piles match your search or filter.',
+    };
+  }
 
   // ── Loading ─────────────────────────────────────────────────────────────────
   if (pilesLoading) {
@@ -203,6 +253,7 @@ export default function PilesScreen() {
           </View>
 
           <ViewToggle active={viewMode} onChange={setViewMode} />
+          
           <SearchBar value={query} onChangeText={setQuery} />
           <PileFilterBar active={filter} onChange={setFilter} />
         </View>
@@ -220,15 +271,7 @@ export default function PilesScreen() {
           ))}
 
           {filtered.length === 0 && !error && (
-            <Text style={styles.emptyText}>
-              {viewMode === 'today' && checklistPiles.length === 0
-                ? "No plan generated for today. Go to Home to create one."
-                : viewMode === 'today'
-                ? 'No piles match your filter.'
-                : piles.length === 0
-                ? 'No piles synced yet. Pull data from the Profile tab.'
-                : 'No piles match your search or filter.'}
-            </Text>
+            <EmptyState {...getEmptyStateContent()} />
           )}
         </ScrollView>
       </SafeAreaView>

@@ -13,6 +13,7 @@ import type {
   PilingStepDurationTemplate,
   PilingDimension,
   NewPilingStepDurationTemplate,
+  NewPilingStep,
 } from '@/db/schema';
 
 /** Returns all steps ordered by sequence_order. */
@@ -57,13 +58,14 @@ export async function getTemplatesWithDimensions(
       dimensionId: pilingStepDurationTemplates.dimensionId,
       durationMinutes: pilingStepDurationTemplates.durationMinutes,
       bufferBeforeMinutes: pilingStepDurationTemplates.bufferBeforeMinutes,
+      syncedAt: pilingStepDurationTemplates.syncedAt,
       // dimension columns
       dimId: pilingDimensions.id,
       dimSiteId: pilingDimensions.siteId,
       dia: pilingDimensions.dia,
       depth: pilingDimensions.depth,
       label: pilingDimensions.label,
-      syncedAt: pilingDimensions.syncedAt,
+      dimSyncedAt: pilingDimensions.syncedAt,
     })
     .from(pilingStepDurationTemplates)
     .leftJoin(
@@ -79,6 +81,7 @@ export async function getTemplatesWithDimensions(
     dimensionId: r.dimensionId,
     durationMinutes: r.durationMinutes,
     bufferBeforeMinutes: r.bufferBeforeMinutes,
+    syncedAt: r.syncedAt!,
     dimension: r.dimId
       ? {
           id: r.dimId,
@@ -86,7 +89,7 @@ export async function getTemplatesWithDimensions(
           dia: r.dia!,
           depth: r.depth!,
           label: r.label ?? null,
-          syncedAt: r.syncedAt!,
+          syncedAt: r.dimSyncedAt!,
         }
       : null,
   }));
@@ -98,6 +101,19 @@ export async function insertTemplate(
 ): Promise<void> {
   const db = await initDb();
   await db.insert(pilingStepDurationTemplates).values(template);
+}
+
+/** Saves a list of steps. */
+export async function saveSteps(
+  rows: NewPilingStep[],
+): Promise<void> {
+  const db = await initDb();
+
+  await db.delete(pilingSteps);
+
+  if (!rows.length) return;
+
+  await db.insert(pilingSteps).values(rows);
 }
 
 /** Deletes a duration template by id. */

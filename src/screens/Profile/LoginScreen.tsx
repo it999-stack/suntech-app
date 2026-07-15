@@ -7,11 +7,12 @@ import {
   StyleSheet,
   TextInput,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { HardHat } from 'lucide-react-native';
+import { HardHat, AlertCircle } from 'lucide-react-native';
 
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { useAuthStore } from '@store/authStore';
@@ -49,6 +50,7 @@ export default function LoginScreen() {
                     placeholderTextColor={colors.textSecondary}
                     autoCapitalize="none"
                     keyboardType="email-address"
+                    editable={!isLoggingIn}
                     style={styles.input}
                   />
 
@@ -59,10 +61,16 @@ export default function LoginScreen() {
                     placeholder="••••••••"
                     placeholderTextColor={colors.textSecondary}
                     secureTextEntry
+                    editable={!isLoggingIn}
                     style={styles.input}
                   />
 
-                  {error && <Text style={styles.errorText}>{error}</Text>}
+                  {error && (
+                    <View style={styles.errorBox}>
+                      <AlertCircle size={16} color={colors.danger} />
+                      <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                  )}
 
                   <Pressable
                     onPress={handleLogin}
@@ -72,9 +80,11 @@ export default function LoginScreen() {
                       (pressed || isLoggingIn) && styles.buttonPressed,
                     ]}
                   >
-                    <Text style={styles.buttonText}>
-                      {isLoggingIn ? 'Signing in…' : 'Sign in'}
-                    </Text>
+                    {isLoggingIn ? (
+                      <ActivityIndicator size="small" color={colors.textInverse} />
+                    ) : (
+                      <Text style={styles.buttonText}>Sign in</Text>
+                    )}
                   </Pressable>
                 </View>
               </BlurView>
@@ -140,10 +150,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.textPrimary,
   },
+
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.md,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.dangerSoft,
+  },
   errorText: {
     ...typography.caption,
     color: colors.danger,
-    marginTop: spacing.md,
+    flex: 1,
   },
 
   button: {
@@ -151,7 +171,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     paddingVertical: spacing.md,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: spacing.lg,
+    height: 48,
   },
   buttonPressed: {
     opacity: 0.85,

@@ -11,6 +11,7 @@ type SyncState = {
   isSyncing: boolean;
   lastSyncedAt: number | null;
   pilesCount: number | null;
+  checklistsSynced: number | null;
   error: string | null;
   /** Name of the step currently running (e.g. "piles"), null when idle. */
   currentStep: string | null;
@@ -25,6 +26,7 @@ export const useSyncStore = create<SyncState>((set) => ({
   isSyncing: false,
   lastSyncedAt: null,
   pilesCount: null,
+  checklistsSynced: null,
   error: null,
   currentStep: null,
   completedSteps: [],
@@ -51,13 +53,16 @@ export const useSyncStore = create<SyncState>((set) => ({
       );
 
       const pilesStep = result.steps.find((s) => s.step === 'piles');
+      const appSyncStep = result.steps.find((s) => s.step === 'sync_app_plan');
       const pilesCount = pilesStep?.count ?? null;
+      const checklistsSynced = appSyncStep?.count ?? null;
       const failedStep = result.steps.find((s) => s.error);
 
       set({
         isSyncing: false,
         lastSyncedAt: result.totalSyncedAt,
         pilesCount,
+        checklistsSynced,
         currentStep: null,
         error: failedStep ? failedStep.error! : null,
       });

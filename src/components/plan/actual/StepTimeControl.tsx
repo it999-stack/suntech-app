@@ -1,13 +1,10 @@
 // src/components/plan/actual/StepTimeControl.tsx
-//
-// One control for logging either the actual start or actual finish of a
-// step. Two ways to pick the time (Now vs a custom pick via TimerSelectMenu),
-// but both always end at the same confirm() call — so the alert copy and
-// the actual commit only live in one place.
 
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { MessageSquareText } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import RemarksModal from '@components/plan/actual/RemarksModal';
 import { formatMinutes } from '@utils/formatTime';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
@@ -19,6 +16,10 @@ interface Props {
   /** Sensible default minutes to seed the picker with (planned start/end). */
   defaultMinutes: number;
   onConfirm: (minutes: number) => void;
+  /** Existing remark text for this step, if any. */
+  remarks?: string;
+  /** Called when the user saves a remark from the icon-triggered modal. */
+  onSaveRemarks?: (text: string) => void;
 }
 
 function nowAsMinutes(): number {
@@ -26,11 +27,20 @@ function nowAsMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-export default function StepTimeControl({ mode, stepName, defaultMinutes, onConfirm }: Props) {
+export default function StepTimeControl({
+  mode,
+  stepName,
+  defaultMinutes,
+  onConfirm,
+  remarks,
+  onSaveRemarks,
+}: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
+  const [remarksOpen, setRemarksOpen] = useState(false);
 
   const verb = mode === 'start' ? 'Start' : 'Finish';
+  const hasRemarks = !!remarks && remarks.trim().length > 0;
 
   function confirm(minutes: number) {
     const title = mode === 'start' ? `Start ${stepName}?` : `Finish ${stepName}?`;
@@ -43,7 +53,7 @@ export default function StepTimeControl({ mode, stepName, defaultMinutes, onConf
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Confirm',
-        style: mode === 'finish' ? 'default' : 'default',
+        style: 'default',
         onPress: () => {
           onConfirm(minutes);
           setPickerOpen(false);
@@ -54,48 +64,63 @@ export default function StepTimeControl({ mode, stepName, defaultMinutes, onConf
 
   return (
     <>
-      <View style={styles.wrap}>
-        <View style={styles.actionRow}>
-          <Pressable
-            style={[styles.actionBtn, styles.nowBtn]}
-            onPress={() => confirm(nowAsMinutes())}
-          >
-            <Text style={styles.nowBtnText}>{verb} Now</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.actionBtn, styles.pickBtn]}
-            onPress={() => {
-              setDraftMinutes(defaultMinutes);
-              setPickerOpen(true);
-            }}
-          >
-            <Text style={styles.pickBtnText}>Pick a time</Text>
-          </Pressable>
+        <View style={styles.wrap}>
+          <View style={styles.actionRow}>
+            <Pressable
+              style={[styles.actionBtn, styles.nowBtn]}
+              onPress={() => confirm(nowAsMinutes())}
+            >
+              <Text style={styles.nowBtnText}>{verb} Now</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.actionBtn, styles.pickBtn]}
+              onPress={() => {
+                setDraftMinutes(defaultMinutes);
+                setPickerOpen(true);
+              }}
+            >
+              <Text style={styles.pickBtnText}>Pick a time</Text>
+            </Pressable>
+
+            {onSaveRemarks && (
+              <Pressable
+                style={styles.remarksBtn}
+                onPress={() => setRemarksOpen(true)}
+                hitSlop={8}
+              >
+                <MessageSquareText
+                  size={18}
+                  color={hasRemarks ? colors.accent : colors.textSecondary}
+                />
+                {hasRemarks && <View style={styles.remarksDot} />}
+              </Pressable>
+            )}
+          </View>
         </View>
 
-        {pickerOpen && (
-          <View style={styles.pickerWrap}>
-            <Pressable style={styles.timePickerBtn} onPress={() => setPickerOpen(false)}>
-              <Text style={styles.timePickerBtnText}>{formatMinutes(draftMinutes)}</Text>
-            </Pressable>
-            <Pressable style={styles.confirmPickBtn} onPress={() => confirm(draftMinutes)}>
-              <Text style={styles.confirmPickBtnText}>
-                {verb} at {formatMinutes(draftMinutes)}
-              </Text>
-            </Pressable>
-          </View>
-        )}
-      </View>
+        <TimerSelectMenu
+          visible={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onTimeSelect={(date) => {
+            const m = date.getHours() * 60 + date.getMinutes();
+            setDraftMinutes(m);
+          }}
+          onConfirm={(date) => {
+            const m = date.getHours() * 60 + date.getMinutes();
+            confirm(m);
+          }}
+          initialDate={(() => { const d = new Date(); d.setHours(Math.floor(defaultMinutes / 60), defaultMinutes % 60, 0, 0); return d; })()}
+        />
 
-      <TimerSelectMenu
-        visible={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onTimeSelect={(date) => {
-          const m = date.getHours() * 60 + date.getMinutes();
-          setDraftMinutes(m);
-        }}
-        initialDate={(() => { const d = new Date(); d.setHours(Math.floor(defaultMinutes / 60), defaultMinutes % 60, 0, 0); return d; })()}
-      />
+      {onSaveRemarks && (
+        <RemarksModal
+          visible={remarksOpen}
+          stepName={stepName}
+          initialValue={remarks}
+          onClose={() => setRemarksOpen(false)}
+          onSave={onSaveRemarks}
+        />
+      )}
     </>
   );
 }
@@ -104,6 +129,7 @@ const styles = StyleSheet.create({
   wrap: { marginTop: spacing.sm },
   actionRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
   },
   actionBtn: {
@@ -112,48 +138,25 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm + 2,
     alignItems: 'center',
   },
-  nowBtn: {
-    backgroundColor: colors.accent,
-  },
-  nowBtnText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
-  },
-  pickBtn: {
-    backgroundColor: 'rgba(28,28,46,0.06)',
-  },
-  pickBtnText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  pickerWrap: {
-    marginTop: spacing.md,
-    alignItems: 'stretch',
-  },
-  confirmPickBtn: {
-    marginTop: spacing.sm,
-    backgroundColor: colors.accent,
+  nowBtn: { backgroundColor: colors.accent },
+  nowBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
+  pickBtn: { backgroundColor: 'rgba(28,28,46,0.06)' },
+  pickBtnText: { ...typography.body, fontWeight: '700', color: colors.textSecondary },
+  remarksBtn: {
+    width: 40,
+    height: 40,
     borderRadius: radius.pill,
-    paddingVertical: spacing.sm + 2,
-    alignItems: 'center',
-  },
-  confirmPickBtnText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
-  },
-  timePickerBtn: {
     backgroundColor: 'rgba(28,28,46,0.06)',
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.md,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  timePickerBtnText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textSecondary,
+  remarksDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
   },
 });

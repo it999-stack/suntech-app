@@ -6,6 +6,7 @@ import { colors, spacing, radius, typography } from '@/theme/theme';
 
 export type Step =
   | 'intro'
+  | 'area'
   | 'start'
   | 'machines'
   | 'piles'
@@ -15,6 +16,7 @@ export type Step =
 
 export const STEP_ORDER: Step[] = [
   'intro',
+  'area',
   'start',
   'machines',
   'piles',
@@ -25,6 +27,7 @@ export const STEP_ORDER: Step[] = [
 
 export const STEP_LABEL: Record<Step, string> = {
   intro:       'Overview',
+  area:        'Area & Piles',
   start:       'Start Time',
   machines:    'Machines',
   piles:       'Piles & Assign',
@@ -88,7 +91,7 @@ export default function ProgressHeader({ step, onBack, onNext, nextDisabled }: P
 
 const styles = StyleSheet.create({
   headerArea: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
   },

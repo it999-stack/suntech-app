@@ -1,7 +1,7 @@
 // src/repositories/shiftsRepository.ts
-// CRUD helpers for piling_shift_types and piling_non_working_windows in local SQLite.
+// Local SQLite access for piling_shift_types and piling_non_working_windows.
 
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingShiftTypes,
@@ -10,58 +10,31 @@ import {
   type NewPilingNonWorkingWindow,
   type PilingShiftType,
   type PilingNonWorkingWindow,
-  type NonWorkingWindowBehavior,
 } from '@db/schema';
 
 // ─── Shift Types ──────────────────────────────────────────────────────────────
 
 /**
- * Upsert a batch of shift types (replace on conflict by primary key).
- * Called by SyncShiftsStep after fetching from the server.
+ * Replace/update shift types from the latest server sync.
  */
 export async function saveShiftTypes(rows: NewPilingShiftType[]): Promise<void> {
   if (!rows.length) return;
+
   const db = await initDb();
+
   await db
     .insert(pilingShiftTypes)
     .values(rows)
     .onConflictDoUpdate({
       target: pilingShiftTypes.id,
       set: {
+        siteId: sql`excluded.site_id`,
         name: sql`excluded.name`,
         startTime: sql`excluded.start_time`,
         endTime: sql`excluded.end_time`,
         syncedAt: sql`excluded.synced_at`,
       },
     });
-}
-
-/**
- * Upsert a single shift type. Used by SiteSettingsContext write-through mutations.
- */
-export async function upsertShiftType(row: NewPilingShiftType): Promise<void> {
-  const db = await initDb();
-  await db
-    .insert(pilingShiftTypes)
-    .values(row)
-    .onConflictDoUpdate({
-      target: pilingShiftTypes.id,
-      set: {
-        name: sql`excluded.name`,
-        startTime: sql`excluded.start_time`,
-        endTime: sql`excluded.end_time`,
-        syncedAt: sql`excluded.synced_at`,
-      },
-    });
-}
-
-/**
- * Delete a single shift type and all its non-working windows from SQLite.
- */
-export async function deleteShiftType(id: string): Promise<void> {
-  const db = await initDb();
-  await db.delete(pilingNonWorkingWindows).where(eq(pilingNonWorkingWindows.shiftTypeId, id));
-  await db.delete(pilingShiftTypes).where(eq(pilingShiftTypes.id, id));
 }
 
 /**
@@ -75,85 +48,63 @@ export async function getAllShiftTypes(): Promise<PilingShiftType[]> {
 // ─── Non-Working Windows ──────────────────────────────────────────────────────
 
 /**
- * Upsert a batch of non-working windows for a site.
- * Deletes existing rows for the site first to handle server-side deletions.
+ * Replaces all cached non-working windows with the latest server copy.
  */
 export async function saveNonWorkingWindows(
-  siteId: string,
   rows: NewPilingNonWorkingWindow[],
 ): Promise<void> {
   const db = await initDb();
-  // Replace all windows for this site — handles deletes from the server cleanly.
-  await db
-    .delete(pilingNonWorkingWindows)
-    .where(eq(pilingNonWorkingWindows.siteId, siteId));
-  if (rows.length) {
-    const normalized: NewPilingNonWorkingWindow[] = rows.map((r) => ({
-      ...r,
-      behavior: (r.behavior ?? 'FIXED') as NonWorkingWindowBehavior,
-    }));
-    await db.insert(pilingNonWorkingWindows).values(normalized);
-  }
+  await db.delete(pilingNonWorkingWindows);
+
+  if (!rows.length) return;
+
+  await db.insert(pilingNonWorkingWindows).values(rows);
 }
 
 /**
- * Returns all non-working windows for a given site.
- */
-export async function getNonWorkingWindowsBySite(
-  siteId: string,
-): Promise<PilingNonWorkingWindow[]> {
-  const db = await initDb();
-  return db
-    .select()
-    .from(pilingNonWorkingWindows)
-    .where(eq(pilingNonWorkingWindows.siteId, siteId))
-    .all();
-}
-
-/**
- * Upsert a single non-working window. Used by SiteSettingsContext write-through.
- */
-export async function upsertNonWorkingWindow(row: NewPilingNonWorkingWindow): Promise<void> {
-  const db = await initDb();
-  await db
-    .insert(pilingNonWorkingWindows)
-    .values(row)
-    .onConflictDoUpdate({
-      target: pilingNonWorkingWindows.id,
-      set: {
-        label: sql`excluded.label`,
-        startTime: sql`excluded.start_time`,
-        endTime: sql`excluded.end_time`,
-        behavior: sql`excluded.behavior`,
-        syncedAt: sql`excluded.synced_at`,
-      },
-    });
-}
-
-/**
- * Delete a single non-working window by id.
- */
-export async function deleteNonWorkingWindow(id: string): Promise<void> {
-  const db = await initDb();
-  await db.delete(pilingNonWorkingWindows).where(eq(pilingNonWorkingWindows.id, id));
-}
-
-/**
- * Returns all non-working windows for a given site + shift type combo.
+ * Returns all windows belonging to a shift.
  */
 export async function getNonWorkingWindowsByShift(
-  siteId: string,
   shiftTypeId: string,
 ): Promise<PilingNonWorkingWindow[]> {
   const db = await initDb();
   return db
     .select()
     .from(pilingNonWorkingWindows)
-    .where(
-      and(
-        eq(pilingNonWorkingWindows.siteId, siteId),
-        eq(pilingNonWorkingWindows.shiftTypeId, shiftTypeId),
-      ),
-    )
+    .where(eq(pilingNonWorkingWindows.shiftTypeId, shiftTypeId))
     .all();
+}
+
+// ─── Combined Query ───────────────────────────────────────────────────────────
+
+/**
+ * Shift with its non-working windows embedded.
+ */
+export type ShiftWithWindows = PilingShiftType & {
+  windows: PilingNonWorkingWindow[];
+};
+
+/**
+ * Returns all shifts for a site with their windows embedded.
+ * Used by SiteSettingsContext for read-only display.
+ */
+export async function getAllShiftsWithWindows(
+  siteId: string,
+): Promise<ShiftWithWindows[]> {
+  const db = await initDb();
+
+  const shifts = await db
+    .select()
+    .from(pilingShiftTypes)
+    .where(eq(pilingShiftTypes.siteId, siteId))
+    .all();
+
+  const shiftsWithWindows = await Promise.all(
+    shifts.map(async (shift) => ({
+      ...shift,
+      windows: await getNonWorkingWindowsByShift(shift.id),
+    }))
+  );
+
+  return shiftsWithWindows;
 }

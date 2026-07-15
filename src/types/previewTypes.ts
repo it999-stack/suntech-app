@@ -6,6 +6,7 @@ export interface PreviewPile {
   id: string;
   checklistPileId: string;
   code: string;
+  /** Dimension values for display - populated from joined dimension table. */
   dia: number;
   depth: number;
   rigMachineNo: string;

@@ -2,16 +2,14 @@
 
 import { Platform } from 'react-native';
 
-const LOCAL_IP = '192.168.1.XX';
+const LOCAL_IP = '192.168.0.106';
 
 function resolveBaseUrl() {
   if (__DEV__) {
     if (Platform.OS === 'android') {
-      // Android emulator can't reach your PC via "localhost" — it needs
-      // this special alias that maps to the host machine.
-      return 'http://10.0.2.2:4000/api';
-      // If testing on a PHYSICAL Android device on the same Wi-Fi instead
-      // of the emulator, use LOCAL_IP here instead of 10.0.2.2.
+      // Physical device on same WiFi needs the host machine's LAN IP —
+      // 10.0.2.2 only works for the Android emulator, not real devices.
+      return `http://${LOCAL_IP}:4000/api`;
     }
     // iOS simulator can reach your Mac's localhost directly.
     return 'http://localhost:4000/api';

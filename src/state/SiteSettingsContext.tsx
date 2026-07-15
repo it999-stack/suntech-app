@@ -1,21 +1,13 @@
 // src/state/SiteSettingsContext.tsx
 //
 // Shifts and non-working windows are loaded from local SQLite.
-// Mutations write-through to SQLite immediately so the data survives
-// app restarts and can be pushed to the server by SyncShiftsStep.
+// This context is read-only — the server is the source of truth.
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Shift, NonWorkingWindow, DiaDepthTemplate } from '@app-types/siteSettings';
 import type { NonWorkingWindowBehavior } from '@db/schema';
 import { getDimensionsBySite } from '@repositories/dimensionsRepository';
-import {
-  getAllShiftTypes,
-  getNonWorkingWindowsBySite,
-  upsertShiftType,
-  deleteShiftType,
-  upsertNonWorkingWindow,
-  deleteNonWorkingWindow,
-} from '@repositories/shiftsRepository';
+import { getAllShiftsWithWindows, type ShiftWithWindows } from '@repositories/shiftsRepository';
 import { useAuthStore } from '@store/authStore';
 
 /** Convert "HH:MM" string to minutes-since-midnight. */
@@ -28,15 +20,8 @@ type SiteSettingsContextValue = {
   shifts: Shift[];
   windows: NonWorkingWindow[];
   templates: DiaDepthTemplate[];
-  addShift: (input: Omit<Shift, 'id'>) => void;
-  updateShift: (id: string, input: Partial<Omit<Shift, 'id'>>) => void;
-  deleteShift: (id: string) => void;
+  /** Get windows for a specific shift (read-only). */
   windowsForShift: (shiftId: string) => NonWorkingWindow[];
-  addWindow: (input: Omit<NonWorkingWindow, 'id'>) => void;
-  updateWindow: (id: string, input: Partial<Omit<NonWorkingWindow, 'id'>>) => void;
-  deleteWindow: (id: string) => void;
-  addTemplate: (input: Omit<DiaDepthTemplate, 'id'>) => void;
-  deleteTemplate: (id: string) => void;
   /** Re-load all site settings from local SQLite. Call after a sync completes. */
   reloadFromDb: (siteId: string) => Promise<void>;
 };
@@ -53,37 +38,39 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
 
   const reloadFromDb = async (siteId: string) => {
     try {
-      // Shift types
-      const shiftRows = await getAllShiftTypes();
-      setShifts(
-        shiftRows.map((s) => ({
-          id: s.id,
-          name: s.name,
-          startMinutes: timeToMinutes(s.startTime),
-          endMinutes: timeToMinutes(s.endTime),
-        }))
-      );
-    } catch (err) {
-      console.warn('[SiteSettings] Failed to load shift types from DB:', err);
-      setShifts([]);
-    }
+      // Load shifts with windows embedded
+      const shiftsWithWindows: ShiftWithWindows[] = await getAllShiftsWithWindows(siteId);
 
-    try {
-      // Non-working windows for this site
-      const windowRows = await getNonWorkingWindowsBySite(siteId);
-      console.log('Loaded non-working windows from DB:', windowRows);
-      setWindows(
-        windowRows.map((w) => ({
-          id: w.id,
-          shiftId: w.shiftTypeId,
-          label: w.label,
-          startMinutes: timeToMinutes(w.startTime),
-          endMinutes: timeToMinutes(w.endTime),
-          behavior: (w.behavior) as NonWorkingWindowBehavior,
-        }))
-      );
+      // Convert to UI types
+      const shiftRows: Shift[] = [];
+      const windowRows: NonWorkingWindow[] = [];
+
+      for (const shift of shiftsWithWindows) {
+        shiftRows.push({
+          id: shift.id,
+          name: shift.name,
+          startMinutes: timeToMinutes(shift.startTime),
+          endMinutes: timeToMinutes(shift.endTime),
+        });
+
+        // Windows are already scoped to this shift via getAllShiftsWithWindows
+        for (const window of shift.windows) {
+          windowRows.push({
+            id: window.id,
+            shiftId: window.shiftTypeId,
+            label: window.label,
+            startMinutes: timeToMinutes(window.startTime),
+            endMinutes: timeToMinutes(window.endTime),
+            behavior: window.behavior as NonWorkingWindowBehavior,
+          });
+        }
+      }
+
+      setShifts(shiftRows);
+      setWindows(windowRows);
     } catch (err) {
-      console.warn('[SiteSettings] Failed to load non-working windows from DB:', err);
+      console.warn('[SiteSettings] Failed to load shifts from DB:', err);
+      setShifts([]);
       setWindows([]);
     }
 
@@ -110,135 +97,27 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
     }
   }, [user?.siteId]);
 
-  // ─── Write-through mutations (update in-memory state + persist to SQLite) ─
+  // ─── Read-only context ────────────────────────────────────────────────────
 
-  /** Helper: convert minutes-since-midnight → "HH:MM" */
-  function minutesToTime(m: number): string {
-    const hh = String(Math.floor(m / 60)).padStart(2, '0');
-    const mm = String(m % 60).padStart(2, '0');
-    return `${hh}:${mm}`;
-  }
-
-  const addShift = (input: Omit<Shift, 'id'>) => {
-    const id = `shift-${Date.now()}`;
-    const newShift: Shift = { ...input, id };
-    setShifts((prev) => [...prev, newShift]);
-    // Write-through to SQLite
-    upsertShiftType({
-      id,
-      name: input.name,
-      startTime: minutesToTime(input.startMinutes),
-      endTime: minutesToTime(input.endMinutes),
-      syncedAt: Date.now(),
-    }).catch((err) => console.warn('[SiteSettings] Failed to persist shift type:', err));
-  };
-
-  const updateShift = (id: string, input: Partial<Omit<Shift, 'id'>>) => {
-    setShifts((prev) =>
-      prev.map((s) => {
-        if (s.id !== id) return s;
-        const updated = { ...s, ...input };
-        // Write-through to SQLite
-        upsertShiftType({
-          id,
-          name: updated.name,
-          startTime: minutesToTime(updated.startMinutes),
-          endTime: minutesToTime(updated.endMinutes),
-          syncedAt: Date.now(),
-        }).catch((err) => console.warn('[SiteSettings] Failed to update shift type:', err));
-        return updated;
-      })
-    );
-  };
-
-  const deleteShift = (id: string) => {
-    setShifts((prev) => prev.filter((s) => s.id !== id));
-    setWindows((prev) => prev.filter((w) => w.shiftId !== id));
-    // Write-through to SQLite (also cascades windows in the repo)
-    deleteShiftType(id).catch((err) =>
-      console.warn('[SiteSettings] Failed to delete shift type:', err)
-    );
-  };
-
-  const windowsForShift = (shiftId: string) => windows.filter((w) => w.shiftId === shiftId);
-
-  const addWindow = (input: Omit<NonWorkingWindow, 'id'>) => {
-    const id = `window-${Date.now()}`;
-    const newWindow: NonWorkingWindow = { ...input, id };
-    setWindows((prev) => [...prev, newWindow]);
-    // Write-through to SQLite
-    upsertNonWorkingWindow({
-      id,
-      siteId: user?.siteId ?? '',
-      shiftTypeId: input.shiftId,
-      label: input.label,
-      startTime: minutesToTime(input.startMinutes),
-      endTime: minutesToTime(input.endMinutes),
-      behavior: input.behavior,
-      syncedAt: Date.now(),
-    }).catch((err) => console.warn('[SiteSettings] Failed to persist non-working window:', err));
-  };
-
-  const deleteWindow = (id: string) => {
-    setWindows((prev) => prev.filter((w) => w.id !== id));
-    // Write-through to SQLite
-    deleteNonWorkingWindow(id).catch((err) =>
-      console.warn('[SiteSettings] Failed to delete non-working window:', err)
-    );
-  };
-
-  const updateWindow = (id: string, input: Partial<Omit<NonWorkingWindow, 'id'>>) => {
-    setWindows((prev) =>
-      prev.map((w) => {
-        if (w.id !== id) return w;
-        const updated = { ...w, ...input };
-        // Write-through to SQLite
-        upsertNonWorkingWindow({
-          id,
-          siteId: user?.siteId ?? '',
-          shiftTypeId: updated.shiftId,
-          label: updated.label,
-          startTime: minutesToTime(updated.startMinutes),
-          endTime: minutesToTime(updated.endMinutes),
-          behavior: updated.behavior,
-          syncedAt: Date.now(),
-        }).catch((err) => console.warn('[SiteSettings] Failed to update non-working window:', err));
-        return updated;
-      })
-    );
-  };
-
-  const addTemplate = (input: Omit<DiaDepthTemplate, 'id'>) => {
-    setTemplates((prev) => [...prev, { ...input, id: `template-${Date.now()}` }]);
-  };
-
-  const deleteTemplate = (id: string) => {
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
-  };
+  const windowsForShift = useMemo(() => {
+    return (shiftId: string) => windows.filter((w) => w.shiftId === shiftId);
+  }, [windows]);
 
   const value = useMemo<SiteSettingsContextValue>(
     () => ({
       shifts,
       windows,
       templates,
-      addShift,
-      updateShift,
-      deleteShift,
       windowsForShift,
-      addWindow,
-      updateWindow,
-      deleteWindow,
-      addTemplate,
-      deleteTemplate,
       reloadFromDb,
     }),
-    [shifts, windows, templates]
+    [shifts, windows, templates, windowsForShift]
   );
 
   return <SiteSettingsContext.Provider value={value}>{children}</SiteSettingsContext.Provider>;
 }
 
-export function useSiteSettings() {
+export function useSiteSettings(): SiteSettingsContextValue {
   const ctx = useContext(SiteSettingsContext);
   if (!ctx) throw new Error('useSiteSettings must be used within a SiteSettingsProvider');
   return ctx;

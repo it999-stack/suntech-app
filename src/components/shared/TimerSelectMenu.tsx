@@ -56,6 +56,8 @@ interface TimerSelectMenuProps {
   onClose: () => void;
   onTimeSelect: (date: Date) => void;
   initialDate?: Date;
+  /** Optional callback fired when user confirms - receives the selected date. */
+  onConfirm?: (date: Date) => void;
 }
 
 function tick() {
@@ -166,6 +168,7 @@ export default function TimerSelectMenu({
   onClose,
   onTimeSelect,
   initialDate,
+  onConfirm,
 }: TimerSelectMenuProps) {
   const [hour24, setHour24] = useState((initialDate ?? new Date()).getHours());
   const [minute, setMinute] = useState((initialDate ?? new Date()).getMinutes());
@@ -227,6 +230,7 @@ export default function TimerSelectMenu({
     const d = new Date(initialDate ?? new Date());
     d.setHours(hour24, minute, 0, 0);
     onTimeSelect(d);
+    onConfirm?.(d);
     onClose();
   }
 

@@ -32,10 +32,12 @@ import {
   type ActualStepWithMeta,
 } from '@repositories/planRepository';
 import { generatePlan as runPlanner } from '@services/pilingPlannerService';
+import { clearPendingWork } from '@repositories/workProgressRepository';
 import type {
   PilingDailyChecklist,
   PilingChecklistPile,
 } from '@db/schema';
+import type { ResumeWork } from '@/types/plan';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -45,10 +47,10 @@ export type PlanStatus = 'none' | 'planned' | 'in_progress' | 'completed';
 export type PileAssignmentInput = {
   pileId: string;      // pilingPiles.id
   pileCode: string;
-  dia: number;
-  depth: number;
+  dimensionId: string; // pilingDimensions.id - used for duration template lookup
   rigId: string;       // pilingMachines.id (type=RIG)
   craneId: string;     // pilingMachines.id (type=CRANE)
+  resumeWork?: ResumeWork;
 };
 
 export type GeneratePlanInput = {
@@ -62,6 +64,8 @@ export type GeneratePlanInput = {
   supervisorId: string | null;
   /** pilingPersonnel.id of the night/shift-2 supervisor on duty. */
   supervisorId2: string | null;
+  /** pilingShiftTypes.id of the active shift for this plan. */
+  shiftTypeId: string | null;
   /** Ordered list of piles + machine assignments. */
   piles: PileAssignmentInput[];
   /** Ordered list of selected step ids to include in this plan. */
@@ -85,6 +89,7 @@ type PlanContextValue = {
   loadChecklist: (siteId: string, date: string) => Promise<void>;
   /** Create the checklist + piles, then run the local planner. */
   generatePlan: (siteId: string, input: GeneratePlanInput) => Promise<void>;
+  setRemarks: (checklistPileId: string, stepId: string, remarks: string) => Promise<void>;
   /** Record an actual start or end time for a step. */
   setActualTime: (
     checklistPileId: string,
@@ -171,7 +176,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             id: newId,
             siteId,
             date: input.date,
-            shiftTypeId: null,
+            shiftTypeId: input.shiftTypeId,
             planStartTime: input.planStartTime,
             planEndTime: input.planEndTime,
             supervisorId: input.supervisorId,
@@ -185,7 +190,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           cl = newChecklist;
         } else {
           const updates = {
-            shiftTypeId: null,
+            shiftTypeId: input.shiftTypeId,
             planStartTime: input.planStartTime,
             planEndTime: input.planEndTime,
             supervisorId: input.supervisorId,
@@ -219,7 +224,13 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           checklistId: cl.id,
           planStartTime: input.planStartTime,
           siteId,
+          shiftTypeId: input.shiftTypeId ?? undefined,
           selectedStepIds: input.stepIds,
+          resumeWorkByPileId: Object.fromEntries(
+            input.piles
+              .filter((pile) => pile.resumeWork)
+              .map((pile) => [pile.pileId, pile.resumeWork!]),
+          ),
         });
 
         // 4. Reload state from DB (plan steps + actuals + piles)
@@ -257,6 +268,34 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         remarks: existing?.remarks ?? null,
       });
 
+      if (field === 'actualEnd') {
+        const checklistPile = checklistPiles.find((pile) => pile.id === checklistPileId);
+        if (checklistPile) await clearPendingWork(checklistPile.pileId, stepId);
+      }
+
+      if (checklist) {
+        const refreshed = await getActualStepsForChecklist(checklist.id);
+        setActualSteps(refreshed);
+      }
+    },
+    [actualSteps, checklist, checklistPiles],
+  );
+
+  const setRemarks = useCallback(
+    async (checklistPileId: string, stepId: string, remarks: string) => {
+      const existing = actualSteps.find(
+        (a) => a.checklistPileId === checklistPileId && a.stepId === stepId,
+      );
+
+      await upsertActualStep({
+        id: existing?.id ?? generateUuid(),
+        checklistPileId,
+        stepId,
+        actualStart: existing?.actualStart ?? null,
+        actualEnd: existing?.actualEnd ?? null,
+        remarks,
+      });
+
       if (checklist) {
         const refreshed = await getActualStepsForChecklist(checklist.id);
         setActualSteps(refreshed);
@@ -264,6 +303,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     },
     [actualSteps, checklist],
   );
+
 
   // ── Derived plan status ───────────────────────────────────────────────────
 
@@ -284,6 +324,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       loadChecklist,
       generatePlan,
       setActualTime,
+      setRemarks
     }),
     [
       checklist,

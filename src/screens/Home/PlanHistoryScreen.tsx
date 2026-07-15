@@ -19,6 +19,7 @@ import { deletePlanStepsForChecklist, deleteActualStepsForChecklist } from '@rep
 import { initDb } from '@db/client';
 import { pilingDailyChecklists, pilingChecklistPiles } from '@db/schema';
 import type { PilingDailyChecklist } from '@db/schema';
+import EmptyState from '@/components/shared/EmptyState';
 
 type HomeNav = NativeStackNavigationProp<HomeStackParamList, 'PlanHistory'>;
 
@@ -150,9 +151,13 @@ export default function PlanHistoryScreen() {
             <Text style={styles.loadingText}>Loading plans…</Text>
           </View>
         ) : summaries.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.emptyText}>No plans found for this site yet.</Text>
-          </View>
+          <GlassCard>
+            <EmptyState
+              icon="calendar"
+              title="No plans yet"
+              message="No plans found for this site yet."
+            />
+          </GlassCard>
         ) : (
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {summaries.map((cl) => {

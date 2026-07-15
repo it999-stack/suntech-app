@@ -39,11 +39,27 @@ export const colors = {
   // Base
   white: '#FFFFFF',
   black: '#000000',
+  transparent: 'transparent',
 
   // Machine visualizations (timelines, charts, chips)
   machine: {
     rigColors: ['#EA580C', '#F97316', '#FB923C', '#FDBA74'],
     craneColors: ['#0369A1', '#0284C7', '#38BDF8', '#7DD3FC'],
+    break: '#fbbf24',
+    idle: '#c7c7d6',
+    unused: '#e4e4e7',
+  },
+
+  machines: {
+    rig: {
+      color: '#EA580C',
+      soft: 'rgba(234,88,12,0.12)',
+    },
+    crane: {
+      color: '#0284C7',
+      soft: 'rgba(2,132,199,0.12)',
+    },
+
     break: '#fbbf24',
     idle: '#c7c7d6',
     unused: '#e4e4e7',

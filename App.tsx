@@ -10,7 +10,6 @@ import RootNavigator from './src/navigation/RootNavigator';
 import { initDb } from './src/db/client';
 import { PlanProvider } from './src/state/PlanContext';
 import { SiteSettingsProvider } from './src/state/SiteSettingsContext';
-import { PilesProvider } from './src/state/PilesContext';
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -45,10 +44,8 @@ export default function App() {
           <NavigationContainer>
             <PlanProvider>
               <SiteSettingsProvider>
-                <PilesProvider>
                   <RootNavigator />
                   <StatusBar style="auto" />
-                </PilesProvider>
               </SiteSettingsProvider>
             </PlanProvider>
           </NavigationContainer>

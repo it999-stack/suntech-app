@@ -1,8 +1,17 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
-import { Check, Plus, Trash2 } from 'lucide-react-native';
-import AppModal from '@components/shared/AppModal';
-import { colors, spacing, radius, typography, shadow } from '@/theme/theme';
+// src/components/plan/generate/steps/StepSelectStep.tsx
+//
+// Step 6 — pick which plan steps go into today's plan. Every step shows
+// directly with an inline toggle icon — no separate modal.
+// Included steps show a − in a danger-red circle (tap removes them).
+// Excluded steps show a faded + in an accent circle (tap adds them) — the
+// whole row is dimmed so included steps read as the "active" ones at a glance.
+// Pending steps required by carry-over piles are locked and cannot be removed.
+
+import React, { useMemo } from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Minus, Plus, Lock } from 'lucide-react-native';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { getLockedStepIds } from '@/services/planPreselectService';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
 
@@ -13,24 +22,24 @@ interface StepSelectStepProps {
 }
 
 export default function StepSelectStep({ draft, onUpdate, steps }: StepSelectStepProps) {
-  const [modalOpen, setModalOpen] = useState(false);
-
-  const selectedSteps = useMemo(
-    () => steps.filter((step) => draft.selectedStepIds.includes(step.id)),
-    [steps, draft.selectedStepIds],
-  );
-
   const selectedSet = useMemo(
     () => new Set(draft.selectedStepIds),
     [draft.selectedStepIds],
   );
 
-  function updateSelection(stepId: string, selected: boolean) {
+  const lockedStepIds = useMemo(
+    () => getLockedStepIds(draft.selectedPileIds, draft.resumeWorkByPileId),
+    [draft.selectedPileIds, draft.resumeWorkByPileId],
+  );
+
+  function toggleStep(stepId: string) {
+    if (lockedStepIds.has(stepId) && selectedSet.has(stepId)) return;
+
     const nextIds = new Set(draft.selectedStepIds);
-    if (selected) {
-      nextIds.add(stepId);
-    } else {
+    if (nextIds.has(stepId)) {
       nextIds.delete(stepId);
+    } else {
+      nextIds.add(stepId);
     }
     const nextOrder = steps
       .filter((step) => nextIds.has(step.id))
@@ -41,198 +50,125 @@ export default function StepSelectStep({ draft, onUpdate, steps }: StepSelectSte
   return (
     <>
       <View style={styles.section}>
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>Select Steps</Text>
-          <Pressable style={styles.addButton} onPress={() => setModalOpen(true)}>
-            <Plus size={16} color={colors.white} />
-            <Text style={styles.addLabel}>Add / Remove</Text>
-          </Pressable>
-        </View>
+        <Text style={styles.title}>Select steps</Text>
         <Text style={styles.description}>
-          Choose which pile plan steps should be included in today’s generated plan.
+          {lockedStepIds.size > 0
+            ? "Tap a step to include or remove it from today's plan. Steps required by carry-over piles cannot be removed."
+            : "Tap a step to include or remove it from today's plan."}
         </Text>
+        <Text style={styles.countText}>{selectedSet.size} of {steps.length} included</Text>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Included steps ({selectedSteps.length})</Text>
-        {selectedSteps.length === 0 ? (
-          <Text style={styles.emptyText}>No steps selected yet. Tap Add / Remove to choose steps.</Text>
-        ) : (
-          selectedSteps.map((step) => (
-            <View key={step.id} style={styles.stepRow}>
+        {steps.map((step, idx) => {
+          const selected = selectedSet.has(step.id);
+          const locked = lockedStepIds.has(step.id) && selected;
+          return (
+            <Pressable
+              key={step.id}
+              style={[
+                styles.stepRow,
+                !selected && styles.stepRowMuted,
+                idx === steps.length - 1 && styles.stepRowLast,
+              ]}
+              onPress={locked ? undefined : () => toggleStep(step.id)}
+              disabled={locked}
+            >
               <View style={styles.stepLabelWrap}>
-                <Text style={styles.stepName}>{step.stepName}</Text>
-                <Text style={styles.stepMeta}>{step.track} · #{step.sequenceOrder}</Text>
+                <Text style={[styles.stepName, !selected && styles.stepNameMuted]}>
+                  {step.stepName}
+                </Text>
+                <Text style={[styles.stepMeta, !selected && styles.stepMetaMuted]}>
+                  {step.track} · #{step.sequenceOrder}
+                  {locked ? ' · Required for carry-over' : ''}
+                </Text>
               </View>
-              <Pressable
-                style={styles.removeBtn}
-                onPress={() => updateSelection(step.id, false)}
-                hitSlop={8}
-              >
-                <Trash2 size={16} color={colors.danger} />
-              </Pressable>
-            </View>
-          ))
-        )}
+              <View style={[
+                styles.toggleWrap,
+                selected && !locked && styles.toggleWrapSelected,
+                !selected && styles.toggleWrapMuted,
+                locked && styles.toggleWrapLocked,
+              ]}>
+                {locked ? (
+                  <Lock size={16} color={colors.textSecondary} />
+                ) : selected ? (
+                  <Minus size={16} color={colors.danger} />
+                ) : (
+                  <Plus size={16} color={colors.textSecondary} />
+                )}
+              </View>
+            </Pressable>
+          );
+        })}
       </View>
-
-      <AppModal
-        visible={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title="Pick plan steps"
-        subtitle="Tap a step to include or remove it from today’s plan."
-      >
-        <View style={styles.modalBody}>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {steps.map((step) => {
-              const selected = selectedSet.has(step.id);
-              return (
-                <Pressable
-                  key={step.id}
-                  style={[styles.modalRow, selected && styles.modalRowSelected]}
-                  onPress={() => updateSelection(step.id, !selected)}
-                >
-                  <View>
-                    <Text style={styles.modalStepName}>{step.stepName}</Text>
-                    <Text style={styles.modalStepMeta}>{step.track} · #{step.sequenceOrder}</Text>
-                  </View>
-                  <View style={styles.iconWrap}>
-                    {selected ? (
-                      <Check size={16} color={colors.white} />
-                    ) : (
-                      <Plus size={16} color={colors.accent} />
-                    )}
-                  </View>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          <Pressable style={styles.doneButton} onPress={() => setModalOpen(false)}>
-            <Text style={styles.doneText}>Done</Text>
-          </Pressable>
-        </View>
-      </AppModal>
     </>
   );
 }
 
 const styles = StyleSheet.create({
   section: { marginBottom: spacing.md },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
   title: {
     ...typography.pageTitle,
     color: colors.textPrimary,
-  },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-  },
-  addLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.white,
   },
   description: {
     ...typography.body,
     color: colors.textSecondary,
     marginTop: spacing.sm,
   },
+  countText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.accent,
+    marginTop: spacing.sm,
+  },
   card: {
     backgroundColor: colors.white,
     borderRadius: radius.lg,
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
     ...shadow.soft,
-  },
-  sectionTitle: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
-  },
-  emptyText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
   },
   stepRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(28,28,46,0.08)',
   },
+  stepRowMuted: { opacity: 0.5 },
+  stepRowLast: { borderBottomWidth: 0 },
   stepLabelWrap: { flex: 1, paddingRight: spacing.sm },
   stepName: {
     ...typography.body,
     fontWeight: '600',
     color: colors.textPrimary,
   },
+  stepNameMuted: {
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
   stepMeta: {
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 2,
   },
-  removeBtn: {
+  stepMetaMuted: {},
+  toggleWrap: {
     width: 32,
     height: 32,
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(248,113,113,0.12)',
-  },
-  modalBody: { paddingBottom: spacing.xxl },
-  modalRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(28,28,46,0.08)',
-  },
-  modalRowSelected: {
     backgroundColor: colors.accentSoft,
-    borderRadius: radius.lg,
   },
-  modalStepName: {
-    ...typography.body,
-    color: colors.textPrimary,
-    fontWeight: '600',
+  toggleWrapSelected: {
+    backgroundColor: colors.dangerSoft,
   },
-  modalStepMeta: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
+  toggleWrapMuted: {
+    backgroundColor: 'rgba(28,28,46,0.06)',
   },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(236, 72, 153, 0.12)',
-  },
-  doneButton: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  doneText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
+  toggleWrapLocked: {
+    backgroundColor: 'rgba(28,28,46,0.06)',
   },
 });

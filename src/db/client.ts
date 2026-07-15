@@ -6,6 +6,9 @@ import * as SQLite from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import * as schema from './schema';
 
+// Synchronous db export for useLiveQuery - must be initialized before use
+export let db: ReturnType<typeof drizzle>;
+
 let _db: ReturnType<typeof drizzle> | null = null;
 
 // ─── DEV RESET FLAG ───────────────────────────────────────────────────────────
@@ -39,19 +42,54 @@ export async function initDb() {
       DROP TABLE IF EXISTS piling_shift_types;
       DROP TABLE IF EXISTS piling_dimensions;
       DROP TABLE IF EXISTS piling_piles;
+      DROP TABLE IF EXISTS pile_work_progress;
+      DROP TABLE IF EXISTS piling_areas;
     `);
   }
 
   // ── Core sync tables ──────────────────────────────────────────────────────
 
   await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS piling_areas (
+      id          TEXT PRIMARY KEY NOT NULL,
+      site_id     TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      code        TEXT,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      is_active   INTEGER NOT NULL DEFAULT 1,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_areas_site_sort
+      ON piling_areas (site_id, sort_order, name);
+  `);
+
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pile_work_progress (
+      id                     TEXT PRIMARY KEY NOT NULL,
+      pile_id                TEXT NOT NULL UNIQUE,
+      step_id                TEXT NOT NULL,
+      remaining_minutes      INTEGER NOT NULL,
+      status                 TEXT NOT NULL DEFAULT 'PENDING_RESUME',
+      last_checklist_pile_id TEXT,
+      last_rig_id            TEXT,
+      last_crane_id          TEXT,
+      created_at             INTEGER NOT NULL,
+      updated_at             INTEGER NOT NULL
+    );
+  `);
+
+  await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS piling_piles (
       id           TEXT PRIMARY KEY NOT NULL,
       site_id      TEXT NOT NULL,
+      dimension_id TEXT NOT NULL,
+      area_id      TEXT,
       pile_id_code TEXT NOT NULL,
       area_location TEXT,
-      dia          INTEGER NOT NULL,
-      depth        INTEGER NOT NULL,
       notes        TEXT,
       synced_at    INTEGER NOT NULL
     );
@@ -71,6 +109,7 @@ export async function initDb() {
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS piling_shift_types (
       id         TEXT PRIMARY KEY NOT NULL,
+      site_id    TEXT NOT NULL,
       name       TEXT NOT NULL,
       start_time TEXT NOT NULL,
       end_time   TEXT NOT NULL,
@@ -81,7 +120,6 @@ export async function initDb() {
     await sqlite.execAsync(`
       CREATE TABLE IF NOT EXISTS piling_non_working_windows (
         id            TEXT PRIMARY KEY NOT NULL,
-        site_id       TEXT NOT NULL,
         shift_type_id TEXT NOT NULL,
         label         TEXT NOT NULL,
         start_time    TEXT NOT NULL,
@@ -131,7 +169,8 @@ export async function initDb() {
       step_id               TEXT NOT NULL,
       dimension_id          TEXT NOT NULL,
       duration_minutes      INTEGER NOT NULL,
-      buffer_before_minutes INTEGER NOT NULL DEFAULT 0
+      buffer_before_minutes INTEGER NOT NULL DEFAULT 0,
+      synced_at             INTEGER NOT NULL
     );
   `);
 
@@ -227,130 +266,9 @@ export async function initDb() {
       ON pile_actual_steps (checklist_pile_id, step_id);
   `);
 
-  // ── Runtime migrations (for existing installs) ───────────────────────────
-  // Skipped when DEV_RESET_DB is true — tables are always freshly created above.
-  if (!DEV_RESET_DB) {
-    try {
-      await sqlite.execAsync(
-        `ALTER TABLE piling_daily_checklists ADD COLUMN supervisor_id_2 TEXT;`,
-      );
-    } catch {
-      // Already exists — safe to ignore
-    }
-    try {
-      await sqlite.execAsync(
-        `ALTER TABLE pile_plan_steps ADD COLUMN duration_minutes INTEGER;`,
-      );
-    } catch {
-      // Already exists — safe to ignore
-    }
-    try {
-      await sqlite.execAsync(
-        `ALTER TABLE pile_plan_steps ADD COLUMN buffer_minutes INTEGER;`,
-      );
-    } catch {
-      // Already exists — safe to ignore
-    }
-    try {
-      await sqlite.execAsync(
-        `ALTER TABLE pile_plan_steps ADD COLUMN assigned_machine_id TEXT;`,
-      );
-    } catch {
-      // Already exists — safe to ignore
-    }
-    try {
-      await sqlite.execAsync(
-        `ALTER TABLE piling_non_working_windows ADD COLUMN behavior TEXT NOT NULL DEFAULT 'FIXED';`,
-      );
-    } catch {
-      // Already exists — safe to ignore
-    }
-  }
-
-  // ── Seed default piling steps (INSERT OR IGNORE = idempotent) ───────────
-  await sqlite.execAsync(`
-    INSERT OR IGNORE INTO piling_steps (id, step_name, sequence_order, track) VALUES
-      ('step_casing',             'Casing',                   1, 'RIG'),
-      ('step_boring',             'Boring',                   2, 'RIG'),
-      ('step_flushing_pipe_down', 'Flushing Pipe Lowering',   3, 'RIG'),
-      ('step_1st_air_flushing',   '1st Air Flushing',         4, 'RIG'),
-      ('step_flushing_pipe_up',   'Flushing Pipe Removing',   5, 'RIG'),
-      ('step_cage_lower',         'Cage Lowering',            6, 'CRANE'),
-      ('step_tremie_lower',       'Tremie Lowering',          7, 'CRANE'),
-      ('step_2nd_air_flushing',   '2nd Air Flushing',         8, 'CRANE'),
-      ('step_concreting',         'Concreting',               9, 'CRANE');
-  `);
-
-  await seedDefaultShiftData(sqlite);
-
   _db = drizzle(sqlite, { schema });
+  db = _db;
   return _db;
-}
-
-async function seedDefaultShiftData(sqlite: SQLite.SQLiteDatabase) {
-  const now = Date.now();
-
-  // Default Shift
-  await sqlite.execAsync(`
-    INSERT OR IGNORE INTO piling_shift_types (
-      id,
-      name,
-      start_time,
-      end_time,
-      synced_at
-    )
-    VALUES (
-      'shift_day',
-      'Day Shift',
-      '08:00',
-      '20:00',
-      ${now}
-    );
-  `);
-
-  // Non Working Windows
-  await sqlite.execAsync(`
-    INSERT OR IGNORE INTO piling_non_working_windows (
-      id,
-      site_id,
-      shift_type_id,
-      label,
-      start_time,
-      end_time,
-      behavior,
-      synced_at
-    ) VALUES
-      (
-        'window_shift_morning',
-        'default_site',
-        'shift_day',
-        'Morning Shift Change',
-        '08:00',
-        '09:00',
-        'FIXED',
-        ${now}
-      ),
-      (
-        'window_lunch',
-        'default_site',
-        'shift_day',
-        'Lunch Break',
-        '13:00',
-        '14:00',
-        'AFTER_CURRENT_STEP',
-        ${now}
-      ),
-      (
-        'window_shift_evening',
-        'default_site',
-        'shift_day',
-        'Evening Shift Change',
-        '20:00',
-        '21:00',
-        'FIXED',
-        ${now}
-      );
-  `);
 }
 
 /**

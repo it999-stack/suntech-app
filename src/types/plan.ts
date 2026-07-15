@@ -7,6 +7,16 @@ export type PileAssignment = {
   crane: string; // pilingMachines.id (type=CRANE)
 };
 
+/** A per-pile override used when an unfinished step continues on a new day. */
+export type ResumeWork = {
+  stepId: string;
+  remainingMinutes: number;
+  /** A resumed task normally does not repeat its original setup buffer. */
+  bufferMinutes?: number;
+  lastRigId?: string | null;
+  lastCraneId?: string | null;
+};
+
 /**
  * Transient wizard state — lives only in GeneratePlanScreen.
  * Seeded from existing checklist on edit mode.
@@ -14,6 +24,8 @@ export type PileAssignment = {
 export type PlanDraft = {
   /** "YYYY-MM-DD" — the date this plan covers. */
   date: string;
+  /** Work areas whose piles are available to this plan. */
+  areaIds: string[];
   /** ISO timestamp — when the 24hr plan begins. */
   planStartTime: string;
   /** Active rig ids for today (user deselects broken ones in MachineSelectStep). */
@@ -26,16 +38,20 @@ export type PlanDraft = {
   selectedStepIds: string[];
   /** Per-pile rig + crane assignment. */
   assignments: Record<string, PileAssignment>;
+  /** Pending work keyed by physical pile id. */
+  resumeWorkByPileId: Record<string, ResumeWork>;
   /** pilingPersonnel.id — Shift 1 (day) supervisor. */
   supervisorId: string | null;
   /** pilingPersonnel.id — Shift 2 (night) supervisor. */
   supervisorId2: string | null;
+  /** pilingShiftTypes.id — the active shift for this plan. */
+  shiftTypeId: string | null;
 };
 
 // ─── Legacy types used by actual-time components ─────────────────────────────
 
 /**
- * A single step entry used by FillActualScreen / PileProgressCard / StepRow / PileStepsModal.
+ * A single step entry used by FillActualScreen / PileProgressCard.
  * All time fields are minutes-since-midnight (number) or undefined if not yet recorded.
  */
 export type ActualEntry = {
@@ -51,6 +67,7 @@ export type ActualEntry = {
   actualStart?: number;
   /** Actual end — minutes since midnight, undefined if not yet finished. */
   actualEnd?: number;
+  remarks?: string;
 };
 
 /**
@@ -75,14 +92,17 @@ export function defaultPlanDraft(today: string): PlanDraft {
   const dt = new Date(y, m - 1, d, 8, 0, 0, 0);
   return {
     date: today,
+    areaIds: [],
     planStartTime: dt.toISOString(),
     activeRigIds: [],
     activeCraneIds: [],
     selectedPileIds: [],
     selectedStepIds: [],
     assignments: {},
+    resumeWorkByPileId: {},
     supervisorId: null,
     supervisorId2: null,
+    shiftTypeId: null,
   };
 }
 

@@ -1,17 +1,18 @@
 // src/components/shared/timeline/MachineStopTimeline.tsx
 //
-// Reusable stop-log view: pill row to pick a machine, then a vertical
-// dot-and-line list of that machine's stops (active / break / idle).
-// Knows nothing about plans, piles, or steps.
+// Reusable stop-log view: swipeable pill bar to pick a machine (via
+// SwipeableTabBar), then a vertical dot-and-line list of that machine's
+// stops (active / break / idle). Knows nothing about plans, piles, or steps.
 // Build the stop log with buildMachineStops() from '@/utils/timeline'.
 
 import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Drill, Forklift } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { formatTime, formatDurationMinutes } from '@/utils/formatTime';
 import { getMachineColor } from '@/utils/helpers';
 import { type TimelineStop, type MachineInfo } from '@/types/timeline';
+import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 
 export interface MachineStopTimelineProps {
   /** Machines to choose from, in display order. */
@@ -120,86 +121,62 @@ export default function MachineStopTimeline({
     else setInternalSelected(id);
   };
 
-  const activeMachine = machines.find((m) => m.id === activeId) ?? machines[0];
-  const activeColor = getMachineColor(activeMachine, typeIndexById[activeMachine.id] ?? 0);
-  const stops = stopsByMachineId[activeMachine.id] ?? [];
+  const items: SwipeableTabItem[] = machines.map((m) => ({
+    value: m.id,
+    label: m.machineNo,
+    color: getMachineColor(m, typeIndexById[m.id] ?? 0),
+    renderIcon: (color) =>
+      m.type === 'RIG' ? <Drill size={16} color={color} /> : <Forklift size={16} color={color} />,
+  }));
 
   return (
-    <View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-        {machines.map((m) => {
-          const color = getMachineColor(m, typeIndexById[m.id] ?? 0);
-          const on = m.id === activeMachine.id;
-          return (
-            <Pressable
-              key={m.id}
-              onPress={() => handleSelect(m.id)}
-              style={[
-                styles.pill,
-                {
-                  backgroundColor: on ? `${color}22` : colors.glassFill,
-                  borderColor: on ? `${color}55` : 'transparent',
-                },
-              ]}
-            >
-              {m.type === 'RIG' ? <Drill size={16} color={color} /> : <Forklift size={16} color={color} />}
-              <Text style={[styles.pillText, { color: on ? color : colors.textSecondary }]}>
-                {m.machineNo}
+    <SwipeableTabBar
+      items={items}
+      value={activeId ?? machines[0].id}
+      onChange={handleSelect}
+      scrollHint="dots"
+      renderPage={(item) => {
+        const machine = machines.find((m) => m.id === item.value) ?? machines[0];
+        const color = item.color!;
+        const stops = stopsByMachineId[machine.id] ?? [];
+        return (
+          <View>
+            <View style={styles.selHeadRow}>
+              {machine.type === 'RIG' ? <Drill size={16} color={color} /> : <Forklift size={16} color={color} />}
+              <Text style={[styles.selName, { color }]}>
+                {machine.machineNo} · {machine.type === 'RIG' ? 'Rig' : 'Crane'}
               </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+              {dayLabel ? (
+                <View style={styles.selDayBadge}>
+                  <Text style={styles.selDayText}>{dayLabel}</Text>
+                </View>
+              ) : null}
+            </View>
 
-      <View style={styles.selHeadRow}>
-        {activeMachine.type === 'RIG' ? <Drill size={16} color={activeColor} /> : <Forklift size={16} color={activeColor} />}
-        <Text style={[styles.selName, { color: activeColor }]}>
-          {activeMachine.machineNo} · {activeMachine.type === 'RIG' ? 'Rig' : 'Crane'}
-        </Text>
-        {dayLabel ? (
-          <View style={styles.selDayBadge}>
-            <Text style={styles.selDayText}>{dayLabel}</Text>
+            <TimelineStopLog stops={stops} activeColor={color} emptyLabel={emptyLabel} />
+
+            <View style={styles.legendRow}>
+              <View style={styles.legendChip}>
+                <View style={[styles.legendDot, { backgroundColor: color }]} />
+                <Text style={styles.legendText}>Working</Text>
+              </View>
+              <View style={styles.legendChip}>
+                <View style={[styles.legendDot, { backgroundColor: colors.machine.break }]} />
+                <Text style={styles.legendText}>Break</Text>
+              </View>
+              <View style={styles.legendChip}>
+                <View style={[styles.legendDot, { backgroundColor: colors.machine.idle }]} />
+                <Text style={styles.legendText}>Idle</Text>
+              </View>
+            </View>
           </View>
-        ) : null}
-      </View>
-
-      <TimelineStopLog stops={stops} activeColor={activeColor} emptyLabel={emptyLabel} />
-
-      <View style={styles.legendRow}>
-        <View style={styles.legendChip}>
-          <View style={[styles.legendDot, { backgroundColor: activeColor }]} />
-          <Text style={styles.legendText}>Working</Text>
-        </View>
-        <View style={styles.legendChip}>
-          <View style={[styles.legendDot, { backgroundColor: colors.machine.break }]} />
-          <Text style={styles.legendText}>Break</Text>
-        </View>
-        <View style={styles.legendChip}>
-          <View style={[styles.legendDot, { backgroundColor: colors.machine.idle }]} />
-          <Text style={styles.legendText}>Idle</Text>
-        </View>
-      </View>
-    </View>
+        );
+      }}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  pillRow: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-    paddingBottom: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1.5,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 7,
-  },
-  pillText: { fontSize: 12, fontWeight: '800' },
   selHeadRow: {
     flexDirection: 'row',
     alignItems: 'center',

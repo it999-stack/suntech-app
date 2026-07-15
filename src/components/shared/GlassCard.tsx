@@ -32,6 +32,7 @@ const styles = StyleSheet.create({
   shadowWrap: {
     alignSelf: 'stretch',
     borderRadius: radius.xl,
+    backgroundColor: colors.white,
     ...shadow.glass,
   },
   blur: {

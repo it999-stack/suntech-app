@@ -4,28 +4,23 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Building2,
   RefreshCw,
-  ChevronRight,
-  Settings,
   LogOut,
   Info,
+  Sprout,
 } from 'lucide-react-native';
 
 import GlassCard from '@components/shared/GlassCard';
-import SyncProgressModal from '@components/sync/SyncProgressModal';
 import { colors, spacing, radius, typography } from '@theme/theme';
-import { ProfileStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
 import { useSiteSettings } from '@state/SiteSettingsContext';
+import { usePilesAreasStore } from '@store/pilesAreasStore';
+import { seedYesterdayFromToday, clearAllPendingWork } from '@/services/seedResumeWork';
 
 const APP_VERSION = '0.1.0';
-
-type ProfileNav = NativeStackNavigationProp<ProfileStackParamList, 'ProfileScreen'>;
 
 function Row({
   icon,
@@ -48,7 +43,6 @@ function Row({
       </View>
       <View style={styles.rowRight}>
         {value && <Text style={styles.rowValue}>{value}</Text>}
-        {onPress && <ChevronRight size={18} color={colors.textSecondary} />}
       </View>
     </View>
   );
@@ -65,6 +59,13 @@ function Divider() {
   return <View style={styles.divider} />;
 }
 
+function toLocalDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 /** Format a unix ms timestamp to a human-readable relative label. */
 function formatSyncTime(ts: number | null): string {
   if (ts === null) return 'Never synced';
@@ -79,12 +80,9 @@ function formatSyncTime(ts: number | null): string {
 }
 
 export default function ProfileScreen() {
-  const navigation = useNavigation<ProfileNav>();
   const { user, logout } = useAuthStore();
   const { isSyncing, lastSyncedAt, pilesCount, error: syncError, loadLastSyncTime, sync } = useSyncStore();
   const { reloadFromDb } = useSiteSettings();
-
-  const [syncModalVisible, setSyncModalVisible] = useState(false);
 
   const displayName = user?.name ?? 'Unknown';
   const displayEmail = user?.email ?? '';
@@ -93,6 +91,9 @@ export default function ProfileScreen() {
     .map((n: string) => n[0])
     .join('')
     .toUpperCase();
+
+  const today = toLocalDateStr(new Date());
+  const [isSeeding, setIsSeeding] = useState(false);
 
   // Load last sync time from local DB when screen mounts
   useEffect(() => {
@@ -106,13 +107,75 @@ export default function ProfileScreen() {
       Alert.alert('No site assigned', 'You are not assigned to any site. Contact your administrator.');
       return;
     }
-    setSyncModalVisible(true);
     try {
       await sync(user.siteId);
       await reloadFromDb(user.siteId);
+      // Refresh piles after sync completes so the UI reflects new data
+      await usePilesAreasStore.getState().reload();
     } catch {
       // error surfaced via syncError in the modal + card
     }
+  };
+
+  const handleSeed = async () => {
+    if (!user?.siteId) {
+      Alert.alert('No site assigned', 'You are not assigned to any site. Contact your administrator.');
+      return;
+    }
+
+    const yesterday = toLocalDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+    Alert.alert(
+      'Seed Resume Work',
+      `This will seed ${yesterday}'s date with today's incomplete work so you can test the resume work feature. Continue?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Seed',
+          style: 'default',
+          onPress: async () => {
+            setIsSeeding(true);
+            try {
+              const result = await seedYesterdayFromToday(user.siteId ?? '', today);
+              if (result.yesterdayChecklistCreated) {
+                Alert.alert(
+                  'Seed Complete',
+                  `Created yesterday's checklist with ${result.pendingWorkSeeded} pending work items. You can now generate a new plan for today.`,
+                );
+              } else {
+                Alert.alert('No Action', "No checklist exists for today, or yesterday already has a checklist.");
+              }
+            } catch (e) {
+              Alert.alert('Error', `Failed to seed: ${e instanceof Error ? e.message : String(e)}`);
+            } finally {
+              setIsSeeding(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearPending = async () => {
+    Alert.alert(
+      'Clear Pending Work',
+      'This will clear all pending work entries from the database. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearAllPendingWork();
+              Alert.alert('Cleared', 'All pending work entries have been removed.');
+            } catch (e) {
+              Alert.alert('Error', `Failed to clear: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleLogout = () => {
@@ -135,9 +198,9 @@ export default function ProfileScreen() {
   };
 
   const syncSubtext = syncError
-    ? `Error: ${syncError}`
-    : pilesCount !== null && lastSyncedAt !== null
-    ? `${pilesCount} piles · ${formatSyncTime(lastSyncedAt)}`
+    ? syncError.includes('Network')
+      ? 'Offline — sync pending'
+      : 'Sync failed'
     : formatSyncTime(lastSyncedAt);
 
   return (
@@ -159,18 +222,12 @@ export default function ProfileScreen() {
             </View>
           </GlassCard>
 
-          {/* Site + settings */}
+          {/* Site */}
           <GlassCard style={{ marginTop: spacing.lg }}>
             <Row
               icon={<Building2 size={18} color={colors.accent} />}
               label="Active site"
               value={user?.siteName ?? '—'}
-            />
-            <Divider />
-            <Row
-              icon={<Settings size={18} color={colors.accent} />}
-              label="Site settings"
-              onPress={() => navigation.navigate('SiteSettings')}
             />
           </GlassCard>
 
@@ -202,6 +259,21 @@ export default function ProfileScreen() {
             </View>
           </GlassCard>
 
+          {/* Seed Resume Work (Testing) */}
+          <GlassCard style={{ marginTop: spacing.lg }}>
+            <Row
+              icon={<Sprout size={18} color={colors.accent} />}
+              label="Seed Resume Work"
+              onPress={handleSeed}
+            />
+            <Divider />
+            <Row
+              icon={<Info size={18} color={colors.warning} />}
+              label="Clear Pending Work"
+              onPress={handleClearPending}
+            />
+          </GlassCard>
+
           {/* App info + logout */}
           <GlassCard style={{ marginTop: spacing.lg }}>
             <Row
@@ -218,8 +290,6 @@ export default function ProfileScreen() {
             />
           </GlassCard>
 
-
-          <SyncProgressModal visible={syncModalVisible} onClose={() => setSyncModalVisible(false)} />
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>

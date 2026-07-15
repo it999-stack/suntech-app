@@ -18,7 +18,7 @@ import type { PreviewPile } from '@app-types/previewTypes';
 import { formatMinutes, computeWorkingMinutes, computeElapsedMinutes } from '../preview/previewUtils';
 import SummaryAccordion from '../preview/SummaryAccordion';
 import MachineTimelineAccordion from '../preview/MachineTimelineAccordion';
-import PileAccordion from '../preview/PileAccordion';
+import PilesAccordion from '../preview/PilesAccordion';
 
 // Re-export for consumers
 export type { PreviewPile } from '@app-types/previewTypes';
@@ -150,19 +150,13 @@ export default function PreviewStep({
     .join(' · ') || 'None assigned';
 
   // ── Machines detail ──────────────────────────────────────────────────────
-  const machinesDetail = useMemo(() => {
-    const rigLines = activeRigs.map((r) => `• ${r.machineNo}${r.description ? ` — ${r.description}` : ''}`);
-    const craneLines = activeCranes.map((c) => `• ${c.machineNo}${c.description ? ` — ${c.description}` : ''}`);
-    return { rigLines, craneLines };
-  }, [activeRigs, activeCranes]);
-
   const pileLabelById = useMemo(() => {
-  const map: Record<string, string> = {};
-  piles.forEach((p) => {
-    map[p.checklistPileId] = `Pile ${p.code ?? p.checklistPileId}`;
-  });
-  return map;
-}, [piles]);
+    const map: Record<string, string> = {};
+    piles.forEach((p) => {
+      map[p.checklistPileId] = `Pile ${p.code ?? p.checklistPileId}`;
+    });
+    return map;
+  }, [piles]);
 
   // ── Supervisors detail ───────────────────────────────────────────────────
   const supervisorDetail = useMemo(() => {
@@ -270,15 +264,8 @@ export default function PreviewStep({
         </SummaryAccordion>
       )}
 
-      {/* ── Per-pile accordions ──────────────────────────────────────────── */}
-      {piles.map((pile) => {
-        const steps = planSteps.filter((s) => s.checklistPileId === pile.checklistPileId);
-        return <PileAccordion key={pile.id} pile={pile} steps={steps} />;
-      })}
-
-      {piles.length === 0 && (
-        <Text style={styles.emptyText}>No piles in this plan.</Text>
-      )}
+      {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
+      <PilesAccordion piles={piles} planSteps={planSteps} />
     </>
   );
 }
@@ -537,13 +524,5 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 1,
-  },
-
-  emptyText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-    textAlign: 'center',
-    marginTop: spacing.lg,
   },
 });

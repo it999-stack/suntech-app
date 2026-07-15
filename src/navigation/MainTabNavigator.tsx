@@ -2,13 +2,14 @@
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MainTabParamList } from '@app-types/navigation';
-import HomeStackNavigator from './HomeStackNavigator';
-import PilesStackNavigator from './PilesStackNavigator';
-import ProfileStackNavigator from './ProfileStackNavigator';
-import { House, Hammer, UserRound } from 'lucide-react-native';
+import HomeStackNavigator from './Home/HomeStackNavigator';
+import PilesStackNavigator from './Piles/PilesStackNavigator';
+import SiteStackNavigator from './Site/SiteStackNavigator';
+import ProfileStackNavigator from './Profile/ProfileStackNavigator';
 import {
   LayoutDashboard,
   Construction,
+  Building2,
   CircleUserRound,
 } from 'lucide-react-native';
 
@@ -39,6 +40,17 @@ export default function MainTabNavigator() {
                 title: 'Piles',
                 tabBarIcon: ({ color, size }) => (
                 <Construction color={color} size={size} />
+                ),
+            }}
+            />
+
+            <Tab.Screen
+            name="SiteTab"
+            component={SiteStackNavigator}
+            options={{
+                title: 'Site',
+                tabBarIcon: ({ color, size }) => (
+                <Building2 color={color} size={size} />
                 ),
             }}
             />

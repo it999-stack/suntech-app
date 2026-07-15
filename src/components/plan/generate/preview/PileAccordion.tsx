@@ -13,6 +13,7 @@ import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { PreviewPile } from '@app-types/previewTypes';
 import { colors, spacing, typography } from '@/theme/theme';
 import { formatDurationMinutes } from '@/utils/formatTime';
+import { computeTotalDuration } from './previewUtils';
 
 interface PileAccordionProps {
   pile: PreviewPile;
@@ -20,20 +21,7 @@ interface PileAccordionProps {
 }
 
 export default function PileAccordion({ pile, steps }: PileAccordionProps) {
-  // Sum pure working minutes stored by the planner (excludes break time).
-
-  const totalMin = steps.reduce((sum, s) => {
-    if (!s.plannedStart || !s.plannedEnd) return sum;
-
-    return (
-      sum +
-      (new Date(s.plannedEnd).getTime() -
-        new Date(s.plannedStart).getTime()) /
-        60000
-    );
-  }, 0);
-
-  const totalDuration = formatDurationMinutes(totalMin);
+  const totalDuration = formatDurationMinutes(computeTotalDuration(steps));
 
   return (
     <Accordion

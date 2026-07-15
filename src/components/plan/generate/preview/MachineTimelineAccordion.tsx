@@ -85,7 +85,7 @@ export default function MachineTimelineAccordion({
         <View style={styles.headerRow}>
           <Clock size={16} color={colors.accent} />
           <View>
-            <Text style={styles.title}>Machine Timeline</Text>
+            <Text style={styles.title}>Machine Timeline ccc</Text>
             <Text style={styles.subtitle}>
               {activeRigs.length} rig{activeRigs.length === 1 ? '' : 's'} · {activeCranes.length} crane
               {activeCranes.length === 1 ? '' : 's'} active

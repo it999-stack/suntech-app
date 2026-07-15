@@ -75,3 +75,11 @@ export function computeElapsedMinutes(steps: PlanStepWithMeta[]): number {
   const last = Math.max(...ends);
   return Math.max(0, (last - first) / 60000);
 }
+
+/** Sum of a single pile's step durations (plannedEnd - plannedStart), in minutes. */
+export function computeTotalDuration(steps: PlanStepWithMeta[]): number {
+  return steps.reduce((sum, s) => {
+    if (!s.plannedStart || !s.plannedEnd) return sum;
+    return sum + (new Date(s.plannedEnd).getTime() - new Date(s.plannedStart).getTime()) / 60000;
+  }, 0);
+}

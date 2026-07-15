@@ -2,7 +2,7 @@
 // Local SQLite access for cached piling_dimensions data.
 
 import { eq } from 'drizzle-orm';
-import { initDb } from '@db/client';
+import { initDb, db } from '@db/client';
 import { pilingDimensions, type NewPilingDimension, type PilingDimension } from '@db/schema';
 
 /**
@@ -47,4 +47,14 @@ export async function getDimensionsBySite(siteId: string): Promise<PilingDimensi
 export async function clearDimensionsBySite(siteId: string): Promise<void> {
   const db = await initDb();
   await db.delete(pilingDimensions).where(eq(pilingDimensions.siteId, siteId));
+}
+
+// ─── Live query for useLiveQuery ───────────────────────────────────────────────
+
+/**
+ * Live query for useLiveQuery - returns unexecuted query for dimensions by site.
+ * The db instance must be initialized before calling this (via initDb() in App.tsx).
+ */
+export function dimensionsBySiteLiveQuery(siteId: string) {
+  return db.select().from(pilingDimensions).where(eq(pilingDimensions.siteId, siteId));
 }

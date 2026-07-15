@@ -1,58 +1,67 @@
 // src/components/shared/AppModal.tsx
-//
-// Reusable bottom-sheet modal shell. Provides the backdrop, grabber,
-// header with close button, and a scrollable content area.
-// Any screen can wrap its content in this for a consistent modal UX.
 
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, Modal, ScrollView, ViewStyle } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  Modal,
+  ScrollView,
+  ViewStyle,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { X } from 'lucide-react-native';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  /** Primary title text shown in the header. */
   title?: string;
-  /** Optional subtitle shown below the title. */
   subtitle?: string;
-  /** Content rendered inside the scrollable body area. */
   children: React.ReactNode;
-  /** Override the scroll content container style (e.g. extra padding). */
   contentContainerStyle?: ViewStyle;
 }
 
 export default function AppModal({ visible, onClose, title, subtitle, children, contentContainerStyle }: Props) {
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={styles.sheet}>
-        <View style={styles.grabber} />
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose} statusBarTranslucent>
+      <KeyboardAvoidingView
+        style={styles.flexContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View style={styles.sheet}>
+          <View style={styles.grabber} />
 
-        {(title || subtitle) && (
-          <View style={styles.headerRow}>
-            <View style={styles.headerTextWrap}>
-              {title && <Text style={styles.title}>{title}</Text>}
-              {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+          {(title || subtitle) && (
+            <View style={styles.headerRow}>
+              <View style={styles.headerTextWrap}>
+                {title && <Text style={styles.title}>{title}</Text>}
+                {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+              </View>
+              <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
+                <X size={18} color={colors.textSecondary} />
+              </Pressable>
             </View>
-            <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
-              <X size={18} color={colors.textSecondary} />
-            </Pressable>
-          </View>
-        )}
+          )}
 
-        <ScrollView
-          contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
-          showsVerticalScrollIndicator={false}
-        >
-          {children}
-        </ScrollView>
-      </View>
+          <ScrollView
+            contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {children}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  flexContainer: { flex: 1 },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(10,10,20,0.4)',
@@ -80,19 +89,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
   },
-  headerTextWrap: {
-    flex: 1,
-    marginRight: spacing.sm,
-  },
-  title: {
-    ...typography.h2,
-    color: colors.textPrimary,
-  },
-  subtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
+  headerTextWrap: { flex: 1, marginRight: spacing.sm },
+  title: { ...typography.h2, color: colors.textPrimary },
+  subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
   closeBtn: {
     width: 32,
     height: 32,

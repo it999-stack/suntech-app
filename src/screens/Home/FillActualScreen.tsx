@@ -16,7 +16,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { ChevronLeft, CheckCircle2, Circle, ArrowRight } from 'lucide-react-native';
+import { ChevronLeft, CheckCircle2, Circle, ArrowRight, MessageSquareText } from 'lucide-react-native';
 import { colors, spacing, typography } from '@theme/theme';
 import { formatTime, formatMinutes } from '@utils/formatTime';
 import { usePlan } from '@state/PlanContext';
@@ -28,7 +28,7 @@ import { getPersonnelBySite } from '@repositories/personnelRepository';
 import type { PilingMachine, PilingPile, PilingPersonnel } from '@db/schema';
 import type { ActualEntry } from '@app-types/plan';
 
-/** Shape expected by PileProgressCard and PileStepsModal. */
+/** Shape expected by PileProgressCard and PileStepsModalAdapter. */
 type PileGroup = {
   checklistPileId: string;  // pilingChecklistPiles.id — used as key
   pileId: string;
@@ -71,6 +71,7 @@ export default function FillActualsScreen() {
     isLoading,
     loadChecklist,
     setActualTime,
+    setRemarks
   } = usePlan();
 
   // ── Load today's checklist on mount ────────────────────────────────────
@@ -82,9 +83,11 @@ export default function FillActualsScreen() {
   const [machineMap, setMachineMap] = useState<Map<string, string>>(new Map());
   const [pileMap, setPileMap] = useState<Map<string, PilingPile>>(new Map());
   const [personnelMap, setPersonnelMap] = useState<Map<string, PilingPersonnel>>(new Map());
+  const [lookupsLoading, setLookupsLoading] = useState(true);
 
   useEffect(() => {
     if (!siteId) return;
+    setLookupsLoading(true);
     (async () => {
       const [machines, piles, personnel] = await Promise.all([
         getMachinesBySite(siteId),
@@ -94,6 +97,7 @@ export default function FillActualsScreen() {
       setMachineMap(new Map(machines.map((m) => [m.id, m.machineNo])));
       setPileMap(new Map(piles.map((p) => [p.id, p])));
       setPersonnelMap(new Map(personnel.map((p) => [p.id, p])));
+      setLookupsLoading(false);
     })();
   }, [siteId]);
 
@@ -120,6 +124,7 @@ export default function FillActualsScreen() {
           plannedEnd: isoToMinutes(ps.plannedEnd) ?? 0,
           actualStart: isoToMinutes(actual?.actualStart ?? null),
           actualEnd: isoToMinutes(actual?.actualEnd ?? null),
+          remarks: actual?.remarks ?? undefined,
         };
       });
 
@@ -138,9 +143,8 @@ export default function FillActualsScreen() {
   const [openCpId, setOpenCpId] = useState<string | null>(null);
   const openGroup = pileGroups.find((g) => g.checklistPileId === openCpId) ?? null;
 
-  // ── Adapt setActualTime for old components that call by stepId only ─────
-  // PileStepsModal calls: setActualTime(stepId, field, value)
-  // PlanContext now expects: setActualTime(checklistPileId, stepId, field, isoTimestamp)
+  // ── Adapt setActualTime for the modal, which calls by stepId only ────────
+  // PlanContext expects: setActualTime(checklistPileId, stepId, field, isoTimestamp)
   // We need to wrap it — the open group gives us checklistPileId.
   const handleSetActualTime = useCallback(
     (stepId: string, field: 'actualStart' | 'actualEnd', minutesSinceMidnight: number) => {
@@ -151,6 +155,14 @@ export default function FillActualsScreen() {
       setActualTime(openGroup.checklistPileId, stepId, field, dt.toISOString());
     },
     [openGroup, today, setActualTime],
+  );
+
+  const handleSaveRemarks = useCallback(
+    (stepId: string, text: string) => {
+      if (!openGroup) return;
+      setRemarks(openGroup.checklistPileId, stepId, text);
+    },
+    [openGroup, setRemarks],
   );
 
   // ── Supervisor display ──────────────────────────────────────────────────
@@ -189,7 +201,7 @@ export default function FillActualsScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {isLoading && (
+          {(isLoading || lookupsLoading) && (
             <ActivityIndicator
               size="large"
               color={colors.accent}
@@ -197,15 +209,23 @@ export default function FillActualsScreen() {
             />
           )}
 
-          {!isLoading && !checklist && (
-            <Text style={styles.emptyText}>No plan has been generated yet.</Text>
+          {!isLoading && !lookupsLoading && !checklist && (
+            <EmptyState
+              icon="calendar"
+              title="No plan generated"
+              message="No plan has been created for today yet."
+            />
           )}
 
-          {!isLoading && checklist && pileGroups.length === 0 && (
-            <Text style={styles.emptyText}>No piles in today's plan.</Text>
+          {!isLoading && !lookupsLoading && checklist && pileGroups.length === 0 && (
+            <EmptyState
+              icon="layers"
+              title="No piles in plan"
+              message="Today's plan doesn't include any piles yet."
+            />
           )}
 
-          {pileGroups.map((group) => (
+          {!isLoading && !lookupsLoading && pileGroups.map((group) => (
             <PileProgressCard
               key={group.checklistPileId}
               pileCode={group.pileCode}
@@ -223,36 +243,46 @@ export default function FillActualsScreen() {
           group={openGroup}
           onClose={() => setOpenCpId(null)}
           onSetActualTime={handleSetActualTime}
+          onSaveRemarks={handleSaveRemarks}
         />
       )}
     </LinearGradient>
   );
 }
 
-// ─── Adapter that injects a scoped setActualTime into PileStepsModal ─────────
-// PileStepsModal reads usePlan().setActualTime directly, so we temporarily
-// override PlanContext. Simplest approach: re-use PileStepsModal but pass
-// adapted props. Since PileStepsModal uses usePlan() internally and we
-// cannot easily override it without restructuring, we inline the modal content
-// here in a simplified form instead.
+// ─── Modal content for logging actual start/finish times per pile step ───────
 
 import AppModal from '@components/shared/AppModal';
 import StepTimeControl from '@components/plan/actual/StepTimeControl';
+import RemarksModal from '@components/plan/actual/RemarksModal';
 import { radius } from '@theme/theme';
+import EmptyState from '@/components/shared/EmptyState';
 
 function PileStepsModalAdapter({
   group,
   onClose,
   onSetActualTime,
+  onSaveRemarks
 }: {
   group: PileGroup;
   onClose: () => void;
   onSetActualTime: (stepId: string, field: 'actualStart' | 'actualEnd', minutes: number) => void;
+  onSaveRemarks: (stepId: string, text: string) => void;
 }) {
-  const steps = group.steps;
-  const currentRigStepId = steps.find((s) => s.track === 'RIG' && s.actualEnd === undefined)?.stepId;
-  const currentCraneStepId = steps.find((s) => s.track === 'CRANE' && s.actualEnd === undefined)?.stepId;
-  const allDone = !currentRigStepId && !currentCraneStepId;
+  // Sort steps by planned start time (oldest first)
+  const steps = [...group.steps].sort((a, b) => a.plannedStart - b.plannedStart);
+  // Crane steps can't start until every rig step on this pile has finished —
+  // so only one step (rig, then crane) is ever "current" at a time.
+  const rigSteps = steps.filter((s) => s.track === 'RIG');
+  const craneSteps = steps.filter((s) => s.track === 'CRANE');
+  const rigComplete = rigSteps.every((s) => s.actualEnd !== undefined);
+  const currentStepId = !rigComplete
+    ? rigSteps.find((s) => s.actualEnd === undefined)?.stepId
+    : craneSteps.find((s) => s.actualEnd === undefined)?.stepId;
+  const allDone = !currentStepId;
+
+  // Local state for remarks editing within this modal
+  const [editingRemarks, setEditingRemarks] = useState<{ stepId: string; stepName: string; value?: string } | null>(null);
   const subtitle = [group.rig && `Rig ${group.rig}`, group.crane && `Crane ${group.crane}`]
     .filter(Boolean)
     .join(' · ');
@@ -262,9 +292,7 @@ function PileStepsModalAdapter({
       {steps.map((step, idx) => {
         const isDone = step.actualEnd !== undefined;
         const isStarted = step.actualStart !== undefined;
-        const isCurrent =
-          (step.track === 'RIG' && step.stepId === currentRigStepId) ||
-          (step.track === 'CRANE' && step.stepId === currentCraneStepId);
+        const isCurrent = step.stepId === currentStepId;
         const isLocked = !isDone && !isCurrent;
 
         return (
@@ -315,12 +343,25 @@ function PileStepsModalAdapter({
                 </View>
               )}
 
+              {/* Show saved remarks - clickable to edit */}
+              {step.remarks && step.remarks.trim().length > 0 && (
+                <Pressable
+                  style={modalStyles.remarksRow}
+                  onPress={() => setEditingRemarks({ stepId: step.stepId, stepName: step.stepName, value: step.remarks })}
+                >
+                  <MessageSquareText size={14} color={colors.textSecondary} style={modalStyles.remarksIcon} />
+                  <Text style={modalStyles.remarksText}>{step.remarks}</Text>
+                </Pressable>
+              )}
+
               {isCurrent && !isStarted && (
                 <StepTimeControl
                   mode="start"
                   stepName={step.stepName}
                   defaultMinutes={step.plannedStart}
+                  remarks={step.remarks}
                   onConfirm={(mins) => onSetActualTime(step.stepId, 'actualStart', mins)}
+                  onSaveRemarks={(text) => onSaveRemarks(step.stepId, text)}
                 />
               )}
 
@@ -333,7 +374,9 @@ function PileStepsModalAdapter({
                     mode="finish"
                     stepName={step.stepName}
                     defaultMinutes={step.plannedEnd}
+                    remarks={step.remarks}
                     onConfirm={(mins) => onSetActualTime(step.stepId, 'actualEnd', mins)}
+                    onSaveRemarks={(text) => onSaveRemarks(step.stepId, text)}
                   />
                 </>
               )}
@@ -353,6 +396,20 @@ function PileStepsModalAdapter({
             All steps for {group.pileCode} are complete
           </Text>
         </View>
+      )}
+
+      {/* Remarks edit modal */}
+      {editingRemarks && (
+        <RemarksModal
+          visible
+          stepName={editingRemarks.stepName}
+          initialValue={editingRemarks.value}
+          onClose={() => setEditingRemarks(null)}
+          onSave={(text) => {
+            onSaveRemarks(editingRemarks.stepId, text);
+            setEditingRemarks(null);
+          }}
+        />
       )}
     </AppModal>
   );
@@ -441,5 +498,22 @@ const modalStyles = StyleSheet.create({
   },
   timeIcon: {
     marginHorizontal: 4,
+  },
+  remarksRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+    padding: spacing.sm,
+    backgroundColor: 'rgba(28,28,46,0.04)',
+    borderRadius: radius.sm,
+  },
+  remarksIcon: {
+    marginTop: 2,
+  },
+  remarksText: {
+    ...typography.body,
+    color: colors.textPrimary,
+    flex: 1,
   },
 });

@@ -2,6 +2,7 @@
 // General-purpose helper functions and shared domain types.
 
 import { colors } from '@/theme/theme';
+import * as Crypto from 'expo-crypto';
 
 // ---------------------------------------------------------------------------
 // Machine types
@@ -29,4 +30,9 @@ export function getMachineColor(machine: MachineLike, indexWithinType: number): 
       ? colors.machine.rigColors
       : colors.machine.craneColors;
   return palette[indexWithinType % palette.length];
+}
+
+// generate uuid
+export function generateId(): string {
+  return Crypto.randomUUID();
 }

@@ -45,3 +45,19 @@ export async function getPersonnelBySite(siteId: string): Promise<PilingPersonne
     .orderBy(pilingPersonnel.name)
     .all();
 }
+
+/**
+ * Returns personnel with the given ids.
+ */
+export async function getPersonnelByIds(ids: string[]): Promise<PilingPersonnel[]> {
+  if (ids.length === 0) return [];
+  const db = await initDb();
+  // Build OR conditions for each id
+  const { or } = await import('drizzle-orm');
+  const conditions = ids.map((id) => eq(pilingPersonnel.id, id));
+  return db
+    .select()
+    .from(pilingPersonnel)
+    .where(or(...conditions))
+    .all();
+}

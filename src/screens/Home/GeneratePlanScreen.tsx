@@ -1,15 +1,7 @@
-// src/screens/Home/GeneratePlanScreen.tsx
-//
+﻿// src/screens/Home/GeneratePlanScreen.tsx
 // Multi-step wizard for generating (or editing) a daily pile plan.
 // Owns transient PlanDraft state; commits to SQLite only on the final "Generate" press.
 //
-// Step order:
-//   1. intro       — what this wizard does
-//   2. start       — pick plan date + start time (AM/PM)
-//   3. machines    — select active rigs & cranes for today
-//   4. piles       — select piles + assign rig/crane per pile
-//   5. supervisors — pick Shift 1 + Shift 2 supervisor
-//   6. preview     — read-only summary with per-pile accordion of planned steps
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -33,30 +25,29 @@ import { useAuthStore } from '@/store/authStore';
 import ProgressHeader, { type Step, STEP_ORDER } from '@components/plan/generate/ProgressHeader';
 import IntroStep from '@components/plan/generate/steps/IntroStep';
 import StartTimeStep from '@components/plan/generate/steps/StartTimeStep';
+import AreaSelectStep from '@components/plan/generate/steps/AreaSelectStep';
 import MachineSelectStep from '@components/plan/generate/steps/MachineSelectStep';
 import PileAssignStep from '@components/plan/generate/steps/PileAssignStep';
 import SupervisorStep from '@components/plan/generate/steps/SupervisorStep';
 import StepSelectStep from '@components/plan/generate/steps/StepSelectStep';
 import PreviewStep, { type PreviewPile } from '@components/plan/generate/steps/PreviewStep';
 
-import { getPilesBySite } from '@repositories/pilesRepository';
+import { getPilesBySiteWithDimensions, PileWithDimension } from '@repositories/pilesRepository';
+import { getAreasBySite } from '@repositories/areasRepository';
+import { getPendingWorkForPileIds, savePendingWork } from '@repositories/workProgressRepository';
 import { getMachinesByType } from '@repositories/machinesRepository';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import { getSteps } from '@repositories/stepsRepository';
 import { generatePlanPreview } from '@/services/pilingPlannerService';
-import type { PilingPersonnel, PilingShiftType, PilingStep } from '@/db/schema';
+import { buildResumePreselection, getLockedStepIds, mergeLockedSteps } from '@/services/planPreselectService';
+import type { PilingArea, PilingPersonnel, PilingShiftType, PilingStep, PileWorkProgress } from '@/db/schema';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import { defaultPlanDraft, planEndTime, type PlanDraft } from '@/types/plan';
 
-// ─── Local pile type ──────────────────────────────────────────────────────────
-
-type EligiblePile = {
-  id: string;
+type EligiblePile = PileWithDimension & {
+  /** Alias for pileIdCode for convenience */
   code: string;
-  dia: number;
-  depth: number;
-  areaLocation: string | null;
 };
 
 type SimpleMachine = { id: string; machineNo: string; description?: string | null };
@@ -67,8 +58,6 @@ function toLocalDateStr(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
-
-// ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function GeneratePlanScreen() {
   const navigation = useNavigation<any>();
@@ -81,9 +70,8 @@ export default function GeneratePlanScreen() {
   const siteId = user?.siteId ?? ''; // siteId is string | undefined; fallback to ''
   const today = toLocalDateStr(new Date());
 
-  // ── Data loading ─────────────────────────────────────────────────────────
-
   const [piles, setPiles] = useState<EligiblePile[]>([]);
+  const [areas, setAreas] = useState<PilingArea[]>([]);
   const [steps, setSteps] = useState<PilingStep[]>([]);
   const [rigs, setRigs] = useState<SimpleMachine[]>([]);
   const [cranes, setCranes] = useState<SimpleMachine[]>([]);
@@ -94,32 +82,31 @@ export default function GeneratePlanScreen() {
   useEffect(() => {
     if (!siteId) return;
     let cancelled = false;
-  (async () => {
+    (async () => {
       setDataLoading(true);
       try {
-        const [pilesRaw, stepsRaw, rigsRaw, cranesRaw, personnelRaw, shiftsRaw] = await Promise.all([
-          getPilesBySite(siteId),
+        const [pilesRaw, stepsRaw, rigsRaw, cranesRaw, personnelRaw, shiftsRaw, areasRaw] = await Promise.all([
+          getPilesBySiteWithDimensions(siteId),
           getSteps(),
           getMachinesByType(siteId, 'RIG'),
           getMachinesByType(siteId, 'CRANE'),
           getPersonnelBySite(siteId),
           getAllShiftTypes(),
+          getAreasBySite(siteId),
         ]);
-        if (cancelled) return;
+if (cancelled) return;
         setPiles(
           pilesRaw.map((p) => ({
-            id: p.id,
+            ...p,
             code: p.pileIdCode,
-            dia: p.dia,
-            depth: p.depth,
-            areaLocation: p.areaLocation ?? null,
           })),
         );
         setSteps(stepsRaw);
-        setRigs(rigsRaw.map((r) => ({ id: r.id, machineNo: r.machineNo })));
-        setCranes(cranesRaw.map((c) => ({ id: c.id, machineNo: c.machineNo })));
+        setRigs(rigsRaw.map((r: typeof rigsRaw[0]) => ({ id: r.id, machineNo: r.machineNo })));
+        setCranes(cranesRaw.map((c: typeof cranesRaw[0]) => ({ id: c.id, machineNo: c.machineNo })));
         setPersonnel(personnelRaw);
         setShifts(shiftsRaw);
+        setAreas(areasRaw);
       } finally {
         if (!cancelled) setDataLoading(false);
       }
@@ -127,16 +114,37 @@ export default function GeneratePlanScreen() {
     return () => { cancelled = true; };
   }, [siteId]);
 
-  // ── PlanDraft state ───────────────────────────────────────────────────────
-
   const [draft, setDraft] = useState<PlanDraft>(() => defaultPlanDraft(today));
+
+  const areaPiles = useMemo(() => {
+    if (!draft.areaIds.length) return [];
+    return piles.filter((p) => p.areaId && draft.areaIds.includes(p.areaId));
+  }, [piles, draft.areaIds]);
+
+  const selectedPlanPiles = useMemo(
+    () => piles.filter((p) => draft.selectedPileIds.includes(p.id)),
+    [piles, draft.selectedPileIds],
+  );
+
+  const [pendingWorkItems, setPendingWorkItems] = useState<PileWorkProgress[]>([]);
+
+  useEffect(() => {
+    if (!areaPiles.length) {
+      setPendingWorkItems([]);
+      return;
+    }
+    let cancelled = false;
+    getPendingWorkForPileIds(areaPiles.map((pile) => pile.id)).then((pending) => {
+      if (!cancelled) setPendingWorkItems(pending);
+    });
+    return () => { cancelled = true; };
+  }, [areaPiles]);
 
   function updateDraft(patch: Partial<PlanDraft>) {
     setDraft((prev) => ({ ...prev, ...patch }));
   }
 
-  // ── Seed draft in edit mode once data loads ───────────────────────────────
-
+  // Seed draft in edit mode once data loads
   const seeded = useRef(false);
   useEffect(() => {
     if (!isEditMode || dataLoading || !checklist || !checklistPiles.length || seeded.current) return;
@@ -154,18 +162,20 @@ export default function GeneratePlanScreen() {
       activeRigIds: [...new Set(checklistPiles.map((cp) => cp.rigId))],
       activeCraneIds: [...new Set(checklistPiles.map((cp) => cp.craneId))],
       selectedPileIds: ids,
+      areaIds: [],
       selectedStepIds: steps.map((s) => s.id),
       assignments,
+      resumeWorkByPileId: {},
       supervisorId: checklist.supervisorId ?? null,
       supervisorId2: checklist.supervisorId2 ?? null,
+      shiftTypeId: checklist.shiftTypeId ?? null,
     });
 
     // Skip directly to the preview step when editing an existing plan
     setStep('preview');
   }, [isEditMode, dataLoading, checklist, checklistPiles]);
 
-  // ── Default machine selection: all selected on mount (after data loads) ──
-
+  // Default machine selection: all selected on mount (after data loads)
   const machinesDefaulted = useRef(false);
   useEffect(() => {
     if (!dataLoading && steps.length && draft.selectedStepIds.length === 0) {
@@ -187,9 +197,64 @@ export default function GeneratePlanScreen() {
     }));
   }, [dataLoading, rigs, cranes, isEditMode]);
 
-  // ── Step navigation ───────────────────────────────────────────────────────
-
   const [step, setStep] = useState<Step>('intro');
+  const preselectKeyRef = useRef('');
+
+  useEffect(() => {
+    preselectKeyRef.current = '';
+  }, [draft.areaIds]);
+
+  useEffect(() => {
+    if (step !== 'piles') return;
+
+    const preselectKey = [
+      pendingWorkItems.map((p) => p.pileId).join(','),
+      draft.activeRigIds.join(','),
+      draft.activeCraneIds.join(','),
+    ].join('|');
+
+    if (preselectKeyRef.current === preselectKey) return;
+    preselectKeyRef.current = preselectKey;
+
+    const preselection = buildResumePreselection({
+      pendingItems: pendingWorkItems,
+      activeRigIds: draft.activeRigIds,
+      activeCraneIds: draft.activeCraneIds,
+    });
+
+    setDraft((prev) => {
+      const manualIds = prev.selectedPileIds.filter(
+        (id) => !preselection.selectedPileIds.includes(id),
+      );
+      const manualAssignments = Object.fromEntries(
+        manualIds
+          .filter((id) => prev.assignments[id]?.rig && prev.assignments[id]?.crane)
+          .map((id) => [id, prev.assignments[id]]),
+      );
+
+      return {
+        ...prev,
+        selectedPileIds: [...preselection.selectedPileIds, ...manualIds],
+        assignments: { ...manualAssignments, ...preselection.assignments },
+        resumeWorkByPileId: preselection.resumeWorkByPileId,
+      };
+    });
+  }, [step, pendingWorkItems, draft.activeRigIds, draft.activeCraneIds]);
+
+  useEffect(() => {
+    if (step !== 'steps') return;
+
+    const locked = getLockedStepIds(draft.selectedPileIds, draft.resumeWorkByPileId);
+    if (locked.size === 0) return;
+
+    const missing = [...locked].filter((id) => !draft.selectedStepIds.includes(id));
+    if (missing.length === 0) return;
+
+    setDraft((prev) => ({
+      ...prev,
+      selectedStepIds: mergeLockedSteps(prev.selectedStepIds, missing, steps),
+    }));
+  }, [step, draft.selectedPileIds, draft.resumeWorkByPileId, draft.selectedStepIds, steps]);
 
   function goNext() {
     if (step === 'preview') {
@@ -201,6 +266,7 @@ export default function GeneratePlanScreen() {
       handleGenerate();
       return;
     }
+
     const idx = STEP_ORDER.indexOf(step);
     setStep(STEP_ORDER[Math.min(idx + 1, STEP_ORDER.length - 1)]);
   }
@@ -208,17 +274,16 @@ export default function GeneratePlanScreen() {
   function goBack() {
     const idx = STEP_ORDER.indexOf(step);
     if (idx === 0) { navigation.goBack(); return; }
+
     setStep(STEP_ORDER[idx - 1]);
   }
 
-  // ── Confirmation modal for edit mode ──────────────────────────────────────
-
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
-
-  // ── Step validation ───────────────────────────────────────────────────────
 
   const canContinue = useMemo(() => {
     switch (step) {
+      case 'area':
+        return draft.areaIds.length > 0;
       case 'machines':
         return draft.activeRigIds.length > 0 && draft.activeCraneIds.length > 0;
       case 'piles':
@@ -235,12 +300,10 @@ export default function GeneratePlanScreen() {
     }
   }, [step, draft]);
 
-  // ── Preview plan steps (generated in-memory for the preview screen) ───────
-
   const [previewSteps, setPreviewSteps] = useState<PlanStepWithMeta[]>([]);
   const [previewWarningPileIds, setPreviewWarningPileIds] = useState<string[]>([]);
 
-  // We generate a temporary preview whenever the user arrives at the preview step.
+// We generate a temporary preview whenever the user arrives at the preview step.
   async function updatePreview() {
     if (!siteId || draft.selectedPileIds.length === 0) {
       setPreviewSteps([]);
@@ -248,27 +311,28 @@ export default function GeneratePlanScreen() {
       return;
     }
 
-      try {
-        const selectedPiles = piles.filter((p) => draft.selectedPileIds.includes(p.id));
-        const previewPilesInput = selectedPiles.map((pile) => {
-          const assignment = draft.assignments[pile.id];
-          return {
-            checklistPileId: pile.id,
-            pileId: pile.id,
-            pileIdCode: pile.code,
-            dia: pile.dia,
-            depth: pile.depth,
-            rigId: assignment?.rig ?? '',
-            craneId: assignment?.crane ?? '',
-          };
-        });
+    try {
+      const selectedPiles = selectedPlanPiles;
+      const previewPilesInput = selectedPiles.map((pile) => {
+        const assignment = draft.assignments[pile.id];
+        return {
+          checklistPileId: pile.id,
+          pileId: pile.id,
+          pileIdCode: pile.code,
+          dimensionId: pile.dimensionId,
+          rigId: assignment?.rig ?? '',
+          craneId: assignment?.crane ?? '',
+          resumeWork: draft.resumeWorkByPileId[pile.id],
+        };
+      });
 
-        const { planRows, warningPileIds } = await generatePlanPreview({
-          piles: previewPilesInput,
-          planStartTime: draft.planStartTime,
-          siteId,
-          selectedStepIds: draft.selectedStepIds,
-        });
+      const { planRows, warningPileIds } = await generatePlanPreview({
+        piles: previewPilesInput,
+        planStartTime: draft.planStartTime,
+        siteId,
+        shiftTypeId: draft.shiftTypeId ?? undefined,
+        selectedStepIds: draft.selectedStepIds,
+      });
 
       setPreviewSteps(planRows as PlanStepWithMeta[]);
       setPreviewWarningPileIds(warningPileIds);
@@ -279,26 +343,23 @@ export default function GeneratePlanScreen() {
     }
   }
 
-
   useEffect(() => {
     if (step === 'preview') {
       updatePreview();
     }
   }, [step, draft, piles, siteId]);
 
-  // ── Generate plan (final) ─────────────────────────────────────────────────
-
-  async function handleGenerate() {
+async function handleGenerate() {
     if (!siteId) return;
 
-    const selectedPiles = piles.filter((p) => draft.selectedPileIds.includes(p.id));
+    const selectedPiles = selectedPlanPiles;
     const pilesInput: PileAssignmentInput[] = selectedPiles.map((p) => ({
       pileId: p.id,
       pileCode: p.code,
-      dia: p.dia,
-      depth: p.depth,
+      dimensionId: p.dimensionId,
       rigId: draft.assignments[p.id].rig,
       craneId: draft.assignments[p.id].crane,
+      resumeWork: draft.resumeWorkByPileId[p.id],
     }));
 
     const endIso = planEndTime(draft.planStartTime);
@@ -309,19 +370,21 @@ export default function GeneratePlanScreen() {
       planEndTime: endIso,
       supervisorId: draft.supervisorId,
       supervisorId2: draft.supervisorId2,
+      shiftTypeId: draft.shiftTypeId,
       piles: pilesInput,
       stepIds: draft.selectedStepIds,
     };
 
     try {
+      await Promise.all(Object.entries(draft.resumeWorkByPileId).map(([pileId, resume]) =>
+        savePendingWork({ id: `progress_${pileId}`, pileId, stepId: resume.stepId, remainingMinutes: resume.remainingMinutes, lastRigId: draft.assignments[pileId]?.rig ?? resume.lastRigId ?? null, lastCraneId: draft.assignments[pileId]?.crane ?? resume.lastCraneId ?? null }),
+      ));
       await generatePlan(siteId, input);
       navigation.goBack();
     } catch {
       // error surfaced via planError from PlanContext
     }
   }
-
-  // ── Derived data for steps ────────────────────────────────────────────────
 
   const activeRigs = useMemo(
     () => rigs.filter((r) => draft.activeRigIds.includes(r.id)),
@@ -345,7 +408,7 @@ export default function GeneratePlanScreen() {
   // Build preview piles (already-assigned piles with machine labels)
   const builtPreviewPiles: PreviewPile[] = useMemo(() => {
     return draft.selectedPileIds.flatMap((id) => {
-      const pile = piles.find((p) => p.id === id);
+      const pile = selectedPlanPiles.find((p) => p.id === id);
       if (!pile) return [];
       const asgn = draft.assignments[id];
       if (!asgn) return [];
@@ -361,9 +424,7 @@ export default function GeneratePlanScreen() {
         craneMachineNo: craneNo,
       }];
     });
-  }, [draft.selectedPileIds, draft.assignments, piles, rigs, cranes]);
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  }, [draft.selectedPileIds, draft.assignments, selectedPlanPiles, rigs, cranes]);
 
   if (dataLoading) {
     return (
@@ -398,7 +459,7 @@ export default function GeneratePlanScreen() {
             <PileAssignStep
               draft={draft}
               onUpdate={updateDraft}
-              piles={piles}
+              piles={areaPiles}
               activeRigs={activeRigs}
               activeCranes={activeCranes}
             />
@@ -411,6 +472,14 @@ export default function GeneratePlanScreen() {
           >
             {step === 'intro' && (
               <IntroStep />
+            )}
+
+            {step === 'area' && (
+              <AreaSelectStep
+                draft={draft}
+                onUpdate={updateDraft}
+                areas={areas.map((a) => ({ id: a.id, name: a.name, code: a.code }))}
+              />
             )}
 
             {step === 'start' && (
@@ -570,19 +639,38 @@ export default function GeneratePlanScreen() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   center: { alignItems: 'center', justifyContent: 'center' },
   loadingText: { ...typography.body, color: colors.textSecondary, marginTop: spacing.md },
+  areaStep: { gap: spacing.sm, paddingHorizontal: spacing.md },
+  areaTitle: { ...typography.pageTitle, color: colors.textPrimary },
+  areaDescription: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.sm },
+  areaCard: { backgroundColor: colors.white, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: spacing.md },
+  areaCardSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+  areaCardTitle: { ...typography.cardTitle, color: colors.textPrimary },
+  areaCardTitleSelected: { color: colors.accent },
+  areaCardMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  pilePick: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: colors.white, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: spacing.md },
+  pilePickSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+  pilePickCode: { ...typography.cardTitle, color: colors.textPrimary },
+  pilePickMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  pilePickAction: { ...typography.caption, color: colors.accent, fontWeight: '700' },
   scrollContent: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xxxl,
     gap: spacing.md,
   },
-  footer: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  footer: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.white,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(28,28,46,0.08)',
+    zIndex: 10,
+    elevation: 10,
+  },
   continueBtn: {
     backgroundColor: colors.accent,
     borderRadius: radius.pill,
@@ -599,7 +687,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 
-  // ── Confirmation modal styles ─────────────────────────────────────────────
+  // Confirmation modal styles
   confirmBody: {
     alignItems: 'center',
     paddingVertical: spacing.lg,
@@ -658,6 +746,7 @@ const styles = StyleSheet.create({
   },
   pilesStepContainer: {
     flex: 1,
+    minHeight: 0,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.md,

@@ -7,7 +7,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Calendar, ChevronRight, Clock } from 'lucide-react-native';
+import { Calendar, Pencil, Clock } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import TimerSelectMenu from '@/components/shared/TimerSelectMenu';
 import { TimelineStopLog } from '@/components/shared/timeline/MachineStopTimeline';
@@ -102,7 +102,7 @@ export default function StartTimeStep({ draft, onUpdate }: StartTimeStepProps) {
                   {fmtPlanDate(draft.planStartTime)}, {formatTime(draft.planStartTime)}
                 </Text>
               </View>
-              <ChevronRight size={18} color={colors.textSecondary} />
+              <Pencil size={18} color={colors.textSecondary} />
             </View>
           </GlassCard>
         )}
