@@ -45,6 +45,7 @@ export const colors = {
   machine: {
     rigColors: ['#EA580C', '#F97316', '#FB923C', '#FDBA74'],
     craneColors: ['#0369A1', '#0284C7', '#38BDF8', '#7DD3FC'],
+    compressorColors: ['#6D28D9', '#7C3AED', '#A78BFA', '#C4B5FD'],
     break: '#fbbf24',
     idle: '#c7c7d6',
     unused: '#e4e4e7',
@@ -58,6 +59,10 @@ export const colors = {
     crane: {
       color: '#0284C7',
       soft: 'rgba(2,132,199,0.12)',
+    },
+    compressor: {
+      color: '#7C3AED',
+      soft: 'rgba(124,58,237,0.12)',
     },
 
     break: '#fbbf24',

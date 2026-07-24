@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Drill, Forklift } from 'lucide-react-native';
+import { Drill, Forklift, Wind } from 'lucide-react-native';
 
 import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
@@ -35,12 +35,26 @@ const MACHINE_META = {
     color: colors.machines.crane.color,
     soft: colors.machines.crane.soft,
   },
+  COMPRESSOR: {
+    icon: Wind,
+    label: 'Compressor',
+    color: colors.machines.compressor.color,
+    soft: colors.machines.compressor.soft,
+  },
 } as const;
+
+// Status → dot/text style + label. Unrecognized values (server/enum drift)
+// fall back to the INACTIVE treatment rather than crashing or looking "active".
+function statusMeta(status: string): { dot: object; text: object; label: string } {
+  if (status === 'ACTIVE') return { dot: styles.dotActive, text: styles.statusTextActive, label: 'Active' };
+  if (status === 'BREAKDOWN') return { dot: styles.dotBreakdown, text: styles.statusTextBreakdown, label: 'Reported Down' };
+  return { dot: styles.dotInactive, text: styles.statusTextInactive, label: 'Inactive' };
+}
 
 function MachineCard({ machine }: { machine: PilingMachine }) {
   const meta = MACHINE_META[machine.type as keyof typeof MACHINE_META] ?? MACHINE_META.RIG;
   const Icon = meta.icon;
-  const isActive = machine.status === 'ACTIVE';
+  const status = statusMeta(machine.status);
 
   return (
     <GlassCard innerStyle={styles.card}>
@@ -57,10 +71,8 @@ function MachineCard({ machine }: { machine: PilingMachine }) {
         </View>
 
         <View style={styles.statusRow}>
-          <View style={[styles.statusDot, isActive ? styles.dotActive : styles.dotInactive]} />
-          <Text style={[styles.statusText, isActive ? styles.statusTextActive : styles.statusTextInactive]}>
-            {isActive ? 'Active' : 'Inactive'}
-          </Text>
+          <View style={[styles.statusDot, status.dot]} />
+          <Text style={[styles.statusText, status.text]}>{status.label}</Text>
         </View>
       </View>
 
@@ -194,6 +206,7 @@ const styles = StyleSheet.create({
   },
   dotActive: { backgroundColor: '#4ade80' },
   dotInactive: { backgroundColor: '#f87171' },
+  dotBreakdown: { backgroundColor: colors.danger },
   statusText: {
     ...typography.caption,
     fontSize: 12,
@@ -201,6 +214,7 @@ const styles = StyleSheet.create({
   },
   statusTextActive: { color: '#4ade80' },
   statusTextInactive: { color: '#f87171' },
+  statusTextBreakdown: { color: colors.danger },
   iconAvatar: {
     width: 64,
     height: 64,

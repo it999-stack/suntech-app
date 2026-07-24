@@ -1,5 +1,7 @@
 // src/screens/Site/Tabs/StepsScreen.tsx
-// Lists all seeded piling steps grouped by track (RIG / CRANE).
+// Lists all seeded piling steps in piling_steps.sequence_order — the single
+// source of truth for step ordering everywhere in the app, so this list is
+// intentionally one flat sequence rather than grouped by track.
 // Tap a step to configure duration templates for it.
 
 import React, { useEffect, useState } from 'react';
@@ -13,7 +15,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronRight, Drill, Construction } from 'lucide-react-native';
+import { ChevronRight, Drill, Construction, Wind } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { MaterialTopTabNavigationProp } from '@react-navigation/material-top-tabs';
@@ -45,6 +47,12 @@ const TRACK_META = {
     icon: Construction,
     color: '#2f7a52',
     badgeBg: '#1a3d2e',
+  },
+  COMPRESSOR: {
+    label: 'COMPRESSOR',
+    icon: Wind,
+    color: '#6D28D9',
+    badgeBg: '#3b2166',
   },
 } as const;
 
@@ -79,10 +87,6 @@ function StepRow({ step }: { step: PilingStep }) {
   );
 }
 
-function SectionHeader({ title }: { title: string }) {
-  return <Text style={styles.sectionHeader}>{title}</Text>;
-}
-
 export default function StepsScreen() {
   const [steps, setSteps] = useState<PilingStep[]>([]);
   const [loading, setLoading] = useState(true);
@@ -93,20 +97,6 @@ export default function StepsScreen() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
-
-  const rigSteps   = steps.filter((s) => s.track === 'RIG');
-  const craneSteps = steps.filter((s) => s.track === 'CRANE');
-
-  type ListItem =
-    | { type: 'header'; key: string; title: string }
-    | { type: 'step'; key: string; step: PilingStep };
-
-  const listData: ListItem[] = [
-    ...(rigSteps.length   ? [{ type: 'header' as const, key: 'h_rig',   title: 'Rig Steps' }]   : []),
-    ...rigSteps.map((s)   => ({ type: 'step'   as const, key: s.id, step: s })),
-    ...(craneSteps.length ? [{ type: 'header' as const, key: 'h_crane', title: 'Crane Steps' }] : []),
-    ...craneSteps.map((s) => ({ type: 'step'   as const, key: s.id, step: s })),
-  ];
 
   return (
     <LinearGradient
@@ -129,14 +119,11 @@ export default function StepsScreen() {
           />
         ) : (
           <FlatList
-            data={listData}
-            keyExtractor={(item) => item.key}
+            data={steps}
+            keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => {
-              if (item.type === 'header') return <SectionHeader title={item.title} />;
-              return <StepRow step={item.step} />;
-            }}
+            renderItem={({ item }) => <StepRow step={item} />}
           />
         )}
       </SafeAreaView>
@@ -165,16 +152,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.xxxl,
     gap: spacing.sm,
-  },
-  sectionHeader: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-    paddingHorizontal: 2,
   },
   row: {
     flexDirection: 'row',

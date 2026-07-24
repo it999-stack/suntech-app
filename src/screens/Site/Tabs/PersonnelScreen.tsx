@@ -17,9 +17,9 @@ import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { useAuthStore } from '@store/authStore';
-import type { PilingPersonnel } from '@db/schema';
+import type { PilingSitePersonnel } from '@db/schema';
 
-function PersonnelCard({ person }: { person: PilingPersonnel }) {
+function PersonnelCard({ person }: { person: PilingSitePersonnel }) {
   const isActive = person.isActive;
 
   return (
@@ -62,7 +62,7 @@ function PersonnelCard({ person }: { person: PilingPersonnel }) {
 
 export default function PersonnelScreen() {
   const siteId = useAuthStore((s) => s.user?.siteId);
-  const [personnel, setPersonnel] = useState<PilingPersonnel[]>([]);
+  const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

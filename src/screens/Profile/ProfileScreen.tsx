@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation, CommonActions } from '@react-navigation/native';
 import {
   Building2,
   RefreshCw,
@@ -18,7 +19,10 @@ import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
 import { useSiteSettings } from '@state/SiteSettingsContext';
 import { usePilesAreasStore } from '@store/pilesAreasStore';
-import { seedYesterdayFromToday, clearAllPendingWork } from '@/services/seedResumeWork';
+import { usePlan } from '@state/PlanContext';
+import { seedYesterdayFromToday } from '@/services/seedResumeWork';
+import { getPendingCount } from '@repositories/syncQueueRepository';
+import { onQueueChanged } from '@sync/SyncManager';
 
 const APP_VERSION = '0.1.0';
 
@@ -80,9 +84,11 @@ function formatSyncTime(ts: number | null): string {
 }
 
 export default function ProfileScreen() {
+  const navigation = useNavigation<any>();
   const { user, logout } = useAuthStore();
   const { isSyncing, lastSyncedAt, pilesCount, error: syncError, loadLastSyncTime, sync } = useSyncStore();
   const { reloadFromDb } = useSiteSettings();
+  const { loadChecklist } = usePlan();
 
   const displayName = user?.name ?? 'Unknown';
   const displayEmail = user?.email ?? '';
@@ -94,6 +100,7 @@ export default function ProfileScreen() {
 
   const today = toLocalDateStr(new Date());
   const [isSeeding, setIsSeeding] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
 
   // Load last sync time from local DB when screen mounts
   useEffect(() => {
@@ -101,6 +108,16 @@ export default function ProfileScreen() {
       loadLastSyncTime(user.siteId);
     }
   }, [user?.siteId]);
+
+  // Pending-count indicator: reflects pil_sync_queue in real time — refreshed
+  // on mount and after every automatic/manual flush attempt.
+  useEffect(() => {
+    const refresh = () => {
+      getPendingCount().then(setPendingCount).catch(() => {});
+    };
+    refresh();
+    return onQueueChanged(refresh);
+  }, []);
 
   const handleSync = async () => {
     if (!user?.siteId) {
@@ -140,7 +157,23 @@ export default function ProfileScreen() {
               if (result.yesterdayChecklistCreated) {
                 Alert.alert(
                   'Seed Complete',
-                  `Created yesterday's checklist with ${result.pendingWorkSeeded} pending work items. You can now generate a new plan for today.`,
+                  `Created yesterday's checklist with ${result.actualStepsCopied} completed step(s) and the rest left incomplete. Generating a new plan for today now.`,
+                  [
+                    {
+                      text: 'OK',
+                      onPress: async () => {
+                        // Seeding deletes today's checklist directly in SQLite —
+                        // refresh the shared context so Home doesn't show stale data.
+                        await loadChecklist(user.siteId ?? '', today);
+                        navigation.dispatch(
+                          CommonActions.navigate({
+                            name: 'HomeTab',
+                            params: { screen: 'GeneratePlan' },
+                          }),
+                        );
+                      },
+                    },
+                  ],
                 );
               } else {
                 Alert.alert('No Action', "No checklist exists for today, or yesterday already has a checklist.");
@@ -149,28 +182,6 @@ export default function ProfileScreen() {
               Alert.alert('Error', `Failed to seed: ${e instanceof Error ? e.message : String(e)}`);
             } finally {
               setIsSeeding(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleClearPending = async () => {
-    Alert.alert(
-      'Clear Pending Work',
-      'This will clear all pending work entries from the database. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await clearAllPendingWork();
-              Alert.alert('Cleared', 'All pending work entries have been removed.');
-            } catch (e) {
-              Alert.alert('Error', `Failed to clear: ${e instanceof Error ? e.message : String(e)}`);
             }
           },
         },
@@ -243,6 +254,11 @@ export default function ProfileScreen() {
                   <Text style={[styles.syncSubtext, syncError ? styles.syncError : null]}>
                     {syncSubtext}
                   </Text>
+                  {pendingCount > 0 && (
+                    <Text style={styles.syncPendingText}>
+                      {pendingCount} change{pendingCount === 1 ? '' : 's'} pending sync
+                    </Text>
+                  )}
                 </View>
               </View>
               <Pressable
@@ -265,12 +281,6 @@ export default function ProfileScreen() {
               icon={<Sprout size={18} color={colors.accent} />}
               label="Seed Resume Work"
               onPress={handleSeed}
-            />
-            <Divider />
-            <Row
-              icon={<Info size={18} color={colors.warning} />}
-              label="Clear Pending Work"
-              onPress={handleClearPending}
             />
           </GlassCard>
 
@@ -392,6 +402,11 @@ const styles = StyleSheet.create({
   },
   syncError: {
     color: colors.danger,
+  },
+  syncPendingText: {
+    ...typography.caption,
+    color: colors.accent,
+    marginTop: 2,
   },
   syncButton: {
     paddingHorizontal: spacing.md,

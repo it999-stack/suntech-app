@@ -56,7 +56,20 @@ export default function ProgressHeader({ step, onBack, onNext, nextDisabled }: P
         <Pressable onPress={onBack} hitSlop={12} style={styles.sideBtn}>
           <ChevronLeft size={22} color={colors.textPrimary} />
         </Pressable>
-        <Text style={styles.pageTitle}>Generate Plan</Text>
+        <View style={styles.progressWrapper}>
+
+          <Text style={styles.stepLabel}>
+            Step {idx + 1} of {total} · {STEP_LABEL[step]}
+          </Text>
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${((idx + 1) / total) * 100}%` },
+              ]}
+            />
+          </View>
+        </View>
         {onNext && !isLastStep ? (
           <Pressable
             onPress={onNext}
@@ -70,21 +83,6 @@ export default function ProgressHeader({ step, onBack, onNext, nextDisabled }: P
           <View style={styles.sideBtnPlaceholder} />
         )}
       </View>
-
-      <View style={styles.progressWrapper}>
-
-        <Text style={styles.stepLabel}>
-          Step {idx + 1} of {total} · {STEP_LABEL[step]}
-        </Text>
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              { width: `${((idx + 1) / total) * 100}%` },
-            ]}
-          />
-        </View>
-      </View>
     </View>
   );
 }
@@ -92,7 +90,7 @@ export default function ProgressHeader({ step, onBack, onNext, nextDisabled }: P
 const styles = StyleSheet.create({
   headerArea: {
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    marginTop: spacing.xs,
     paddingBottom: spacing.sm,
   },
   headerTopRow: {
@@ -116,7 +114,6 @@ const styles = StyleSheet.create({
 
   progressWrapper: {
     paddingHorizontal: spacing.md,
-    marginTop: spacing.xs,
   },
   progressTrack: {
     height: 6,

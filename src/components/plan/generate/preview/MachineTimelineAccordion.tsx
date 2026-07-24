@@ -18,6 +18,7 @@ import { buildMachineStops } from '@/utils/timeline';
 import { type MachineInfo, type TimelineSourceItem, type TimelineStop } from '@/types/timeline';
 import { colors, spacing, typography } from '@/theme/theme';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
+import { isContinuingStep } from '@utils/helpers';
 
 export type { MachineInfo };
 
@@ -51,11 +52,13 @@ export default function MachineTimelineAccordion({
   const sourceItems: TimelineSourceItem[] = useMemo(
     () =>
       steps
-        .filter((s) => s.assignedMachineId && s.plannedStart && s.plannedEnd)
+        .filter((s) => s.assignedMachineId && s.plannedStart)
         .map((s) => ({
           machineId: s.assignedMachineId,
           start: s.plannedStart,
-          end: s.plannedEnd,
+          // A continuing step has no committed end — fill the bar to the
+          // window boundary instead of letting it vanish from the timeline.
+          end: isContinuingStep(s) ? windowEnd.toISOString() : s.plannedEnd,
           groupKey: s.checklistPileId ?? s.id,
           groupLabel: s.checklistPileId ? pileLabelById[s.checklistPileId] ?? 'Unassigned pile' : 'Unassigned pile',
           detailLabel: s.stepName,
@@ -85,7 +88,7 @@ export default function MachineTimelineAccordion({
         <View style={styles.headerRow}>
           <Clock size={16} color={colors.accent} />
           <View>
-            <Text style={styles.title}>Machine Timeline ccc</Text>
+            <Text style={styles.title}>Machine Timeline</Text>
             <Text style={styles.subtitle}>
               {activeRigs.length} rig{activeRigs.length === 1 ? '' : 's'} · {activeCranes.length} crane
               {activeCranes.length === 1 ? '' : 's'} active

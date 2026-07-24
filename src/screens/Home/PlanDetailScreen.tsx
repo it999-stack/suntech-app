@@ -3,42 +3,43 @@
 // Read-only view of an existing plan, styled to match the preview step design.
 // Shows the plan window, supervisors, machine timeline, and per-pile accordions.
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RouteProp, useRoute } from '@react-navigation/native';
-import { Clock, Users } from 'lucide-react-native';
+import { Clock, Users, RefreshCw } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import Accordion from '@components/shared/Accordion';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { HomeStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
-import { getChecklistById, getChecklistPiles } from '@repositories/checklistRepository';
-import { getPlanStepsForChecklist, type PlanStepWithMeta } from '@repositories/planRepository';
+import { apiClient } from '@services/apiClient';
+import {
+  getChecklistById,
+  getChecklistPiles,
+  hydrateChecklistFromServer,
+} from '@repositories/checklistRepository';
+import { formatTime } from '@utils/formatTime';
+import {
+  getPlanStepsForChecklist,
+  getActualStepsForChecklist,
+  type PlanStepWithMeta,
+  type ActualStepWithMeta,
+} from '@repositories/planRepository';
 import { getPilesBySiteWithDimensions } from '@repositories/pilesRepository';
 import { getMachinesByType } from '@repositories/machinesRepository';
 import { getPersonnelByIds } from '@repositories/personnelRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
-import type { PilingDailyChecklist, PilingPersonnel, PilingShiftType } from '@db/schema';
-import PileAccordion from '@components/plan/generate/preview/PileAccordion';
+import type { PilingDailyChecklist, PilingSitePersonnel, PilingShiftType, PilingChecklistPile, PilingMachine } from '@db/schema';
+import PilesAccordion from '@components/plan/generate/preview/PilesAccordion';
 import MachineTimelineAccordion from '@components/plan/generate/preview/MachineTimelineAccordion';
 import { fmtPlanTime as formatPlanTime, planEndTime } from '@/types/plan';
 import { formatMinutes, computeWorkingMinutes, computeElapsedMinutes } from '@components/plan/generate/preview/previewUtils';
 import { type MachineInfo } from '@/types/timeline';
+import type { PreviewPile } from '@app-types/previewTypes';
 
 type PlanDetailRouteProp = RouteProp<HomeStackParamList, 'PlanDetail'>;
-
-// ─── Types ─────────────────────────────────────────────────────────────────
-
-interface DetailPile {
-  id: string;
-  code: string;
-  dia: number;
-  depth: number;
-  rigMachineNo: string;
-  craneMachineNo: string;
-}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -48,75 +49,110 @@ export default function PlanDetailScreen() {
   const user = useAuthStore((s) => s.user);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [checklist, setChecklist] = useState<PilingDailyChecklist | null>(null);
   const [planSteps, setPlanSteps] = useState<PlanStepWithMeta[]>([]);
-  const [detailPiles, setDetailPiles] = useState<DetailPile[]>([]);
-  const [supervisors, setSupervisors] = useState<PilingPersonnel[]>([]);
+  const [actualSteps, setActualSteps] = useState<ActualStepWithMeta[]>([]);
+  const [detailPiles, setDetailPiles] = useState<PreviewPile[]>([]);
+  const [supervisors, setSupervisors] = useState<PilingSitePersonnel[]>([]);
   const [shifts, setShifts] = useState<PilingShiftType[]>([]);
+  const [checklistPiles, setChecklistPiles] = useState<PilingChecklistPile[]>([]);
+  const [rigs, setRigs] = useState<PilingMachine[]>([]);
+  const [cranes, setCranes] = useState<PilingMachine[]>([]);
 
-  useEffect(() => {
+  // Reads whatever is currently cached in local SQLite — used both on mount
+  // and after a refresh has pulled fresh data down from the server. Plans
+  // are server-owned (see plan_generation_service.py), so this screen never
+  // writes to the checklist itself, only reflects what's been synced.
+  const loadLocalData = useCallback(async (): Promise<void> => {
     if (!checklistId || !user?.siteId) return;
 
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        // Load checklist data
-        const cl = await getChecklistById(checklistId);
-        
-        // Load checklist piles
-        const cpList = await getChecklistPiles(checklistId);
-        
-        // Load all piles with dimensions
-        const allPiles = await getPilesBySiteWithDimensions(user.siteId!);
-        
-        // Build a map for quick pile lookup
-        const pileMap = new Map(allPiles.map((p) => [p.id, p]));
-        
-        // Load plan steps
-        const steps = await getPlanStepsForChecklist(checklistId);
-        
-        // Load machines
-        const rigs = await getMachinesByType(user.siteId!, 'RIG');
-        const cranes = await getMachinesByType(user.siteId!, 'CRANE');
-        
-        // Load supervisors
-        const supervisorIds: string[] = [];
-        if (cl?.supervisorId) supervisorIds.push(cl.supervisorId);
-        if (cl?.supervisorId2) supervisorIds.push(cl.supervisorId2);
-        const supervisorList = supervisorIds.length > 0 ? await getPersonnelByIds(supervisorIds) : [];
-        
-        // Load shifts
-        const shiftsList = await getAllShiftTypes();
-        
-        if (!cancelled) {
-          setChecklist(cl ?? null);
-          setPlanSteps(steps);
-          setSupervisors(supervisorList);
-          setShifts(shiftsList);
-          
-          // Build detail piles
-          const builtPiles: DetailPile[] = cpList.map((cp) => {
-            const pile = pileMap.get(cp.pileId);
-            const rigNo = rigs.find((m) => m.id === cp.rigId)?.machineNo ?? '—';
-            const craneNo = cranes.find((m) => m.id === cp.craneId)?.machineNo ?? '—';
-            return {
-              id: cp.pileId,
-              code: pile?.pileIdCode ?? cp.pileId,
-              dia: pile?.dia ?? 0,
-              depth: pile?.depth ?? 0,
-              rigMachineNo: rigNo,
-              craneMachineNo: craneNo,
-            };
-          });
-          setDetailPiles(builtPiles);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+    // Load checklist data
+    const cl = await getChecklistById(checklistId);
+
+    // Load checklist piles
+    const cpList = await getChecklistPiles(checklistId);
+
+    // Load all piles with dimensions
+    const allPiles = await getPilesBySiteWithDimensions(user.siteId!);
+
+    // Build a map for quick pile lookup
+    const pileMap = new Map(allPiles.map((p) => [p.id, p]));
+
+    // Load plan steps + recorded actuals
+    const steps = await getPlanStepsForChecklist(checklistId);
+    const actuals = await getActualStepsForChecklist(checklistId);
+
+    // Load machines
+    const rigs = await getMachinesByType(user.siteId!, 'RIG');
+    const cranes = await getMachinesByType(user.siteId!, 'CRANE');
+
+    // Load supervisors
+    const supervisorIds: string[] = [];
+    if (cl?.supervisorId) supervisorIds.push(cl.supervisorId);
+    if (cl?.supervisorId2) supervisorIds.push(cl.supervisorId2);
+    const supervisorList = supervisorIds.length > 0 ? await getPersonnelByIds(supervisorIds) : [];
+
+    // Load shifts
+    const shiftsList = await getAllShiftTypes();
+
+    setChecklist(cl ?? null);
+    setPlanSteps(steps);
+    setActualSteps(actuals);
+    setSupervisors(supervisorList);
+    setShifts(shiftsList);
+    setChecklistPiles(cpList);
+    setRigs(rigs);
+    setCranes(cranes);
+
+    // Build detail piles
+    const builtPiles: PreviewPile[] = cpList.map((cp) => {
+      const pile = pileMap.get(cp.pileId);
+      const rigNo = rigs.find((m) => m.id === cp.rigId)?.machineNo ?? '—';
+      const craneNo = cranes.find((m) => m.id === cp.craneId)?.machineNo ?? '—';
+      return {
+        id: cp.pileId,
+        checklistPileId: cp.id,
+        code: pile?.pileIdCode ?? cp.pileId,
+        dia: pile?.dia ?? 0,
+        depth: pile?.depth ?? 0,
+        rigMachineNo: rigNo,
+        craneMachineNo: craneNo,
+      };
+    });
+    setDetailPiles(builtPiles);
   }, [checklistId, user?.siteId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    loadLocalData().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadLocalData]);
+
+  // Pulls this checklist's latest server state into local SQLite, then
+  // re-reads local state — this is the only way to get fresh data while
+  // viewing a plan, since generation itself requires connectivity and this
+  // screen is otherwise a pure offline read of the local cache.
+  const handleRefresh = useCallback(async (): Promise<void> => {
+    if (!checklistId) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const { data } = await apiClient.get(`/piling/checklists/${checklistId}`);
+      await hydrateChecklistFromServer(data);
+      await loadLocalData();
+    } catch {
+      setRefreshError('Could not refresh — check your connection.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [checklistId, loadLocalData]);
 
   // Compute derived values
   const endIso = checklist?.planStartTime ? planEndTime(checklist.planStartTime) : '';
@@ -135,49 +171,26 @@ export default function PlanDetailScreen() {
   const shift1Name = shift1?.name ?? 'Shift 1';
   const shift2Name = shift2?.name ?? 'Shift 2';
 
-  // Machine info for timeline
+  // Machine info for timeline — id must be the real machine UUID (matching
+  // plan_steps.assignedMachineId), not the display machineNo, or
+  // MachineTimelineAccordion can never match a machine to its stops.
   const machineInfos = useMemo<MachineInfo[]>(() => {
-    const seenRigs = new Set<string>();
-    const seenCranes = new Set<string>();
-    
-    const result: MachineInfo[] = [];
-    
-    detailPiles.forEach((p) => {
-      if (p.rigMachineNo !== '—' && !seenRigs.has(p.rigMachineNo)) {
-        seenRigs.add(p.rigMachineNo);
-        result.push({ id: p.rigMachineNo, machineNo: p.rigMachineNo, type: 'RIG' });
-      }
-      if (p.craneMachineNo !== '—' && !seenCranes.has(p.craneMachineNo)) {
-        seenCranes.add(p.craneMachineNo);
-        result.push({ id: p.craneMachineNo, machineNo: p.craneMachineNo, type: 'CRANE' });
-      }
-    });
-    
-    return result;
-  }, [detailPiles]);
+    const usedRigIds = new Set(checklistPiles.map((cp) => cp.rigId).filter(Boolean));
+    const usedCraneIds = new Set(checklistPiles.map((cp) => cp.craneId).filter(Boolean));
+    return [
+      ...rigs.filter((r) => usedRigIds.has(r.id)).map((r) => ({ id: r.id, machineNo: r.machineNo, type: 'RIG' as const })),
+      ...cranes.filter((c) => usedCraneIds.has(c.id)).map((c) => ({ id: c.id, machineNo: c.machineNo, type: 'CRANE' as const })),
+    ];
+  }, [checklistPiles, rigs, cranes]);
 
   // Pile label map for timeline
   const pileLabelById = useMemo(() => {
     const map: Record<string, string> = {};
-    planSteps.forEach((s) => {
-      if (s.checklistPileId) {
-        const pile = detailPiles.find((p) => p.id === s.checklistPileId.replace('cp_', ''));
-        map[s.checklistPileId] = pile ? `Pile ${pile.code}` : 'Unknown pile';
-      }
+    detailPiles.forEach((p) => {
+      map[p.checklistPileId] = `Pile ${p.code}`;
     });
     return map;
-  }, [planSteps, detailPiles]);
-
-  // Group plan steps by checklistPileId for PileAccordion
-  const stepsByPileId = useMemo(() => {
-    const map: Record<string, PlanStepWithMeta[]> = {};
-    planSteps.forEach((s) => {
-      const key = s.checklistPileId ?? 'unknown';
-      if (!map[key]) map[key] = [];
-      map[key].push(s);
-    });
-    return map;
-  }, [planSteps]);
+  }, [detailPiles]);
 
   // Steps sorted by sequence
   const sortedSteps = useMemo(() => {
@@ -191,6 +204,13 @@ export default function PlanDetailScreen() {
 
   // Selected step count
   const selectedStepsCount = sortedSteps.length;
+
+  // "Last synced" reflects pilingDailyChecklists.updatedAt, which is only
+  // ever stamped by hydrateChecklistFromServer — i.e. the last time this
+  // screen's data was confirmed from the server, not just touched locally.
+  const lastSyncedLabel = checklist?.updatedAt
+    ? formatTime(new Date(checklist.updatedAt).toISOString())
+    : null;
 
   if (loading) {
     return (
@@ -207,15 +227,37 @@ export default function PlanDetailScreen() {
     <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
       <SafeAreaView style={styles.flex} edges={['top']}>
         <View style={styles.headerArea}>
-          <Text style={styles.pageTitle}>Plan Detail</Text>
-          {checklist?.date && (
-            <Text style={styles.dateText}>
-              {new Date(checklist.date).toLocaleDateString('en-IN', {
-                weekday: 'short',
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })}
+          <View style={styles.headerTopRow}>
+            <View style={styles.flexShrink}>
+              <Text style={styles.pageTitle}>Plan Detail</Text>
+              {checklist?.date && (
+                <Text style={styles.dateText}>
+                  {new Date(checklist.date).toLocaleDateString('en-IN', {
+                    weekday: 'short',
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  })}
+                </Text>
+              )}
+            </View>
+            <Pressable
+              onPress={handleRefresh}
+              disabled={refreshing}
+              hitSlop={10}
+              style={styles.refreshBtn}
+              accessibilityLabel="Refresh from server"
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color={colors.accent} />
+              ) : (
+                <RefreshCw size={16} color={colors.accent} />
+              )}
+            </Pressable>
+          </View>
+          {(refreshError || lastSyncedLabel) && (
+            <Text style={[styles.syncText, refreshError && styles.syncTextError]}>
+              {refreshError ?? `Last synced at ${lastSyncedLabel}`}
             </Text>
           )}
         </View>
@@ -297,18 +339,8 @@ export default function PlanDetailScreen() {
             />
           )}
 
-          {/* ── Per-pile accordions ──────────────────────────────────────────── */}
-          {detailPiles.map((pile) => (
-            <PileAccordion
-              key={pile.id}
-              pile={pile as any}
-              steps={stepsByPileId[pile.id] || []}
-            />
-          ))}
-
-          {detailPiles.length === 0 && (
-            <Text style={styles.emptyText}>No piles in this plan.</Text>
-          )}
+          {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
+          <PilesAccordion piles={detailPiles} planSteps={planSteps} actualSteps={actualSteps} />
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -369,6 +401,13 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.lg,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  flexShrink: { flexShrink: 1 },
   pageTitle: {
     ...typography.h1,
     color: colors.textPrimary,
@@ -377,6 +416,22 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  refreshBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(28,28,46,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  syncText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+  },
+  syncTextError: {
+    color: colors.danger,
   },
 
   scrollContent: {
@@ -532,14 +587,5 @@ const styles = StyleSheet.create({
   supBadgeText: { ...typography.caption, fontWeight: '700', fontSize: 10 },
   supBadgeTextDay: { color: '#c2410c' },
   supBadgeTextNight: { color: '#4338ca' },
-
-  // Empty state
-  emptyText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-    textAlign: 'center',
-    marginTop: spacing.lg,
-  },
 });
 

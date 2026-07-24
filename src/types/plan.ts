@@ -1,6 +1,8 @@
 // src/types/plan.ts
 // Shared types for the plan generation wizard.
 
+import { toLocalIsoString } from '@utils/formatTime';
+
 /** Assignment of rig + crane to a single pile. */
 export type PileAssignment = {
   rig: string;   // pilingMachines.id (type=RIG)
@@ -10,11 +12,20 @@ export type PileAssignment = {
 /** A per-pile override used when an unfinished step continues on a new day. */
 export type ResumeWork = {
   stepId: string;
+  stepName?: string;
   remainingMinutes: number;
   /** A resumed task normally does not repeat its original setup buffer. */
   bufferMinutes?: number;
   lastRigId?: string | null;
   lastCraneId?: string | null;
+  /** True if the resume step already has an actualStart — genuinely in progress. */
+  wasStarted?: boolean;
+  /** True once the user has confirmed/edited the remaining time via ResumeTimeConfirmModal. */
+  remainingTimeConfirmed?: boolean;
+  /** Historical checklist-pile id the in-progress step belongs to — needed to write remarks back. */
+  pastChecklistPileId?: string;
+  pastActualStart?: string | null;
+  completedStepNames?: string[];
 };
 
 /**
@@ -40,9 +51,9 @@ export type PlanDraft = {
   assignments: Record<string, PileAssignment>;
   /** Pending work keyed by physical pile id. */
   resumeWorkByPileId: Record<string, ResumeWork>;
-  /** pilingPersonnel.id — Shift 1 (day) supervisor. */
+  /** pilingSitePersonnel.id — Shift 1 (day) supervisor. */
   supervisorId: string | null;
-  /** pilingPersonnel.id — Shift 2 (night) supervisor. */
+  /** pilingSitePersonnel.id — Shift 2 (night) supervisor. */
   supervisorId2: string | null;
   /** pilingShiftTypes.id — the active shift for this plan. */
   shiftTypeId: string | null;
@@ -58,16 +69,22 @@ export type ActualEntry = {
   stepId: string;
   stepName: string;
   pileCode: string;
-  track: 'RIG' | 'CRANE';
+  track: 'RIG' | 'CRANE' | 'COMPRESSOR';
+  /** piling_steps.sequence_order — the source of truth for step ordering, not plannedStart. */
+  sequenceOrder: number;
   /** Planned start — minutes since midnight. */
   plannedStart: number;
-  /** Planned end — minutes since midnight. */
-  plannedEnd: number;
+  /** Planned end — minutes since midnight. Undefined when this step is "continuing" (no committed end). */
+  plannedEnd?: number;
   /** Actual start — minutes since midnight, undefined if not yet logged. */
   actualStart?: number;
   /** Actual end — minutes since midnight, undefined if not yet finished. */
   actualEnd?: number;
   remarks?: string;
+  /** Machine currently assigned to this step (pil_plan_steps.assigned_machine_id). */
+  assignedMachineId?: string;
+  /** Machine number label (e.g. "R-01") — joined from piling_machines. */
+  assignedMachineNo?: string;
 };
 
 /**
@@ -93,7 +110,7 @@ export function defaultPlanDraft(today: string): PlanDraft {
   return {
     date: today,
     areaIds: [],
-    planStartTime: dt.toISOString(),
+    planStartTime: toLocalIsoString(dt),
     activeRigIds: [],
     activeCraneIds: [],
     selectedPileIds: [],
@@ -110,5 +127,5 @@ export function defaultPlanDraft(today: string): PlanDraft {
 export function planEndTime(startIso: string): string {
   const d = new Date(startIso);
   d.setTime(d.getTime() + 24 * 60 * 60 * 1000);
-  return d.toISOString();
+  return toLocalIsoString(d);
 }

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ChevronRight } from 'lucide-react-native';
+import { ChevronRight, AlertTriangle } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { ActualEntry } from '@app-types/plan';
@@ -12,10 +12,12 @@ interface Props {
   rig?: string;
   crane?: string;
   steps: ActualEntry[];
+  /** True when a not-yet-done step's assigned machine has been reported down. */
+  hasBreakdownWarning?: boolean;
   onPress: () => void;
 }
 
-export default function PileProgressCard({ pileCode, rig, crane, steps, onPress }: Props) {
+export default function PileProgressCard({ pileCode, rig, crane, steps, hasBreakdownWarning, onPress }: Props) {
   const total = steps.length;
   const doneCount = steps.filter((s) => s.actualEnd !== undefined).length;
   const currentIndex = steps.findIndex((s) => s.actualEnd === undefined);
@@ -55,6 +57,13 @@ export default function PileProgressCard({ pileCode, rig, crane, steps, onPress 
           <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           <Text style={styles.countText}>{doneCount}/{total} steps</Text>
         </View>
+
+        {hasBreakdownWarning && (
+          <View style={styles.warningBanner}>
+            <AlertTriangle size={14} color={colors.danger} />
+            <Text style={styles.warningText}>Machine reported down — tap to reassign</Text>
+          </View>
+        )}
       </GlassCard>
     </Pressable>
   );
@@ -101,5 +110,21 @@ const styles = StyleSheet.create({
   countText: {
     ...typography.caption,
     color: colors.textSecondary,
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.dangerSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginTop: spacing.sm,
+  },
+  warningText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.danger,
+    flex: 1,
   },
 });

@@ -14,7 +14,7 @@ import { TimelineStopLog } from '@/components/shared/timeline/MachineStopTimelin
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { type PlanDraft, planEndTime } from '@/types/plan';
 import type { TimelineStop } from '@/types/timeline';
-import { formatTime } from '@/utils/formatTime';
+import { formatTime, toLocalIsoString } from '@/utils/formatTime';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,11 +23,6 @@ function toLocalDateStr(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
-}
-
-/** Build an ISO timestamp from a Date object (used directly from the wheel picker). */
-function dateToIso(d: Date): string {
-  return d.toISOString();
 }
 
 /**
@@ -82,7 +77,7 @@ export default function StartTimeStep({ draft, onUpdate }: StartTimeStepProps) {
   function handleTimeChange(picked: Date) {
     onUpdate({
       date: toLocalDateStr(picked),
-      planStartTime: dateToIso(picked),
+      planStartTime: toLocalIsoString(picked),
     });
   }
 

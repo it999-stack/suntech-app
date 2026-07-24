@@ -9,7 +9,7 @@ import { getMachinesByType } from '@repositories/machinesRepository';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import { getSteps } from '@repositories/stepsRepository';
-import type { PilingArea, PilingPersonnel, PilingShiftType, PilingStep } from '@db/schema';
+import type { PilingArea, PilingSitePersonnel, PilingShiftType, PilingStep } from '@db/schema';
 
 // Re-export for consumers
 export type EligiblePile = {
@@ -30,7 +30,7 @@ export type WizardData = {
   steps: PilingStep[];
   rigs: SimpleMachine[];
   cranes: SimpleMachine[];
-  personnel: PilingPersonnel[];
+  personnel: PilingSitePersonnel[];
   shifts: PilingShiftType[];
   dataLoading: boolean;
 };

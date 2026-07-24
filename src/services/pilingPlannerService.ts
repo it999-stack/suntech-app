@@ -6,14 +6,17 @@
 //   piling_piles, piling_steps, piling_step_duration_templates,
 //   piling_dimensions, piling_non_working_windows
 //
-// Algorithm — free-pool, first-available:
-//   Each selected rig and crane maintains its own `freeAt` timestamp.
-//   Piles are processed in the user-defined order (seq_no / selectedPileIds order).
-//   For each pile:
-//     1. Assign the earliest-free rig → schedule its RIG steps.
-//     2. Assign the earliest-free crane (that is also >= rig end) → schedule CRANE steps.
-//     3. Update both machines' freeAt to the end of their last step on this pile.
-//   This maximises machine utilisation and eliminates idle gaps between piles.
+// Algorithm — free-pool, greedy-by-availability, driven purely by sequence_order:
+//   Each machine (rig/crane/compressor, keyed by track) maintains its own `freeAt`
+//   timestamp per machine id. Piles are scheduled greedily: at each step, whichever
+//   not-yet-scheduled pile's next step can start soonest goes next — not input order.
+//   For each pile (in that greedy order), its steps are walked in a single pass in
+//   piling_steps.sequence_order (no per-track batching): each step starts at
+//   max(its assigned machine's freeAt, this pile's own previous-step-end), then that
+//   machine's freeAt and the pile's cursor both advance to the step's end.
+//   There is no hardcoded "RIG before CRANE" rule — ordering comes entirely from
+//   sequence_order, so any track (including COMPRESSOR) slots in wherever its steps
+//   are ordered relative to the others for that pile.
 
 import { eq, inArray } from 'drizzle-orm';
 import { initDb } from '@db/client';
@@ -31,8 +34,9 @@ import {
 import { getChecklistPiles } from '@repositories/checklistRepository';
 import { insertPlanSteps, deletePlanStepsForChecklist, type PlanStepWithMeta } from '@repositories/planRepository';
 import { getNonWorkingWindowsByShift } from '@repositories/shiftsRepository';
-import { timeToMinutes, addMinutes } from '@utils/formatTime';
-import { generateId } from '@utils/helpers';
+import { timeToMinutes, addMinutes, toLocalIsoString } from '@utils/formatTime';
+import { generateId, isContinuingStep } from '@utils/helpers';
+import { planEndTime } from '@/types/plan';
 
 // ─── Public input types ───────────────────────────────────────────────────────
 
@@ -44,6 +48,8 @@ export interface PreviewPileInput {
   dimensionId: string;
   rigId: string;
   craneId: string;
+  /** Optional third track's machine. Undefined until compressor assignment UI exists. */
+  compressorId?: string;
   resumeWork?: { stepId: string; remainingMinutes: number; bufferMinutes?: number };
 }
 
@@ -148,10 +154,22 @@ function maxDate(a: Date, b: Date): Date {
   return a.getTime() > b.getTime() ? a : b;
 }
 
+/** Which PreviewPileInput field holds the assigned machine for a given step's track. */
+const TRACK_MACHINE_FIELD: Record<string, keyof PreviewPileInput> = {
+  RIG: 'rigId',
+  CRANE: 'craneId',
+  COMPRESSOR: 'compressorId',
+};
+
+function machineForTrack(pile: PreviewPileInput, track: string): string | undefined {
+  const field = TRACK_MACHINE_FIELD[track];
+  return field ? (pile[field] as string | undefined) : undefined;
+}
+
 // ─── Shared result types ──────────────────────────────────────────────────────
 
 interface PreviewPlanStep
-  extends Omit<NewPilePlanStep, 'durationMinutes' | 'bufferMinutes' | 'assignedMachineId'>,
+  extends Omit<NewPilePlanStep, 'durationMinutes' | 'bufferMinutes' | 'assignedMachineId' | 'plannedEnd'>,
     Pick<
       PlanStepWithMeta,
       | 'stepName'
@@ -160,7 +178,10 @@ interface PreviewPlanStep
       | 'durationMinutes'
       | 'bufferMinutes'
       | 'assignedMachineId'
-    > {}
+    > {
+  // Always set by scheduleOneStep — never left undefined like the insert type allows.
+  plannedEnd: string | null;
+}
 
 export interface BuildPlanRowsResult {
   planRows: PreviewPlanStep[];
@@ -169,8 +190,8 @@ export interface BuildPlanRowsResult {
 
 // ─── Core scheduling engine ───────────────────────────────────────────────────
 
-function scheduleMachineSteps(
-  steps: Array<{ id: string; stepName: string; track: string; sequenceOrder: number }>,
+function scheduleOneStep(
+  step: { id: string; stepName: string; track: string; sequenceOrder: number },
   machineId: string,
   startFrom: Date,
   dimId: string,
@@ -180,44 +201,43 @@ function scheduleMachineSteps(
   now: number,
   planRows: PreviewPlanStep[],
   expectedFreeAt: Date,
+  planEnd: Date,
   resumeWork?: PreviewPileInput['resumeWork'],
 ): Date {
-  let cursor = new Date(startFrom);
-  for (const step of steps) {
-    const tmpl = templateMap.get(`${dimId}|${step.id}`);
-    const isResumeStep = resumeWork?.stepId === step.id;
-    const durationMinutes = isResumeStep
-      ? resumeWork.remainingMinutes
-      : (tmpl?.durationMinutes ?? 60);
-    const bufferBefore = isResumeStep
-      ? (resumeWork.bufferMinutes ?? 0)
-      : (tmpl?.bufferBeforeMinutes ?? 0);
-    const { start, end } = skipNonWorkingWindows(cursor, bufferBefore, durationMinutes, windows);
+  const tmpl = templateMap.get(`${dimId}|${step.id}`);
+  const isResumeStep = resumeWork?.stepId === step.id;
+  const durationMinutes = isResumeStep
+    ? resumeWork.remainingMinutes
+    : (tmpl?.durationMinutes ?? 60);
+  const bufferBefore = isResumeStep
+    ? (resumeWork.bufferMinutes ?? 0)
+    : (tmpl?.bufferBeforeMinutes ?? 0);
+  const { start, end } = skipNonWorkingWindows(startFrom, bufferBefore, durationMinutes, windows);
 
-    if (start.getTime() < expectedFreeAt.getTime()) {
-      throw new Error(
-        `[planner] Resource conflict on ${machineId}: step scheduled at ` +
-          `${start.toISOString()} is before its available time ${expectedFreeAt.toISOString()}.`,
-      );
-    }
-
-    planRows.push({
-      id: generateId(),
-      checklistPileId,
-      stepId: step.id,
-      plannedStart: start.toISOString(),
-      plannedEnd: end.toISOString(),
-      durationMinutes,
-      bufferMinutes: bufferBefore,
-      assignedMachineId: machineId,
-      createdAt: now,
-      stepName: step.stepName,
-      track: step.track,
-      sequenceOrder: step.sequenceOrder,
-    });
-    cursor = end;
+  if (start.getTime() < expectedFreeAt.getTime()) {
+    throw new Error(
+      `[planner] Resource conflict on ${machineId}: step scheduled at ` +
+        `${start.toISOString()} is before its available time ${expectedFreeAt.toISOString()}.`,
+    );
   }
-  return cursor;
+
+  planRows.push({
+    id: generateId(),
+    checklistPileId,
+    stepId: step.id,
+    plannedStart: toLocalIsoString(start),
+    // A step whose natural end runs past the plan window is "continuing" —
+    // no committed end time is persisted for it (see isContinuingStep).
+    plannedEnd: end.getTime() > planEnd.getTime() ? null : toLocalIsoString(end),
+    durationMinutes,
+    bufferMinutes: bufferBefore,
+    assignedMachineId: machineId,
+    createdAt: now,
+    stepName: step.stepName,
+    track: step.track,
+    sequenceOrder: step.sequenceOrder,
+  });
+  return end;
 }
 
 async function buildPlanRowsForPiles(options: {
@@ -292,18 +312,40 @@ async function buildPlanRowsForPiles(options: {
   const dayBase = new Date(planStart);
   dayBase.setHours(0, 0, 0, 0);
 
-  const rigWindows = resolveWindows(rawWindows, dayBase);
-  const craneWindows = resolveWindows(rawWindows, dayBase);
+  // track -> machineId -> next-free timestamp. Generalizes the old rigPool/cranePool
+  // pair to however many tracks exist (today RIG/CRANE/COMPRESSOR) without hardcoding
+  // track names here — only machineForTrack() below knows the track->field mapping.
+  const tracksInUse = new Set(pileSteps.map((s) => s.track));
+  const trackPools = new Map<string, Map<string, Date>>();
+  for (const track of tracksInUse) trackPools.set(track, new Map());
 
-  const rigPool = new Map<string, Date>();
-  const cranePool = new Map<string, Date>();
+  // One window set per physical machine (not per track) — skipNonWorkingWindows
+  // mutates AFTER_CURRENT_STEP windows in place as steps get scheduled, and two
+  // different machines of the same track (e.g. Rig R-01 and Rig R-02) must not
+  // observe each other's mutations, or one machine's lunch break can get
+  // "consumed" and pushed out of the way by another machine's earlier step.
+  const machineWindows = new Map<string, EffectiveWindow[]>();
   for (const pile of piles) {
-    if (!rigPool.has(pile.rigId)) rigPool.set(pile.rigId, new Date(planStart));
-    if (!cranePool.has(pile.craneId)) cranePool.set(pile.craneId, new Date(planStart));
+    for (const track of tracksInUse) {
+      const machineId = machineForTrack(pile, track);
+      if (!machineId) continue;
+      const pool = trackPools.get(track)!;
+      if (!pool.has(machineId)) pool.set(machineId, new Date(planStart));
+      if (!machineWindows.has(machineId)) machineWindows.set(machineId, resolveWindows(rawWindows, dayBase));
+    }
   }
 
+  // ── Pass 1: resolve each pile's applicable/remaining steps up front ───────
+  interface PileScheduleData {
+    pile: PreviewPileInput;
+    dimensionId: string;
+    remainingSteps: typeof pileSteps;
+  }
+
+  const perPileData: PileScheduleData[] = [];
+
   for (const pile of piles) {
-    const { pileIdCode, rigId, craneId, dimensionId } = pile;
+    const { pileIdCode, dimensionId } = pile;
 
     // FIX: dimensionId now comes straight off the pile row — no more
     // dia/depth -> dimensionId reconstruction (piling_piles doesn't carry
@@ -332,40 +374,111 @@ async function buildPlanRowsForPiles(options: {
       ? activeSteps
       : activeSteps.filter((step) => step.sequenceOrder >= resumeOrder);
 
-    const rigSteps = remainingSteps.filter((s) => s.track === 'RIG');
-    const craneSteps = remainingSteps.filter((s) => s.track === 'CRANE');
-
-    const rigStart = rigPool.get(rigId) ?? new Date(planStart);
-    const rigEnd = scheduleMachineSteps(
-      rigSteps,
-      rigId,
-      rigStart,
+    perPileData.push({
+      pile,
       dimensionId,
-      templateMap,
-      rigWindows,
-      pile.checklistPileId,
-      now,
-      planRows,
-      rigStart,
-      pile.resumeWork,
-    );
-    rigPool.set(rigId, rigEnd);
+      remainingSteps,
+    });
+  }
 
-    const craneStart = maxDate(cranePool.get(craneId) ?? new Date(planStart), rigEnd);
-    const craneEnd = scheduleMachineSteps(
-      craneSteps,
-      craneId,
-      craneStart,
-      dimensionId,
-      templateMap,
-      craneWindows,
-      pile.checklistPileId,
-      now,
-      planRows,
-      craneStart,
-      pile.resumeWork,
-    );
-    cranePool.set(craneId, craneEnd);
+  // ── Pass 2: greedily schedule whichever pile's next step can start soonest ─
+  const planEnd = new Date(planEndTime(planStart.toISOString()));
+
+  // Once less than this much time is left in the plan's 24h window, don't start
+  // any further step for a pile — it's deferred to tomorrow's plan and picked up
+  // there by resumeWorkService from whatever actualStart/actualEnd gets logged
+  // on site. A step already past this cutoff when it starts is still scheduled
+  // to its full natural length (may run past planEnd) rather than being cut off
+  // mid-step.
+  const NO_NEW_STEP_CUTOFF_MINUTES = 30;
+
+  const unscheduled = [...perPileData];
+  const readyAt = (p: PileScheduleData): Date => {
+    const next = p.remainingSteps[0];
+    if (!next) return new Date(planStart);
+    const machineId = machineForTrack(p.pile, next.track);
+    if (!machineId) return new Date(planStart);
+    const pool = trackPools.get(next.track);
+    return pool?.get(machineId) ?? new Date(planStart);
+  };
+
+  while (unscheduled.length > 0) {
+    let bestIdx = 0;
+    for (let i = 1; i < unscheduled.length; i++) {
+      if (readyAt(unscheduled[i]).getTime() < readyAt(unscheduled[bestIdx]).getTime()) {
+        bestIdx = i;
+      }
+    }
+    const { pile, dimensionId, remainingSteps } = unscheduled.splice(bestIdx, 1)[0];
+
+    // Walk this pile's steps in sequence_order across all tracks in one pass —
+    // no "finish RIG before starting CRANE" special case. Each step starts at
+    // max(its own machine's free time, this pile's previous-step end).
+    let pileCursor = new Date(planStart);
+    for (const step of remainingSteps) {
+      const machineId = machineForTrack(pile, step.track);
+      if (!machineId) {
+        console.warn(
+          `[planner] Pile ${pile.pileIdCode} has no machine assigned for track ${step.track} ` +
+            `(step "${step.stepName}") — skipping this step.`,
+        );
+        warningPileIds.push(pile.checklistPileId);
+        continue;
+      }
+      const pool = trackPools.get(step.track)!;
+      const poolFreeAt = pool.get(machineId) ?? new Date(planStart);
+      const stepStart = maxDate(poolFreeAt, pileCursor);
+
+      const minutesLeftInWindow = (planEnd.getTime() - stepStart.getTime()) / 60000;
+      if (minutesLeftInWindow <= NO_NEW_STEP_CUTOFF_MINUTES) {
+        // Not enough of the window left to start another step — stop planning
+        // this pile here; remaining steps carry over to the next planning cycle.
+        break;
+      }
+
+      const stepEnd = scheduleOneStep(
+        step,
+        machineId,
+        stepStart,
+        dimensionId,
+        templateMap,
+        machineWindows.get(machineId)!,
+        pile.checklistPileId,
+        now,
+        planRows,
+        poolFreeAt,
+        planEnd,
+        pile.resumeWork,
+      );
+      pool.set(machineId, stepEnd);
+      pileCursor = stepEnd;
+    }
+  }
+
+  // Dev-time sanity check (design invariant: at most one continuing step per
+  // pile per day, and it's always the last one by sequenceOrder). Structurally
+  // guaranteed by the scheduling loop above — this is cheap insurance against
+  // a future regression, not required for correctness today.
+  const rowsByPile = new Map<string, PreviewPlanStep[]>();
+  for (const row of planRows) {
+    const list = rowsByPile.get(row.checklistPileId);
+    if (list) list.push(row);
+    else rowsByPile.set(row.checklistPileId, [row]);
+  }
+  for (const [pileId, rows] of rowsByPile) {
+    const continuingRows = rows.filter((r) => isContinuingStep(r));
+    if (continuingRows.length > 1) {
+      console.warn(`[planner] Pile ${pileId} has more than one continuing step — expected at most one.`);
+      continue;
+    }
+    if (continuingRows.length === 1) {
+      const maxSequenceOrder = Math.max(...rows.map((r) => r.sequenceOrder));
+      if (continuingRows[0].sequenceOrder !== maxSequenceOrder) {
+        console.warn(
+          `[planner] Pile ${pileId}'s continuing step is not its last step by sequenceOrder.`,
+        );
+      }
+    }
   }
 
   return { planRows, warningPileIds };

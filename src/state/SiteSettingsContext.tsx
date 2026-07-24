@@ -7,6 +7,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { Shift, NonWorkingWindow, DiaDepthTemplate } from '@app-types/siteSettings';
 import type { NonWorkingWindowBehavior } from '@db/schema';
 import { getDimensionsBySite } from '@repositories/dimensionsRepository';
+import { getDurationTemplatesBySite } from '@repositories/durationTemplatesRepository';
 import { getAllShiftsWithWindows, type ShiftWithWindows } from '@repositories/shiftsRepository';
 import { useAuthStore } from '@store/authStore';
 
@@ -75,14 +76,25 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
     }
 
     try {
-      // Dia/depth templates
-      const dimRows = await getDimensionsBySite(siteId);
+      const [dimRows, durationTemplates] = await Promise.all([
+        getDimensionsBySite(siteId),
+        getDurationTemplatesBySite(siteId),
+      ]);
+      const stepCountsByDimensionId = new Map<string, number>();
+
+      for (const template of durationTemplates) {
+        stepCountsByDimensionId.set(
+          template.dimensionId,
+          (stepCountsByDimensionId.get(template.dimensionId) ?? 0) + 1,
+        );
+      }
+
       setTemplates(
         dimRows.map((d) => ({
           id: d.id,
           dia: d.dia,
           depth: d.depth,
-          stepCount: 0, // TODO: derive from duration templates once synced
+          stepCount: stepCountsByDimensionId.get(d.id) ?? 0,
         }))
       );
     } catch (err) {

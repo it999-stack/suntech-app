@@ -4,13 +4,9 @@
 
 import { initDb } from '@db/client';
 import {
-  pileWorkProgress,
   pilingChecklistPersonnel,
   pilingChecklistPiles,
   pilingDailyChecklists,
-  type PilingChecklistPile,
-  type PilePlanStep,
-  type PileActualStep,
 } from '@db/schema';
 
 import { eq } from 'drizzle-orm';
@@ -29,7 +25,6 @@ import {
   deletePlanStepsForChecklist,
   deleteActualStepsForChecklist,
 } from '@repositories/planRepository';
-import { savePendingWork } from '@repositories/workProgressRepository';
 import { generateId } from '@utils/helpers';
 
 /** Helper to format date as YYYY-MM-DD */
@@ -48,37 +43,6 @@ function addDays(dateStr: string, days: number): string {
   return formatDate(date);
 }
 
-/** Calculate remaining minutes for an incomplete step */
-function calculateRemainingMinutes(
-  planStep: PilePlanStep,
-  actualStep: PileActualStep | undefined,
-): number {
-  const plannedEnd = new Date(planStep.plannedEnd);
-  const plannedStart = new Date(planStep.plannedStart);
-  const plannedDuration = (plannedEnd.getTime() - plannedStart.getTime()) / 60000; // minutes
-
-  if (!actualStep) {
-    // Step not started - full duration remains
-    return plannedDuration;
-  }
-
-  if (!actualStep.actualStart) {
-    // Started but no start time recorded
-    return plannedDuration;
-  }
-
-  // Calculate elapsed time since actual start
-  const actualStart = new Date(actualStep.actualStart);
-  const now = Date.now();
-  const elapsedMinutes = Math.max(0, (now - actualStart.getTime()) / 60000);
-
-  // Remaining = planned duration - elapsed (but not less than 0)
-  const remaining = Math.max(0, plannedDuration - elapsedMinutes);
-
-  // Return at least 1 minute to ensure it shows in resume work
-  return Math.max(1, Math.round(remaining));
-}
-
 /**
  * Seed yesterday's date with today's incomplete work, then delete today's
  * checklist entirely. This simulates a scenario where work from yesterday
@@ -94,7 +58,6 @@ export async function seedYesterdayFromToday(
   today: string = formatDate(new Date()),
 ): Promise<{
   yesterdayChecklistCreated: boolean;
-  pendingWorkSeeded: number;
   planStepsCopied: number;
   actualStepsCopied: number;
   todayChecklistDeleted: boolean;
@@ -108,7 +71,6 @@ export async function seedYesterdayFromToday(
   if (!todayChecklist) {
     return {
       yesterdayChecklistCreated: false,
-      pendingWorkSeeded: 0,
       planStepsCopied: 0,
       actualStepsCopied: 0,
       todayChecklistDeleted: false,
@@ -122,27 +84,12 @@ export async function seedYesterdayFromToday(
     getChecklistPiles(todayChecklist.id),
   ]);
 
-  // Group plan steps by checklistPileId
-  const planStepsByPile = new Map<string, PilePlanStep[]>();
-  for (const ps of planSteps) {
-    const existing = planStepsByPile.get(ps.checklistPileId) || [];
-    planStepsByPile.set(ps.checklistPileId, [...existing, ps]);
-  }
-
-  // Group actual steps by checklistPileId
-  const actualStepsByPile = new Map<string, PileActualStep[]>();
-  for (const as of actualSteps) {
-    const existing = actualStepsByPile.get(as.checklistPileId) || [];
-    actualStepsByPile.set(as.checklistPileId, [...existing, as]);
-  }
-
   // Check if yesterday's checklist already exists
   const existingYesterday = await getChecklistByDate(siteId, yesterday);
   if (existingYesterday) {
     // Already seeded - don't overwrite
     return {
       yesterdayChecklistCreated: false,
-      pendingWorkSeeded: 0,
       planStepsCopied: 0,
       actualStepsCopied: 0,
       todayChecklistDeleted: false,
@@ -222,11 +169,13 @@ export async function seedYesterdayFromToday(
     await insertPlanSteps(yesterdayPlanSteps);
   }
 
-  // ── 5. Copy only COMPLETED actual steps to yesterday ───────────────────
-  // Incomplete ones become pending-resume work instead (step 6).
+  // ── 5. Copy ALL actual steps to yesterday — completed and in-progress ──
+  // In-progress steps (actualStart set, actualEnd still null) must carry
+  // over too, or findResumeWorkForPiles() sees no actual-step row and treats
+  // the pile as "not yet started," skipping the resume remaining-time
+  // confirm flow entirely.
   let actualStepsCopied = 0;
   for (const as of actualSteps) {
-    if (!as.actualEnd) continue;
     const newCpId = oldToNewCpId.get(as.checklistPileId);
     if (!newCpId) continue;
     await upsertActualStep({
@@ -240,40 +189,7 @@ export async function seedYesterdayFromToday(
     actualStepsCopied++;
   }
 
-  // ── 6. Seed pending work for incomplete piles ──────────────────────────
-  let pendingWorkCount = 0;
-
-  for (const cp of checklistPilesList) {
-    const newCpId = oldToNewCpId.get(cp.id)!;
-    const pilePlanStepsList = planStepsByPile.get(cp.id) || [];
-    const pileActualStepsList = actualStepsByPile.get(cp.id) || [];
-
-    // Find incomplete steps (no actualEnd recorded)
-    const incompletePlanSteps = pilePlanStepsList.filter((ps) => {
-      const actual = pileActualStepsList.find((a) => a.stepId === ps.stepId);
-      return !actual?.actualEnd;
-    });
-
-    for (const ps of incompletePlanSteps) {
-      const actual = pileActualStepsList.find((a) => a.stepId === ps.stepId);
-      const remainingMinutes = calculateRemainingMinutes(ps, actual);
-
-      if (remainingMinutes > 0) {
-        await savePendingWork({
-          id: generateId(),
-          pileId: cp.pileId,
-          stepId: ps.stepId,
-          remainingMinutes,
-          lastChecklistPileId: newCpId,
-          lastRigId: cp.rigId,
-          lastCraneId: cp.craneId,
-        });
-        pendingWorkCount++;
-      }
-    }
-  }
-
-  // ── 7. Delete today's checklist entirely — clean slate for testing ────
+  // ── 6. Delete today's checklist entirely — clean slate for testing ────
   // Order matters: children before parent.
   await deleteActualStepsForChecklist(todayChecklist.id);
   await deletePlanStepsForChecklist(todayChecklist.id);
@@ -289,18 +205,8 @@ export async function seedYesterdayFromToday(
 
   return {
     yesterdayChecklistCreated: true,
-    pendingWorkSeeded: pendingWorkCount,
     planStepsCopied: yesterdayPlanSteps.length,
     actualStepsCopied,
     todayChecklistDeleted: true,
   };
-}
-
-/**
- * Clear all pending work entries.
- * Used to reset the testing state.
- */
-export async function clearAllPendingWork(): Promise<void> {
-  const database = await initDb();
-  await database.delete(pileWorkProgress);
 }

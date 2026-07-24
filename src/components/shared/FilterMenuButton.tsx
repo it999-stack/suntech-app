@@ -20,6 +20,7 @@ interface FilterMenuButtonProps<T extends string = string> {
   options: FilterMenuOption<T>[];
   value: T;
   onChange: (value: T) => void;
+  iconSize?: number;
 }
 
 const MENU_WIDTH = 220;
@@ -28,6 +29,7 @@ export default function FilterMenuButton<T extends string = string>({
   options,
   value,
   onChange,
+  iconSize = 20,
 }: FilterMenuButtonProps<T>) {
   const triggerRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
@@ -50,8 +52,8 @@ export default function FilterMenuButton<T extends string = string>({
   return (
     <>
       <View ref={triggerRef} collapsable={false}>
-        <Pressable style={styles.trigger} onPress={openMenu} hitSlop={8}>
-          <MoreVertical size={20} color={colors.textSecondary} />
+        <Pressable style={styles.trigger} onPress={openMenu} hitSlop={spacing.sm}>
+          <MoreVertical size={iconSize} color={colors.textSecondary} />
         </Pressable>
       </View>
 
@@ -89,10 +91,11 @@ export default function FilterMenuButton<T extends string = string>({
 
 const styles = StyleSheet.create({
   trigger: {
-    width: 44,
-    height: 44,
+    padding: spacing.sm,
+    aspectRatio: 1,
     borderRadius: radius.md,
-    backgroundColor: colors.white,
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
     borderColor: colors.glassBorder,
     alignItems: 'center',
     justifyContent: 'center',

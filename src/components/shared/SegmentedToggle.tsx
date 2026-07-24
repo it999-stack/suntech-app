@@ -1,5 +1,6 @@
 // src/components/shared/SegmentedToggle.tsx
-// Generic animated pill/segmented toggle. Works with 2, 3, 4+ options.
+// Generic animated pill/segmented toggle with a glassmorphism finish.
+// Works with 2, 3, 4+ options — each segment always takes an equal share.
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -9,6 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 
 export type SegmentOption<T extends string> = {
@@ -52,13 +54,13 @@ export function SegmentedToggle<T extends string>({
     Animated.parallel([
       Animated.spring(translateX, {
         toValue: activeLayout.x,
-        useNativeDriver: true,
+        useNativeDriver: false,
         speed: 20,
         bounciness: 6,
       }),
       Animated.spring(indicatorWidth, {
         toValue: activeLayout.width,
-        useNativeDriver: false, // width can't use native driver
+        useNativeDriver: false,
         speed: 20,
         bounciness: 6,
       }),
@@ -71,42 +73,67 @@ export function SegmentedToggle<T extends string>({
   };
 
   return (
-    <View style={styles.toggle}>
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.indicator,
-          {
-            width: indicatorWidth,
-            transform: [{ translateX }],
-          },
-        ]}
-      />
-      {options.map((opt, index) => {
-        const active = opt.value === value;
-        return (
-          <Pressable
-            key={opt.value}
-            style={styles.segment}
-            onLayout={handleLayout(index)}
-            onPress={() => onChange(opt.value)}
-            hitSlop={4}
-          >
-            <Text style={[styles.text, active && styles.textActive]}>
-              {opt.label}
-            </Text>
-          </Pressable>
-        );
-      })}
+    <View style={styles.wrapper}>
+      {/* Frosted backdrop — blurs whatever sits behind the toggle */}
+      <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
+
+      {/* Faint tint + hairline border on top of the blur, for definition */}
+      <View style={styles.tintOverlay} pointerEvents="none" />
+
+      <View style={styles.toggle}>
+        {/* Active indicator: its own frosted glass pane, brighter than the track */}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.indicator,
+            {
+              width: indicatorWidth,
+              transform: [{ translateX }],
+            },
+          ]}
+        >
+          <BlurView
+            intensity={60}
+            tint="light"
+            style={[StyleSheet.absoluteFill, styles.indicatorBlur]}
+          />
+        </Animated.View>
+
+        {options.map((opt, index) => {
+          const active = opt.value === value;
+          return (
+            <Pressable
+              key={opt.value}
+              style={styles.segment}
+              onLayout={handleLayout(index)}
+              onPress={() => onChange(opt.value)}
+              hitSlop={4}
+            >
+              <Text style={[styles.text, active && styles.textActive]}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrapper: {
+    borderRadius: radius.pill,
+    overflow: 'hidden', // clips the BlurView to the pill shape
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    ...shadow.glass,
+  },
+  tintOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: colors.glassFill,
+  },
   toggle: {
     flexDirection: 'row',
-    backgroundColor: colors.glassFill,
-    borderRadius: radius.pill,
     padding: spacing.xs,
   },
   indicator: {
@@ -114,11 +141,18 @@ const styles = StyleSheet.create({
     top: spacing.xs,
     bottom: spacing.xs,
     left: 0,
-    backgroundColor: colors.white,
     borderRadius: radius.pill,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: colors.glassFillStrong,
     ...shadow.soft,
   },
+  indicatorBlur: {
+    borderRadius: radius.pill,
+  },
   segment: {
+    flex: 1,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     alignItems: 'center',
@@ -130,5 +164,6 @@ const styles = StyleSheet.create({
   },
   textActive: {
     color: colors.accent,
+    fontWeight: '700',
   },
 });

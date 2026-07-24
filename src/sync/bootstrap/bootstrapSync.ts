@@ -13,6 +13,24 @@ export interface BootstrapSyncCallbacks {
   onStepComplete?: (result: StepResult) => void;
 }
 
+// ─── Pull-completed notifications ──────────────────────────────────────────
+// Mirrors SyncManager.ts's onQueueChanged, but for the pull side: fires once
+// per full runBootstrapSync() call so long-lived consumers (e.g. PlanContext)
+// can refresh from local SQLite without polling or per-screen focus effects —
+// this is what makes "sync happened" actually show up in already-mounted UI.
+
+type BootstrapCompletedListener = (result: BootstrapResult) => void;
+const bootstrapListeners = new Set<BootstrapCompletedListener>();
+
+export function onBootstrapCompleted(listener: BootstrapCompletedListener): () => void {
+  bootstrapListeners.add(listener);
+  return () => bootstrapListeners.delete(listener);
+}
+
+function notifyBootstrapCompleted(result: BootstrapResult): void {
+  bootstrapListeners.forEach((listener) => listener(result));
+}
+
 /**
  * Runs all registered bootstrap sync steps sequentially.
  * Each step is responsible for its own error handling — a failing step
@@ -43,5 +61,7 @@ export async function runBootstrapSync(
     callbacks?.onStepComplete?.(result);
   }
 
-  return { steps, totalSyncedAt: Date.now() };
+  const bootstrapResult: BootstrapResult = { steps, totalSyncedAt: Date.now() };
+  notifyBootstrapCompleted(bootstrapResult);
+  return bootstrapResult;
 }

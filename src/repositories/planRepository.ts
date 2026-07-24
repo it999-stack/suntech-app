@@ -1,7 +1,7 @@
 // src/repositories/planRepository.ts
 // CRUD helpers for pile_plan_steps and pile_actual_steps in local SQLite.
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilePlanSteps,
@@ -32,26 +32,14 @@ async function getChecklistPileIds(checklistId: string): Promise<string[]> {
 
 /**
  * Insert a batch of plan steps.
- * Uses INSERT OR REPLACE to handle regeneration cleanly.
+ * Callers always delete existing steps for the checklist first (regeneration
+ * is wholesale), so this is a plain insert rather than an upsert.
  */
 export async function insertPlanSteps(steps: NewPilePlanStep[]): Promise<void> {
   if (!steps.length) return;
   const db = await initDb();
   for (const step of steps) {
-    await db
-      .insert(pilePlanSteps)
-      .values(step)
-      .onConflictDoUpdate({
-        target: [pilePlanSteps.checklistPileId, pilePlanSteps.stepId],
-        set: {
-          plannedStart: step.plannedStart,
-          plannedEnd: step.plannedEnd,
-          durationMinutes: step.durationMinutes ?? null,
-          bufferMinutes: step.bufferMinutes ?? null,
-          assignedMachineId: step.assignedMachineId ?? null,
-          createdAt: step.createdAt,
-        },
-      });
+    await db.insert(pilePlanSteps).values(step);
   }
 }
 
@@ -152,28 +140,86 @@ export async function getPlanStepsForChecklist(
   return results;
 }
 
+/**
+ * Reassign the machine for every step of `track` on this checklist-pile from
+ * `fromSequenceOrder` onward (inclusive) — the "applies to this step onward"
+ * scope of a machine swap. Steps before fromSequenceOrder (already done) are
+ * never touched, preserving their historical assignedMachineId.
+ */
+export async function reassignMachineFromStep(
+  checklistPileId: string,
+  track: string,
+  fromSequenceOrder: number,
+  newMachineId: string,
+): Promise<void> {
+  const db = await initDb();
+  const rows = await db
+    .select({ id: pilePlanSteps.id, sequenceOrder: pilingSteps.sequenceOrder, track: pilingSteps.track })
+    .from(pilePlanSteps)
+    .leftJoin(pilingSteps, eq(pilePlanSteps.stepId, pilingSteps.id))
+    .where(eq(pilePlanSteps.checklistPileId, checklistPileId))
+    .all();
+
+  const targetIds = rows
+    .filter((r) => r.track === track && (r.sequenceOrder ?? 0) >= fromSequenceOrder)
+    .map((r) => r.id);
+
+  for (const id of targetIds) {
+    await db.update(pilePlanSteps).set({ assignedMachineId: newMachineId }).where(eq(pilePlanSteps.id, id));
+  }
+}
+
 // ─── Actual Steps ─────────────────────────────────────────────────────────────
 
 /**
- * Upsert an actual step (insert or update on conflict by checklist_pile_id + step_id).
+ * Upsert an actual step for a checklist-pile + step pair.
+ *
+ * Implemented as select-then-branch rather than an INSERT ... ON CONFLICT
+ * upsert: for composite (multi-column) conflict targets, this version of
+ * drizzle-orm's SQLite dialect renders the target as table-qualified columns
+ * (`"pil_actual_steps"."checklist_pile_id"`), which SQLite's ON CONFLICT
+ * clause rejects with "does not match any PRIMARY KEY or UNIQUE constraint"
+ * even though the matching unique index genuinely exists — confirmed by
+ * inspecting the generated SQL directly. Sidestepping the ON CONFLICT
+ * codegen entirely avoids the bug. Matched on both checklistPileId AND
+ * stepId (not stepId alone) — stepId is a shared step-definition id reused
+ * across every pile, so matching on it alone would conflate different
+ * piles' actuals for the "same" step.
  */
 export async function upsertActualStep(
   entry: Omit<NewPileActualStep, 'createdAt' | 'updatedAt'>,
 ): Promise<void> {
   const db = await initDb();
   const now = Date.now();
-  await db
-    .insert(pileActualSteps)
-    .values({ ...entry, createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: [pileActualSteps.checklistPileId, pileActualSteps.stepId],
-      set: {
+
+  const existing = await db
+    .select({ id: pileActualSteps.id })
+    .from(pileActualSteps)
+    .where(
+      and(
+        eq(pileActualSteps.checklistPileId, entry.checklistPileId),
+        eq(pileActualSteps.stepId, entry.stepId),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(pileActualSteps)
+      .set({
         actualStart: entry.actualStart,
         actualEnd: entry.actualEnd,
         remarks: entry.remarks,
         updatedAt: now,
-      },
+      })
+      .where(eq(pileActualSteps.id, existing[0].id));
+  } else {
+    await db.insert(pileActualSteps).values({
+      ...entry,
+      createdAt: now,
+      updatedAt: now,
     });
+  }
 }
 
 /**

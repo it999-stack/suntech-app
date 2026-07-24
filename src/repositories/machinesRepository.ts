@@ -43,11 +43,21 @@ export async function getMachinesBySite(siteId: string): Promise<PilingMachine[]
 }
 
 /**
- * Returns machines for a site filtered by type ("RIG" or "CRANE").
+ * Optimistic local status flip (e.g. to 'BREAKDOWN' right after logging a
+ * machine event) — offline UX only. The server is authoritative; the next
+ * syncMachines pull reconciles this on every device, including this one.
+ */
+export async function setMachineStatusLocal(machineId: string, status: string): Promise<void> {
+  const db = await initDb();
+  await db.update(pilingMachines).set({ status }).where(eq(pilingMachines.id, machineId));
+}
+
+/**
+ * Returns machines for a site filtered by type ("RIG", "CRANE", or "COMPRESSOR").
  */
 export async function getMachinesByType(
   siteId: string,
-  type: 'RIG' | 'CRANE',
+  type: 'RIG' | 'CRANE' | 'COMPRESSOR',
 ): Promise<PilingMachine[]> {
   const db = await initDb();
   return db

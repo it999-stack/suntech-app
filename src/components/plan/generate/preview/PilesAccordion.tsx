@@ -11,7 +11,7 @@ import Accordion from '@components/shared/Accordion';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import StepTimelineRow from './StepTimelineRow';
 import { computeTotalDuration } from './previewUtils';
-import type { PlanStepWithMeta } from '@repositories/planRepository';
+import type { PlanStepWithMeta, ActualStepWithMeta } from '@repositories/planRepository';
 import type { PreviewPile } from '@app-types/previewTypes';
 import { colors, spacing, typography } from '@/theme/theme';
 import { formatDurationMinutes } from '@/utils/formatTime';
@@ -19,9 +19,11 @@ import { formatDurationMinutes } from '@/utils/formatTime';
 interface PilesAccordionProps {
   piles: PreviewPile[];
   planSteps: PlanStepWithMeta[];
+  /** Recorded actual steps, if this plan has any progress logged (PlanDetailScreen). */
+  actualSteps?: ActualStepWithMeta[];
 }
 
-export default function PilesAccordion({ piles, planSteps }: PilesAccordionProps) {
+export default function PilesAccordion({ piles, planSteps, actualSteps = [] }: PilesAccordionProps) {
   const [selectedPileId, setSelectedPileId] = React.useState<string | undefined>(piles[0]?.id);
 
   if (piles.length === 0) {
@@ -53,8 +55,15 @@ export default function PilesAccordion({ piles, planSteps }: PilesAccordionProps
         scrollHint="dots"
         renderPage={(item) => {
           const pile = piles.find((p) => p.id === item.value) ?? piles[0];
-          const steps = planSteps.filter((s) => s.checklistPileId === pile.checklistPileId);
+          const steps = planSteps
+            .filter((s) => s.checklistPileId === pile.checklistPileId)
+            .sort((a, b) => new Date(a.plannedStart).getTime() - new Date(b.plannedStart).getTime());
           const totalDuration = formatDurationMinutes(computeTotalDuration(steps));
+          const actualByStepId = new Map(
+            actualSteps
+              .filter((a) => a.checklistPileId === pile.checklistPileId)
+              .map((a) => [a.stepId, a]),
+          );
 
           return (
             <View>
@@ -78,7 +87,12 @@ export default function PilesAccordion({ piles, planSteps }: PilesAccordionProps
                   <Text style={styles.noSteps}>No plan steps generated for this pile.</Text>
                 ) : (
                   steps.map((s, idx) => (
-                    <StepTimelineRow key={s.id} step={s} isLast={idx === steps.length - 1} />
+                    <StepTimelineRow
+                      key={s.id}
+                      step={s}
+                      isLast={idx === steps.length - 1}
+                      isCompleted={!!actualByStepId.get(s.stepId)?.actualEnd}
+                    />
                   ))
                 )}
               </View>

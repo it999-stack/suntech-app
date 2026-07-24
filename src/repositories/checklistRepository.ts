@@ -2,7 +2,7 @@
 // CRUD helpers for piling_daily_checklists, piling_checklist_piles,
 // piling_checklist_personnel in local SQLite.
 
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingDailyChecklists,
@@ -16,9 +16,11 @@ import {
   type NewPilingChecklistPile,
   type PilingChecklistPersonnel,
   type NewPilingChecklistPersonnel,
-  type PilePlanStep,
   type PileActualStep,
+  type NewPilePlanStep,
+  type NewPileActualStep,
 } from '@db/schema';
+import { isContinuingStep } from '@utils/helpers';
 
 // ─── Daily Checklists ─────────────────────────────────────────────────────────
 
@@ -158,6 +160,226 @@ export async function deleteChecklistPiles(checklistId: string): Promise<void> {
   await db
     .delete(pilingChecklistPiles)
     .where(eq(pilingChecklistPiles.checklistId, checklistId));
+}
+
+// ─── Checklist Pile Timings (planned vs actual span, for progress calc) ──────
+
+export type PileTiming = {
+  checklistPileId: string;
+  status: PilingChecklistPile['status'];
+  plannedStart: string | null; // earliest pile_plan_steps.planned_start for this pile
+  plannedEnd: string | null;   // latest pile_plan_steps.planned_end for this pile
+  actualStart: string | null;  // earliest pile_actual_steps.actual_start for this pile
+  actualEnd: string | null;    // latest pile_actual_steps.actual_end, only once status is COMPLETED
+};
+
+/**
+ * For each pile on this checklist, collapse its plan steps into one planned
+ * span (earliest plannedStart -> latest plannedEnd across rig/crane tracks)
+ * and its actual steps into one actual span. Feed the result into
+ * computeChecklistProgress() to get completion % and schedule variance.
+ */
+export async function getChecklistPileTimings(checklistId: string): Promise<PileTiming[]> {
+  const piles = await getChecklistPiles(checklistId);
+  if (!piles.length) return [];
+
+  const db = await initDb();
+  const pileIds = piles.map((p) => p.id);
+
+  const planSteps = await db
+    .select()
+    .from(pilePlanSteps)
+    .where(inArray(pilePlanSteps.checklistPileId, pileIds))
+    .all();
+
+  const actualSteps = await db
+    .select()
+    .from(pileActualSteps)
+    .where(inArray(pileActualSteps.checklistPileId, pileIds))
+    .all();
+
+  return piles.map((pile): PileTiming => {
+    const plans = planSteps.filter((s) => s.checklistPileId === pile.id);
+    const actuals = actualSteps.filter((s) => s.checklistPileId === pile.id);
+    const started = actuals.filter((s): s is PileActualStep & { actualStart: string } => !!s.actualStart);
+    const finished = actuals.filter((s): s is PileActualStep & { actualEnd: string } => !!s.actualEnd);
+
+    return {
+      checklistPileId: pile.id,
+      status: pile.status as PileTiming['status'],
+      plannedStart: plans.length
+        ? plans.reduce((min, s) => (s.plannedStart < min ? s.plannedStart : min), plans[0].plannedStart)
+        : null,
+      // If any step is "continuing" (null plannedEnd), the pile itself is
+      // continuing — null, not silently truncated to its second-to-last step's end.
+      plannedEnd: plans.length && !plans.some(isContinuingStep)
+        ? plans.reduce((max, s) => (s.plannedEnd! > max ? s.plannedEnd! : max), plans[0].plannedEnd!)
+        : null,
+      actualStart: started.length
+        ? started.reduce((min, s) => (s.actualStart < min ? s.actualStart : min), started[0].actualStart)
+        : null,
+      actualEnd: pile.status === 'COMPLETED' && finished.length
+        ? finished.reduce((max, s) => (s.actualEnd > max ? s.actualEnd : max), finished[0].actualEnd)
+        : null,
+    };
+  });
+}
+
+// ─── Server hydration (server-owned plans — see plan_generation_service.py) ──
+
+/**
+ * Writes the server's full `ChecklistOut` response (raw snake_case JSON, as
+ * returned by POST /plans/generate, GET /checklists/{id}, or GET
+ * /piling/sites/{site}/plans/generate) into local SQLite as the authoritative
+ * copy — checklist, checklist_piles, and their plan/actual steps are wholesale
+ * replaced with what the server sent, never merged with whatever was there
+ * before. This is the single hydration path shared by:
+ *   - PlanContext.generatePlan() after the server creates/returns a plan
+ *   - GeneratePlanCalendarSheet reconciling a plan that exists server-side
+ *     but not yet in local SQLite (e.g. after a reinstall)
+ *   - the syncActivePlan bootstrap step
+ *
+ * Deliberately does not touch pilingChecklistPersonnel — the server's
+ * ChecklistPersonnelOut doesn't carry the junction row's own id, and no
+ * caller of this function populates that table today (supervisor 1/2 are
+ * plain columns on the checklist row itself, not junction rows).
+ */
+export async function hydrateChecklistFromServer(serverChecklist: {
+  id: string;
+  site_id: string;
+  date: string;
+  shift_type_id: string | null;
+  plan_start_time: string | null;
+  plan_end_time: string | null;
+  supervisor_id: string | null;
+  supervisor_id_2: string | null;
+  notes: string | null;
+  status: string;
+  checklist_piles?: Array<{
+    id: string;
+    seq_no: number;
+    status: string;
+    pile: { id: string };
+    rig: { id: string };
+    crane: { id: string };
+    plan_steps?: Array<{
+      id: string;
+      step_id: string;
+      planned_start: string;
+      planned_end: string | null;
+      duration_minutes: number | null;
+      buffer_minutes: number | null;
+      assigned_machine_id: string | null;
+    }>;
+    actual_steps?: Array<{
+      id: string;
+      step_id: string;
+      actual_start: string | null;
+      actual_end: string | null;
+      remarks: string | null;
+    }>;
+  }>;
+}): Promise<void> {
+  const db = await initDb();
+  const now = Date.now();
+
+  const checklistPatch = {
+    siteId: serverChecklist.site_id,
+    date: serverChecklist.date,
+    shiftTypeId: serverChecklist.shift_type_id,
+    planStartTime: serverChecklist.plan_start_time,
+    planEndTime: serverChecklist.plan_end_time,
+    supervisorId: serverChecklist.supervisor_id,
+    supervisorId2: serverChecklist.supervisor_id_2,
+    notes: serverChecklist.notes,
+    status: serverChecklist.status,
+  };
+
+  await db
+    .insert(pilingDailyChecklists)
+    .values({ id: serverChecklist.id, ...checklistPatch, createdAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: pilingDailyChecklists.id,
+      set: { ...checklistPatch, updatedAt: now },
+    });
+
+  const checklistId = serverChecklist.id;
+  const serverPiles = serverChecklist.checklist_piles ?? [];
+
+  // Capture the *old* checklist-pile ids before replacing them — once they're
+  // deleted below, any plan/actual step rows still referencing them become
+  // orphaned (SQLite FKs aren't enforced here, so nothing cascades). Must
+  // read this before the delete, not after, or it captures the new ids
+  // instead of the stale ones that actually need cleaning up.
+  const staleCpIds = (
+    await db
+      .select({ id: pilingChecklistPiles.id })
+      .from(pilingChecklistPiles)
+      .where(eq(pilingChecklistPiles.checklistId, checklistId))
+      .all()
+  ).map((r) => r.id);
+
+  // Wholesale replace — the server response is the full authoritative set
+  // for this checklist, not a delta.
+  await db.delete(pilingChecklistPiles).where(eq(pilingChecklistPiles.checklistId, checklistId));
+
+  if (serverPiles.length) {
+    await db.insert(pilingChecklistPiles).values(
+      serverPiles.map(
+        (cp): NewPilingChecklistPile => ({
+          id: cp.id,
+          checklistId,
+          pileId: cp.pile.id,
+          seqNo: cp.seq_no,
+          rigId: cp.rig.id,
+          craneId: cp.crane.id,
+          status: cp.status as NewPilingChecklistPile['status'],
+          createdAt: now,
+        }),
+      ),
+    );
+  }
+
+  const planStepRows: NewPilePlanStep[] = [];
+  const actualStepRows: NewPileActualStep[] = [];
+  for (const cp of serverPiles) {
+    for (const ps of cp.plan_steps ?? []) {
+      planStepRows.push({
+        id: ps.id,
+        checklistPileId: cp.id,
+        stepId: ps.step_id,
+        plannedStart: ps.planned_start,
+        plannedEnd: ps.planned_end,
+        durationMinutes: ps.duration_minutes,
+        bufferMinutes: ps.buffer_minutes,
+        assignedMachineId: ps.assigned_machine_id,
+        createdAt: now,
+      });
+    }
+    for (const as of cp.actual_steps ?? []) {
+      actualStepRows.push({
+        id: as.id,
+        checklistPileId: cp.id,
+        stepId: as.step_id,
+        actualStart: as.actual_start,
+        actualEnd: as.actual_end,
+        remarks: as.remarks,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+
+  // deletePlanStepsForChecklist/deleteActualStepsForChecklist (planRepository)
+  // aren't reusable here without a circular import — clean up using the
+  // stale checklist-pile ids captured above, then insert the fresh set.
+  for (const cpId of staleCpIds) {
+    await db.delete(pilePlanSteps).where(eq(pilePlanSteps.checklistPileId, cpId));
+    await db.delete(pileActualSteps).where(eq(pileActualSteps.checklistPileId, cpId));
+  }
+
+  if (planStepRows.length) await db.insert(pilePlanSteps).values(planStepRows);
+  if (actualStepRows.length) await db.insert(pileActualSteps).values(actualStepRows);
 }
 
 // ─── Checklist Personnel ──────────────────────────────────────────────────────

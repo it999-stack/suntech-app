@@ -11,7 +11,7 @@ export type HomeStackParamList = {
   HomeScreen: undefined;
   PlanHistory: undefined;
   PlanDetail: { checklistId: string };
-  GeneratePlan: undefined;
+  GeneratePlan: { date?: string; edit?: boolean } | undefined;
   FillActuals: undefined;
 };
 

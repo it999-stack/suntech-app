@@ -1,7 +1,7 @@
 // src/screens/Piles/PilesScreen.tsx
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute } from '@react-navigation/native';
@@ -9,7 +9,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import SearchBar from '@components/piles/SearchBar';
 import PileFilterBar, { PileFilterKey } from '@components/piles/PileFilterBar';
 import PileAccordionItem, { PileItemData } from '@components/piles/PileAccordionItem';
-import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { SegmentedToggle } from '@components/shared/SegmentedToggle';
+import { colors, spacing, radius, typography } from '@theme/theme';
 import { usePilesAreasStore } from '@store/pilesAreasStore';
 import { usePlan } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
@@ -32,28 +33,10 @@ function byPlannedStartAsc<T extends { plannedStart?: string }>(a: T, b: T): num
   return new Date(a.plannedStart).getTime() - new Date(b.plannedStart).getTime();
 }
 
-function ViewToggle({ active, onChange }: { active: ViewMode; onChange: (v: ViewMode) => void }) {
-  return (
-    <View style={styles.toggle}>
-      <Pressable
-        style={[styles.toggleSegment, active === 'today' && styles.toggleSegmentActive]}
-        onPress={() => onChange('today')}
-      >
-        <Text style={[styles.toggleText, active === 'today' && styles.toggleTextActive]}>
-          Today's Target
-        </Text>
-      </Pressable>
-      <Pressable
-        style={[styles.toggleSegment, active === 'all' && styles.toggleSegmentActive]}
-        onPress={() => onChange('all')}
-      >
-        <Text style={[styles.toggleText, active === 'all' && styles.toggleTextActive]}>
-          All Piles
-        </Text>
-      </Pressable>
-    </View>
-  );
-}
+const VIEW_MODE_OPTIONS = [
+  { label: "Today's Target", value: 'today' as const },
+  { label: 'All Piles', value: 'all' as const },
+];
 
 export default function PilesScreen() {
   const route = useRoute<Props['route']>();
@@ -115,7 +98,7 @@ export default function PilesScreen() {
            return {
              id: s.id,
              name: s.stepName ?? '',
-             track: (s.track ?? 'RIG') as 'RIG' | 'CRANE',
+             track: (s.track ?? 'RIG') as 'RIG' | 'CRANE' | 'COMPRESSOR',
              start: s.plannedStart,
              end: s.plannedEnd,
              status: actual?.actualEnd ? 'done' : 'upcoming',
@@ -173,7 +156,7 @@ export default function PilesScreen() {
              return {
                id: s.id,
                name: s.stepName ?? '',
-               track: (s.track ?? 'RIG') as 'RIG' | 'CRANE',
+               track: (s.track ?? 'RIG') as 'RIG' | 'CRANE' | 'COMPRESSOR',
                start: s.plannedStart,
                end: s.plannedEnd,
                status: actual?.actualEnd ? 'done' : 'upcoming',
@@ -252,7 +235,7 @@ export default function PilesScreen() {
             </View>
           </View>
 
-          <ViewToggle active={viewMode} onChange={setViewMode} />
+          <SegmentedToggle options={VIEW_MODE_OPTIONS} value={viewMode} onChange={setViewMode} />
           
           <SearchBar value={query} onChangeText={setQuery} />
           <PileFilterBar active={filter} onChange={setFilter} />
@@ -310,33 +293,6 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '700',
     color: colors.accent,
-  },
-
-  // View mode toggle
-  toggle: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(28,28,46,0.06)',
-    borderRadius: radius.md,
-    padding: 4,
-  },
-  toggleSegment: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.sm,
-    alignItems: 'center',
-  },
-  toggleSegmentActive: {
-    backgroundColor: colors.white,
-    ...shadow.soft,
-  },
-  toggleText: {
-    ...typography.caption,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  toggleTextActive: {
-    color: colors.accent,
-    fontWeight: '700',
   },
 
   listContent: {

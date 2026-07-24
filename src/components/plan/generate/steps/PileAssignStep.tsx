@@ -2,14 +2,18 @@
 //
 // Step 4 — pile selection + per-pile rig/crane assignment.
 
-import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { spacing } from '@theme/theme';
 import type { PlanDraft } from '@/types/plan';
-import IndexTable, { type IndexTableColumn, type IndexTableAction } from '@components/shared/IndexTable';
-import SearchFilterBar from './pile-assign/SearchFilterBar';
+import IndexTable from '@components/shared/IndexTable';
+
+import PileListToolbar, { type AreaFilterOption } from './pile-assign/PileListToolbar';
 import BulkAssignBar from './pile-assign/BulkAssignBar';
 import PileDetailSheet from './pile-assign/PileDetailSheet';
+import ResumeTimeConfirmModal from './pile-assign/ResumeTimeConfirmModal';
+import { useResumeConfirmQueue } from './pile-assign/useResumeConfirmQueue';
+import { buildColumns, buildRowActions } from './pile-assign/pileTableColumns';
 import type { EligiblePile, MachineKind, PileFilter, SimpleMachine } from './pile-assign/types';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -20,6 +24,7 @@ interface PileAssignStepProps {
   draft: PlanDraft;
   onUpdate: (patch: Partial<PlanDraft>) => void;
   piles?: EligiblePile[];
+  areas?: AreaFilterOption[];
   activeRigs?: SimpleMachine[];
   activeCranes?: SimpleMachine[];
 }
@@ -31,200 +36,186 @@ function mostCommonPair(assignments: PlanDraft['assignments']): { rig: string; c
     const key = `${a.rig}|${a.crane}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   });
-  let bestKey: string | null = null;
-  let bestCount = 0;
-  for (const [key, count] of counts) {
-    if (count > bestCount) { bestCount = count; bestKey = key; }
-  }
-  if (!bestKey) return null;
-  const [rig, crane] = bestKey.split('|');
+  const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (!best) return null;
+  const [rig, crane] = best[0].split('|');
   return { rig, crane };
 }
 
 export default function PileAssignStep({
-  draft, onUpdate, piles = [], activeRigs = [], activeCranes = [],
+  draft, onUpdate, piles = [], areas = [], activeRigs = [], activeCranes = [],
 }: PileAssignStepProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<PileFilter>('all');
+  const [activeAreaId, setActiveAreaId] = useState('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkRigId, setBulkRigId] = useState<string | null>(null);
   const [bulkCraneId, setBulkCraneId] = useState<string | null>(null);
   const [bulkDefaulted, setBulkDefaulted] = useState(false);
   const [detailPile, setDetailPile] = useState<EligiblePile | null>(null);
-
-  const [lastUsedPair, setLastUsedPair] = useState<{ rig: string; crane: string } | null>(
-    () => mostCommonPair(draft.assignments),
-  );
+  const [lastUsedPair, setLastUsedPair] = useState(() => mostCommonPair(draft.assignments));
 
   function machineLabel(kind: MachineKind, machineId: string): string {
-    const machines = kind === 'rig' ? activeRigs : activeCranes;
-    return machines.find((m) => m.id === machineId)?.machineNo ?? '—';
+    return (kind === 'rig' ? activeRigs : activeCranes).find((m) => m.id === machineId)?.machineNo ?? '—';
   }
-
   function isPileFullyAssigned(pileId: string): boolean {
-    const asgn = draft.assignments[pileId];
-    return !!asgn?.rig && !!asgn?.crane;
+    const a = draft.assignments[pileId];
+    return !!a?.rig && !!a?.crane;
   }
 
-  const hasResumeWork = useMemo(() => {
-    return (pileId: string) => !!draft.resumeWorkByPileId[pileId];
-  }, [draft.resumeWorkByPileId]);
+  function commitAssignment(rigId: string, craneId: string, pileIds: string[]): void {
+    const newAssignments = { ...draft.assignments };
+    const newSelectedPileIds = [...draft.selectedPileIds];
+    pileIds.forEach((id) => {
+      newAssignments[id] = { rig: rigId, crane: craneId };
+      if (!newSelectedPileIds.includes(id)) newSelectedPileIds.push(id);
+    });
+    onUpdate({ assignments: newAssignments, selectedPileIds: newSelectedPileIds });
+    setLastUsedPair({ rig: rigId, crane: craneId });
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSelectedIds(new Set());
+    setBulkOpen(false);
+  }
+
+  const resumeConfirm = useResumeConfirmQueue(draft, onUpdate, commitAssignment);
+
+  // Piles auto-preselected with a still-active rig/crane (carry-over work,
+  // see GeneratePlanScreen's preselection effect) arrive here already fully
+  // assigned, so the manual "Assign" flow below never runs for them. Catch
+  // those and open the confirm queue automatically, once per visit to this step.
+  const autoPromptedRef = useRef(false);
+  useEffect(() => {
+    if (autoPromptedRef.current || !piles.length) return;
+    const toConfirm = piles
+      .map((p) => p.id)
+      .filter((id) => isPileFullyAssigned(id) && resumeConfirm.needsResumeConfirm(id));
+    if (toConfirm.length === 0) return; // preselection may not have landed in `draft` yet — keep watching
+    autoPromptedRef.current = true;
+    resumeConfirm.startAutoConfirm(toConfirm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [piles, draft.assignments, draft.resumeWorkByPileId]);
+
+  const pileCountByAreaId = useMemo(() => {
+    const counts: Record<string, number> = {};
+    piles.forEach((p) => { if (p.areaId) counts[p.areaId] = (counts[p.areaId] ?? 0) + 1; });
+    return counts;
+  }, [piles]);
+
+  const areaNameById = useMemo(() => new Map(areas.map((a) => [a.id, a.name])), [areas]);
 
   const visiblePiles = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const filtered = piles.filter((p) => {
-      if (q && !p.code.toLowerCase().includes(q)) return false;
-      if (filter === 'pending') return !isPileFullyAssigned(p.id);
-      if (filter === 'assigned') return isPileFullyAssigned(p.id);
-      return true;
-    });
-    return filtered.sort((a, b) => {
-      const aHasResume = hasResumeWork(a.id);
-      const bHasResume = hasResumeWork(b.id);
-      if (aHasResume && !bHasResume) return -1;
-      if (!aHasResume && bHasResume) return 1;
-      return a.code.localeCompare(b.code);
-    });
+    return piles
+      .filter((p) => {
+        if (activeAreaId !== 'all' && p.areaId !== activeAreaId) return false;
+        if (q && !p.code.toLowerCase().includes(q)) return false;
+        if (filter === 'pending') return !isPileFullyAssigned(p.id);
+        if (filter === 'assigned') return isPileFullyAssigned(p.id);
+        return true;
+      })
+      .sort((a, b) => {
+        const ar = !!draft.resumeWorkByPileId[a.id], br = !!draft.resumeWorkByPileId[b.id];
+        if (ar !== br) return ar ? -1 : 1;
+        return a.code.localeCompare(b.code);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [piles, search, filter, draft.assignments, draft.resumeWorkByPileId]);
+  }, [piles, search, filter, activeAreaId, draft.assignments, draft.resumeWorkByPileId]);
 
   const pendingCount = piles.filter((p) => !isPileFullyAssigned(p.id)).length;
-  const assignedCount = piles.length - pendingCount;
   const allVisibleSelected = visiblePiles.length > 0 && visiblePiles.every((p) => selectedIds.has(p.id));
 
   function toggleRow(pileId: string): void {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(pileId)) next.delete(pileId); else next.add(pileId);
+      next.has(pileId) ? next.delete(pileId) : next.add(pileId);
       return next;
     });
   }
-
   function toggleSelectAllVisible(): void {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (allVisibleSelected) visiblePiles.forEach((p) => next.delete(p.id));
-      else visiblePiles.forEach((p) => next.add(p.id));
+      visiblePiles.forEach((p) => (allVisibleSelected ? next.delete(p.id) : next.add(p.id)));
       return next;
     });
   }
-
   function clearSelection(): void {
     setSelectedIds(new Set());
     setBulkOpen(false);
   }
 
-  function defaultRigCrane(): { rig: string | null; crane: string | null; defaulted: boolean } {
-    if (lastUsedPair) return { rig: lastUsedPair.rig, crane: lastUsedPair.crane, defaulted: true };
-    if (activeRigs.length === 1 && activeCranes.length === 1) {
-      return { rig: activeRigs[0].id, crane: activeCranes[0].id, defaulted: true };
-    }
-    return { rig: null, crane: null, defaulted: false };
-  }
-
   function openBulkPanel(): void {
-    const { rig, crane, defaulted } = defaultRigCrane();
-    setBulkRigId(rig);
-    setBulkCraneId(crane);
+    const defaulted = !!lastUsedPair || (activeRigs.length === 1 && activeCranes.length === 1);
+    const pair = lastUsedPair ?? (activeRigs.length === 1 && activeCranes.length === 1
+      ? { rig: activeRigs[0].id, crane: activeCranes[0].id } : null);
+    setBulkRigId(pair?.rig ?? null);
+    setBulkCraneId(pair?.crane ?? null);
     setBulkDefaulted(defaulted);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setBulkOpen(true);
   }
-
   function toggleBulkPanel(): void {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    if (bulkOpen) setBulkOpen(false); else openBulkPanel();
+    bulkOpen ? setBulkOpen(false) : openBulkPanel();
   }
 
   function applyBulkAssign(): void {
     if (!bulkRigId || !bulkCraneId || selectedIds.size === 0) return;
-    const newAssignments = { ...draft.assignments };
-    const newSelectedPileIds = [...draft.selectedPileIds];
-    selectedIds.forEach((id) => {
-      newAssignments[id] = { rig: bulkRigId, crane: bulkCraneId };
-      if (!newSelectedPileIds.includes(id)) newSelectedPileIds.push(id);
-    });
-    onUpdate({ assignments: newAssignments, selectedPileIds: newSelectedPileIds });
-    setLastUsedPair({ rig: bulkRigId, crane: bulkCraneId });
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setSelectedIds(new Set());
-    setBulkOpen(false);
+    const pileIds = [...selectedIds];
+    if (resumeConfirm.start(bulkRigId, bulkCraneId, pileIds)) return;
+    commitAssignment(bulkRigId, bulkCraneId, pileIds);
   }
 
   function assignSingleFromMenu(pileId: string): void {
     setSelectedIds(new Set([pileId]));
     openBulkPanel();
   }
-
   function unassignRow(pileId: string): void {
-    const newAssignments = { ...draft.assignments, [pileId]: { rig: '', crane: '' } };
-    const newSelectedPileIds = draft.selectedPileIds.filter((id) => id !== pileId);
-    onUpdate({ assignments: newAssignments, selectedPileIds: newSelectedPileIds });
+    onUpdate({
+      assignments: { ...draft.assignments, [pileId]: { rig: '', crane: '' } },
+      selectedPileIds: draft.selectedPileIds.filter((id) => id !== pileId),
+    });
   }
 
-  const columns: IndexTableColumn<EligiblePile>[] = useMemo(() => [
-    {
-      key: 'pile',
-      header: 'Pile',
-      render: (p) => (
-        <>
-          <Text style={styles.code}>{p.code}</Text>
-          <Text style={styles.spec}>Ø{p.dia}mm · {p.depth}m</Text>
-        </>
-      ),
-    },
-    {
-      key: 'machines',
-      header: 'Machines',
-      width: 140,
-      render: (p) => {
-        const asgn = draft.assignments[p.id];
-        const rigLabel = asgn?.rig ? machineLabel('rig', asgn.rig) : null;
-        const craneLabel = asgn?.crane ? machineLabel('crane', asgn.crane) : null;
-        return rigLabel && craneLabel ? (
-          <View style={styles.pillRow}>
-            <View style={styles.pill}><Text style={styles.pillText}>{rigLabel}</Text></View>
-            <View style={styles.pill}><Text style={styles.pillText}>{craneLabel}</Text></View>
-          </View>
-        ) : (
-          <View style={styles.pillEmpty}><Text style={styles.pillEmptyText}>Unassigned</Text></View>
-        );
-      },
-    },
+  const columns = useMemo(
+    () => buildColumns({ assignments: draft.assignments, machineLabel, activeAreaId, areaNameById }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [draft.assignments, activeRigs, activeCranes]);
-
-  const rowActions: IndexTableAction<EligiblePile>[] = [
-    { label: 'Assign machines', onPress: (p) => assignSingleFromMenu(p.id) },
-    { label: 'View details', onPress: (p) => setDetailPile(p) },
-    { label: 'Unassign', danger: true, show: (p) => isPileFullyAssigned(p.id), onPress: (p) => unassignRow(p.id) },
-  ];
+    [draft.assignments, activeRigs, activeCranes, activeAreaId, areaNameById],
+  );
+  const rowActions = buildRowActions({
+    isPileFullyAssigned,
+    onAssign: assignSingleFromMenu,
+    onViewDetails: setDetailPile,
+    onUnassign: unassignRow,
+  });
 
   const detailAsgn = detailPile ? draft.assignments[detailPile.id] : undefined;
   const detailRigLabel = detailAsgn?.rig ? machineLabel('rig', detailAsgn.rig) : null;
   const detailCraneLabel = detailAsgn?.crane ? machineLabel('crane', detailAsgn.crane) : null;
 
+  const confirmPile = piles.find((p) => p.id === resumeConfirm.confirmQueue[0]);
+  const confirmResumeWork = confirmPile ? draft.resumeWorkByPileId[confirmPile.id] : undefined;
+
   return (
     <View style={styles.root}>
-      <View style={styles.header}>
-        <Text style={styles.pageHeading}>Piles & assign</Text>
-      </View>
-
-      <View style={styles.section}>
-        <SearchFilterBar
+      <View style={styles.toolbarSection}>
+        <PileListToolbar
           search={search}
           onSearchChange={setSearch}
           filter={filter}
           onFilterChange={setFilter}
           allCount={piles.length}
           pendingCount={pendingCount}
-          assignedCount={assignedCount}
+          assignedCount={piles.length - pendingCount}
+          areas={areas}
+          pileCountByAreaId={pileCountByAreaId}
+          activeAreaId={activeAreaId}
+          onAreaChange={setActiveAreaId}
         />
       </View>
 
       {selectedIds.size > 0 && (
-        <View style={styles.section}>
+        <View style={styles.toolbarSection}>
           <BulkAssignBar
             selectedCount={selectedIds.size}
             onClear={clearSelection}
@@ -242,7 +233,7 @@ export default function PileAssignStep({
         </View>
       )}
 
-      <View style={[styles.section, styles.listSection]}>
+      <View style={styles.listSection}>
         <IndexTable
           data={visiblePiles}
           columns={columns}
@@ -256,8 +247,6 @@ export default function PileAssignStep({
         />
       </View>
 
-      <Text style={styles.footerText}>{selectedIds.size} of {visiblePiles.length} piles selected</Text>
-
       <PileDetailSheet
         visible={!!detailPile}
         onClose={() => setDetailPile(null)}
@@ -268,25 +257,22 @@ export default function PileAssignStep({
         onAssign={() => { const id = detailPile!.id; setDetailPile(null); assignSingleFromMenu(id); }}
         onUnassign={detailRigLabel ? () => { const id = detailPile!.id; setDetailPile(null); unassignRow(id); } : undefined}
       />
+
+      {confirmPile && confirmResumeWork && (
+        <ResumeTimeConfirmModal
+          visible={resumeConfirm.confirmQueue.length > 0}
+          pileCode={confirmPile.code}
+          resumeWork={confirmResumeWork}
+          onConfirm={resumeConfirm.confirm}
+          onClose={resumeConfirm.cancel}
+        />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0, paddingHorizontal: spacing.md },
-  header: { marginBottom: spacing.lg },
-  pageHeading: { ...typography.h2, color: colors.textPrimary },
-  section: { marginBottom: spacing.lg },
-  listSection: { flex: 1, minHeight: 0, marginBottom: 0 },
-
-  code: { ...typography.body, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  spec: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-
-  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  pill: { backgroundColor: colors.accentSoft, borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 3 },
-  pillText: { ...typography.caption, fontWeight: '600', color: colors.accent },
-  pillEmpty: { borderWidth: 1, borderColor: 'rgba(28,28,46,0.15)', borderStyle: 'dashed', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 3, alignSelf: 'flex-start' },
-  pillEmptyText: { ...typography.caption, color: colors.textSecondary },
-
-  footerText: { ...typography.caption, paddingHorizontal: spacing.sm, marginTop: spacing.md, color: colors.textSecondary, marginBottom: spacing.md },
+  root: { flex: 1, minHeight: 0 },
+  toolbarSection: { marginBottom: spacing.sm },
+  listSection: { flex: 1, minHeight: 0 },
 });

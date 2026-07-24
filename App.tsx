@@ -10,6 +10,8 @@ import RootNavigator from './src/navigation/RootNavigator';
 import { initDb } from './src/db/client';
 import { PlanProvider } from './src/state/PlanContext';
 import { SiteSettingsProvider } from './src/state/SiteSettingsContext';
+import { DrizzleStudioDevTools } from './src/devtools/DrizzleStudioDevTools';
+import { initSyncManager } from './src/sync/SyncManager';
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -27,6 +29,7 @@ export default function App() {
     };
 
     initializeDatabase();
+    initSyncManager();
   }, []);
 
   if (!dbReady) {
@@ -46,6 +49,7 @@ export default function App() {
               <SiteSettingsProvider>
                   <RootNavigator />
                   <StatusBar style="auto" />
+                  {__DEV__ && <DrizzleStudioDevTools />}
               </SiteSettingsProvider>
             </PlanProvider>
           </NavigationContainer>

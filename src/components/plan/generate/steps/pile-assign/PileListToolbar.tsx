@@ -1,0 +1,131 @@
+// src/components/plan/generate/steps/pile-assign/PileListToolbar.tsx
+
+import React, { useState } from 'react';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, LayoutAnimation } from 'react-native';
+import { Search, X } from 'lucide-react-native';
+import { colors, spacing, radius, typography } from '@theme/theme';
+import FilterMenuButton, { type FilterMenuOption } from '@components/shared/FilterMenuButton';
+import type { PileFilter } from './types';
+
+export interface AreaFilterOption { id: string; name: string; }
+
+interface PileListToolbarProps {
+  search: string;
+  onSearchChange: (value: string) => void;
+  filter: PileFilter;
+  onFilterChange: (filter: PileFilter) => void;
+  allCount: number;
+  pendingCount: number;
+  assignedCount: number;
+  areas: AreaFilterOption[];
+  pileCountByAreaId: Record<string, number>;
+  activeAreaId: string;
+  onAreaChange: (areaId: string) => void;
+}
+
+export default function PileListToolbar({
+  search, onSearchChange, filter, onFilterChange, allCount, pendingCount, assignedCount,
+  areas, pileCountByAreaId, activeAreaId, onAreaChange,
+}: PileListToolbarProps) {
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const filterOptions: FilterMenuOption<PileFilter>[] = [
+    { label: 'All', value: 'all', count: allCount },
+    { label: 'Pending', value: 'pending', count: pendingCount },
+    { label: 'Assigned', value: 'assigned', count: assignedCount },
+  ];
+
+  function toggleSearch(): void {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (searchOpen) { onSearchChange(''); setSearchOpen(false); }
+    else setSearchOpen(true);
+  }
+
+  return (
+    <View style={styles.row}>
+      <View style={styles.flexSlot}>
+        {searchOpen ? (
+          <TextInput
+            value={search}
+            onChangeText={onSearchChange}
+            placeholder="Filter piles by code"
+            placeholderTextColor={colors.textSecondary}
+            style={styles.input}
+            autoFocus
+            returnKeyType="search"
+          />
+        ) : areas.length > 0 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
+            <Pill label={`All (${allCount})`} active={activeAreaId === 'all'} onPress={() => onAreaChange('all')} />
+            {areas.map((area) => (
+              <Pill
+                key={area.id}
+                label={`${area.name} (${pileCountByAreaId[area.id] ?? 0})`}
+                active={activeAreaId === area.id}
+                onPress={() => onAreaChange(area.id)}
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+      </View>
+
+      <Pressable style={styles.iconBtn} onPress={toggleSearch} hitSlop={spacing.sm}>
+        {searchOpen ? <X size={16} color={colors.textSecondary} /> : <Search size={16} color={colors.textSecondary} />}
+      </Pressable>
+
+      <FilterMenuButton options={filterOptions} value={filter} onChange={onFilterChange} iconSize={16} />
+    </View>
+  );
+}
+
+function Pill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable style={[styles.pill, active && styles.pillActive]} onPress={onPress}>
+      <Text style={[styles.pillText, active && styles.pillTextActive]} numberOfLines={1}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, zIndex: 10, elevation: 4 },
+  flexSlot: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  input: {
+    ...typography.caption,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    color: colors.textPrimary,
+  },
+  iconBtn: {
+    padding: spacing.sm,
+    aspectRatio: 1,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  pill: {
+    minWidth: 84,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.glassFill,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  pillText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  pillTextActive: { color: colors.textInverse },
+});

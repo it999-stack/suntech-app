@@ -9,7 +9,7 @@ import type { SyncContext } from '@sync/bootstrap/syncContext';
 import type { StepResult } from '@sync/bootstrap/syncResult';
 import { apiClient } from '@services/apiClient';
 import { savePersonnel } from '@repositories/personnelRepository';
-import type { NewPilingPersonnel } from '@db/schema';
+import type { NewPilingSitePersonnel } from '@db/schema';
 
 export class SyncPersonnelStep implements ISyncStep {
   readonly name = 'personnel';
@@ -18,7 +18,7 @@ export class SyncPersonnelStep implements ISyncStep {
     const syncedAt = Date.now();
     try {
       const { data } = await apiClient.get(`/piling/sites/${ctx.siteId}/personnel`);
-      const rows: NewPilingPersonnel[] = (data as any[]).map((p) => ({
+      const rows: NewPilingSitePersonnel[] = (data as any[]).map((p) => ({
         id: p.id,
         siteId: p.site_id,
         name: p.name,

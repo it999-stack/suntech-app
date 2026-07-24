@@ -34,16 +34,17 @@ import PreviewStep, { type PreviewPile } from '@components/plan/generate/steps/P
 
 import { getPilesBySiteWithDimensions, PileWithDimension } from '@repositories/pilesRepository';
 import { getAreasBySite } from '@repositories/areasRepository';
-import { getPendingWorkForPileIds, savePendingWork } from '@repositories/workProgressRepository';
+import { findResumeWorkForPiles, type ResumeWorkInfo } from '@/services/resumeWorkService';
 import { getMachinesByType } from '@repositories/machinesRepository';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import { getSteps } from '@repositories/stepsRepository';
 import { generatePlanPreview } from '@/services/pilingPlannerService';
 import { buildResumePreselection, getLockedStepIds, mergeLockedSteps } from '@/services/planPreselectService';
-import type { PilingArea, PilingPersonnel, PilingShiftType, PilingStep, PileWorkProgress } from '@/db/schema';
+import type { PilingArea, PilingSitePersonnel, PilingShiftType, PilingStep } from '@/db/schema';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import { defaultPlanDraft, planEndTime, type PlanDraft } from '@/types/plan';
+import { getPrimaryShiftType, combineDateAndTime } from '@/utils/shiftHelpers';
 
 type EligiblePile = PileWithDimension & {
   /** Alias for pileIdCode for convenience */
@@ -65,17 +66,26 @@ export default function GeneratePlanScreen() {
   const isEditMode: boolean = route.params?.edit === true;
 
   const user = useAuthStore((s) => s.user);
-  const { checklist, checklistPiles, generatePlan, isGenerating, error: planError } = usePlan();
+  const { checklist, checklistPiles, generatePlan, loadChecklist, isGenerating, error: planError } = usePlan();
 
   const siteId = user?.siteId ?? ''; // siteId is string | undefined; fallback to ''
   const today = toLocalDateStr(new Date());
+  // The date this screen is generating/editing a plan for — defaults to today
+  // when opened without a date param (e.g. the existing "edit today's plan" path).
+  const targetDate: string = route.params?.date ?? today;
+
+  // Load the checklist for the target date into PlanContext — HomeScreen only
+  // ever loads today's checklist on mount, so a future-day edit needs its own load.
+  useEffect(() => {
+    if (siteId) loadChecklist(siteId, targetDate);
+  }, [siteId, targetDate, loadChecklist]);
 
   const [piles, setPiles] = useState<EligiblePile[]>([]);
   const [areas, setAreas] = useState<PilingArea[]>([]);
   const [steps, setSteps] = useState<PilingStep[]>([]);
   const [rigs, setRigs] = useState<SimpleMachine[]>([]);
   const [cranes, setCranes] = useState<SimpleMachine[]>([]);
-  const [personnel, setPersonnel] = useState<PilingPersonnel[]>([]);
+  const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
   const [shifts, setShifts] = useState<PilingShiftType[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
 
@@ -114,31 +124,62 @@ if (cancelled) return;
     return () => { cancelled = true; };
   }, [siteId]);
 
-  const [draft, setDraft] = useState<PlanDraft>(() => defaultPlanDraft(today));
+  const [draft, setDraft] = useState<PlanDraft>(() => defaultPlanDraft(targetDate));
+
+  // Seed planStartTime's time-of-day from the site's primary (earliest-start)
+  // shift once shift data loads, instead of the generic 8:00 AM default —
+  // skipped in edit mode, which seeds planStartTime from the existing checklist.
+  const planStartSeeded = useRef(false);
+  useEffect(() => {
+    if (dataLoading || planStartSeeded.current || isEditMode) return;
+    const siteShifts = shifts.filter((s) => s.siteId === siteId);
+    const primary = getPrimaryShiftType(siteShifts);
+    if (!primary) return;
+    planStartSeeded.current = true;
+    setDraft((prev) => ({ ...prev, planStartTime: combineDateAndTime(targetDate, primary.startTime) }));
+  }, [dataLoading, shifts, siteId, targetDate, isEditMode]);
 
   const areaPiles = useMemo(() => {
     if (!draft.areaIds.length) return [];
     return piles.filter((p) => p.areaId && draft.areaIds.includes(p.areaId));
   }, [piles, draft.areaIds]);
 
+  const selectedAreas = useMemo(
+    () => areas.filter((a) => draft.areaIds.includes(a.id)),
+    [areas, draft.areaIds],
+  );
+
   const selectedPlanPiles = useMemo(
     () => piles.filter((p) => draft.selectedPileIds.includes(p.id)),
     [piles, draft.selectedPileIds],
   );
 
-  const [pendingWorkItems, setPendingWorkItems] = useState<PileWorkProgress[]>([]);
+  const [pendingWorkItems, setPendingWorkItems] = useState<ResumeWorkInfo[]>([]);
+  const [completedPileIds, setCompletedPileIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!areaPiles.length) {
       setPendingWorkItems([]);
+      setCompletedPileIds(new Set());
       return;
     }
     let cancelled = false;
-    getPendingWorkForPileIds(areaPiles.map((pile) => pile.id)).then((pending) => {
-      if (!cancelled) setPendingWorkItems(pending);
-    });
+    findResumeWorkForPiles(siteId, areaPiles.map((pile) => pile.id), targetDate).then(
+      ({ pendingWorkItems, completedPileIds }) => {
+        if (!cancelled) {
+          setPendingWorkItems(pendingWorkItems);
+          setCompletedPileIds(new Set(completedPileIds));
+        }
+      },
+    );
     return () => { cancelled = true; };
-  }, [areaPiles]);
+  }, [areaPiles, siteId, targetDate]);
+
+  // Piles already fully completed on a prior day must not be re-offered here.
+  const assignablePiles = useMemo(
+    () => areaPiles.filter((p) => !completedPileIds.has(p.id)),
+    [areaPiles, completedPileIds],
+  );
 
   function updateDraft(patch: Partial<PlanDraft>) {
     setDraft((prev) => ({ ...prev, ...patch }));
@@ -156,13 +197,23 @@ if (cancelled) return;
       assignments[cp.pileId] = { rig: cp.rigId, crane: cp.craneId };
     });
 
+    // Areas aren't stored on the checklist itself — recover them from the
+    // areaId of each checklist pile so AreaSelectStep and PileAssignStep
+    // (which both derive from draft.areaIds) preselect correctly on edit.
+    const pileById = new Map(piles.map((p) => [p.id, p]));
+    const areaIds = [...new Set(
+      ids
+        .map((pileId) => pileById.get(pileId)?.areaId)
+        .filter((areaId): areaId is string => !!areaId),
+    )];
+
     setDraft({
       date: checklist.date,
       planStartTime: checklist.planStartTime ?? defaultPlanDraft(checklist.date).planStartTime,
       activeRigIds: [...new Set(checklistPiles.map((cp) => cp.rigId))],
       activeCraneIds: [...new Set(checklistPiles.map((cp) => cp.craneId))],
       selectedPileIds: ids,
-      areaIds: [],
+      areaIds,
       selectedStepIds: steps.map((s) => s.id),
       assignments,
       resumeWorkByPileId: {},
@@ -173,7 +224,7 @@ if (cancelled) return;
 
     // Skip directly to the preview step when editing an existing plan
     setStep('preview');
-  }, [isEditMode, dataLoading, checklist, checklistPiles]);
+  }, [isEditMode, dataLoading, checklist, checklistPiles, piles]);
 
   // Default machine selection: all selected on mount (after data loads)
   const machinesDefaulted = useRef(false);
@@ -373,12 +424,10 @@ async function handleGenerate() {
       shiftTypeId: draft.shiftTypeId,
       piles: pilesInput,
       stepIds: draft.selectedStepIds,
+      isEdit: isEditMode,
     };
 
     try {
-      await Promise.all(Object.entries(draft.resumeWorkByPileId).map(([pileId, resume]) =>
-        savePendingWork({ id: `progress_${pileId}`, pileId, stepId: resume.stepId, remainingMinutes: resume.remainingMinutes, lastRigId: draft.assignments[pileId]?.rig ?? resume.lastRigId ?? null, lastCraneId: draft.assignments[pileId]?.crane ?? resume.lastCraneId ?? null }),
-      ));
       await generatePlan(siteId, input);
       navigation.goBack();
     } catch {
@@ -445,7 +494,7 @@ async function handleGenerate() {
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
       style={styles.flex}
     >
-      <SafeAreaView style={styles.flex} edges={['top']}>
+      <SafeAreaView style={styles.flex} edges={['bottom']}>
         <ProgressHeader
           step={step}
           onBack={goBack}
@@ -459,7 +508,8 @@ async function handleGenerate() {
             <PileAssignStep
               draft={draft}
               onUpdate={updateDraft}
-              piles={areaPiles}
+              piles={assignablePiles}
+              areas={selectedAreas.map((a) => ({ id: a.id, name: a.name }))}
               activeRigs={activeRigs}
               activeCranes={activeCranes}
             />
@@ -603,13 +653,15 @@ async function handleGenerate() {
           visible={confirmModalVisible}
           onClose={() => setConfirmModalVisible(false)}
           title="Save Changes?"
-          subtitle="You are about to update the existing plan for today."
+          subtitle={`You are about to update the existing plan for ${draft.date === today ? 'today' : draft.date}.`}
         >
           <View style={styles.confirmBody}>
             <View style={styles.confirmIconWrap}>
               <AlertTriangle size={28} color={colors.warning} />
             </View>
-            <Text style={styles.confirmTitle}>Update today's plan?</Text>
+            <Text style={styles.confirmTitle}>
+              Update {draft.date === today ? "today's" : `${draft.date}'s`} plan?
+            </Text>
             <Text style={styles.confirmMessage}>
               This will replace the current plan with your updated selections,
               including piles, machine assignments, supervisors, and step timings.

@@ -1,7 +1,7 @@
 // src/repositories/syncRepository.ts
 // Repository for fetching all checklist data to sync up to the server.
 
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingDailyChecklists,
@@ -9,10 +9,12 @@ import {
   pilingChecklistPersonnel,
   pilePlanSteps,
   pileActualSteps,
+  pilMachineEvents,
   type PilingChecklistPile,
   type PilingChecklistPersonnel,
   type PilePlanStep,
   type PileActualStep,
+  type PilMachineEvent,
 } from '@db/schema';
 import type { SyncChecklist } from '@sync/SyncAppPlanPayload';
 
@@ -67,22 +69,35 @@ async function getActualSteps(checklistPileIds: string[]): Promise<PileActualSte
   return results;
 }
 
+async function getMachineEvents(checklistId: string): Promise<PilMachineEvent[]> {
+  const db = await initDb();
+  return db.select().from(pilMachineEvents).where(eq(pilMachineEvents.checklistId, checklistId)).all();
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────────
 
 /**
- * Get all checklists for a site with complete data for syncing.
- * Returns checklists that have either plan steps, actual steps, or personnel assigned.
+ * Get the given checklists (with complete nested data) for pushing to the
+ * server. Only reads the checklists named in `checklistIds` — the caller
+ * (SyncManager) decides which ones are dirty, so a batch push never re-sends
+ * checklists that haven't changed.
  */
 export async function getChecklistsForSync(
   siteId: string,
+  checklistIds: string[],
 ): Promise<SyncChecklist[]> {
+  if (!checklistIds.length) return [];
   const db = await initDb();
-  
-  // Fetch all checklists for this site
+
   const checklists = await db
     .select()
     .from(pilingDailyChecklists)
-    .where(eq(pilingDailyChecklists.siteId, siteId))
+    .where(
+      and(
+        eq(pilingDailyChecklists.siteId, siteId),
+        inArray(pilingDailyChecklists.id, checklistIds),
+      ),
+    )
     .orderBy(pilingDailyChecklists.date)
     .all();
 
@@ -92,11 +107,12 @@ export async function getChecklistsForSync(
     const cpIds = (await getChecklistPiles(cl.id)).map((cp) => cp.id);
     
     // Get all related data
-    const [piles, personnel, planSteps, actualSteps] = await Promise.all([
+    const [piles, personnel, planSteps, actualSteps, machineEvents] = await Promise.all([
       getChecklistPiles(cl.id),
       getChecklistPersonnel(cl.id),
       getPlanSteps(cpIds),
       getActualSteps(cpIds),
+      getMachineEvents(cl.id),
     ]);
 
     // Convert to sync format
@@ -110,7 +126,7 @@ export async function getChecklistsForSync(
       supervisor_id_2: cl.supervisorId2 ?? undefined,
       notes: cl.notes ?? undefined,
       status: cl.status,
-      personnel_ids: personnel.map((p) => p.personnelId),
+      personnel: personnel.map((p) => ({ id: p.id, personnel_id: p.personnelId })),
       piles: piles.map((cp) => ({
         id: cp.id,
         pile_id: cp.pileId,
@@ -136,6 +152,17 @@ export async function getChecklistsForSync(
         actual_start: as.actualStart ?? undefined,
         actual_end: as.actualEnd ?? undefined,
         remarks: as.remarks ?? undefined,
+      })),
+      machine_events: machineEvents.map((e) => ({
+        id: e.id,
+        pile_id: e.pileId,
+        step_id: e.stepId ?? undefined,
+        track: e.track,
+        event_type: e.eventType,
+        machine_id: e.machineId ?? undefined,
+        replacement_id: e.replacementId ?? undefined,
+        notes: e.notes ?? undefined,
+        occurred_at: e.occurredAt,
       })),
     };
 

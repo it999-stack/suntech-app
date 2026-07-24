@@ -14,23 +14,30 @@ import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { HomeStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
-import { getChecklistsBySite, getChecklistPiles } from '@repositories/checklistRepository';
+import { getChecklistsBySite, getChecklistPileTimings } from '@repositories/checklistRepository';
 import { deletePlanStepsForChecklist, deleteActualStepsForChecklist } from '@repositories/planRepository';
 import { initDb } from '@db/client';
 import { pilingDailyChecklists, pilingChecklistPiles } from '@db/schema';
-import type { PilingDailyChecklist } from '@db/schema';
 import EmptyState from '@/components/shared/EmptyState';
+import {
+  computeChecklistProgress,
+  computeDisplayStatus,
+  formatVariance,
+  type DisplayStatus,
+} from '@utils/checklistProgress';
+import { planEndTime } from '@app-types/plan';
 
 type HomeNav = NativeStackNavigationProp<HomeStackParamList, 'PlanHistory'>;
-
-type ChecklistStatus = 'completed' | 'in_progress' | 'planned' | 'upcoming';
 
 type ChecklistSummary = {
   id: string;
   date: string;            // ISO date "YYYY-MM-DD"
   displayDate: string;     // human-readable
   pileCount: number;
-  status: ChecklistStatus;
+  completionPercent: number;
+  completedCount: number;
+  varianceLabel: string | null;
+  status: DisplayStatus;
 };
 
 function toLocalDateStr(d: Date): string {
@@ -49,19 +56,26 @@ function formatDisplayDate(dateStr: string): string {
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function dbStatusToDisplay(status: PilingDailyChecklist['status'], date: string): ChecklistStatus {
-  const today = toLocalDateStr(new Date());
-  if (date > today) return 'upcoming';
-  if (status === 'COMPLETED') return 'completed';
-  if (status === 'IN_PROGRESS') return 'in_progress';
-  return 'planned';
+function statusConfig(status: DisplayStatus) {
+  switch (status) {
+    case 'completed_on_time': return { bg: colors.successSoft,    fg: colors.success,       label: 'Completed'            };
+    case 'completed_late':    return { bg: colors.successSoft,    fg: colors.success,       label: 'Completed late'       };
+    case 'overdue':           return { bg: 'rgba(239,68,68,0.10)', fg: colors.danger,        label: 'Overdue'              };
+    case 'in_progress':       return { bg: colors.accentSoft,     fg: colors.accent,        label: 'In progress'          };
+    case 'partially_completed': return { bg: 'rgba(255,149,0,0.10)', fg: colors.warning,    label: 'Partially completed'  };
+    case 'upcoming':          return { bg: 'rgba(28,28,46,0.06)', fg: colors.textSecondary, label: 'Upcoming'             };
+    case 'not_started':
+    default:                  return { bg: 'rgba(28,28,46,0.06)', fg: colors.textSecondary, label: 'Not started'          };
+  }
 }
 
-function statusConfig(status: ChecklistStatus) {
-  if (status === 'completed')  return { bg: colors.successSoft,         fg: colors.success,       label: 'Completed'   };
-  if (status === 'in_progress') return { bg: colors.accentSoft,          fg: colors.accent,        label: 'In Progress' };
-  if (status === 'upcoming')    return { bg: 'rgba(28,28,46,0.06)',       fg: colors.textSecondary, label: 'Upcoming'    };
-  return                               { bg: 'rgba(255,149,0,0.10)',      fg: colors.warning,       label: 'Planned'     };
+function progressBarColor(status: DisplayStatus): string {
+  if (status === 'completed_on_time') return colors.success;
+  if (status === 'completed_late') return colors.success;
+  if (status === 'overdue') return colors.danger;
+  if (status === 'partially_completed') return colors.warning;
+  if (status === 'in_progress') return colors.accent;
+  return colors.textSecondary;
 }
 
 export default function PlanHistoryScreen() {
@@ -79,16 +93,26 @@ export default function PlanHistoryScreen() {
     }
     setLoading(true);
     try {
+      const today = toLocalDateStr(new Date());
       const checklists = await getChecklistsBySite(user.siteId!);
       const withCounts = await Promise.all(
         checklists.map(async (cl) => {
-          const cp = await getChecklistPiles(cl.id);
+          const timings = await getChecklistPileTimings(cl.id);
+          const windowEndIso = cl.planStartTime ? planEndTime(cl.planStartTime) : undefined;
+          const progress = computeChecklistProgress(timings, new Date(), windowEndIso);
+          const status = computeDisplayStatus(progress, {
+            isFutureDate: cl.date > today,
+            isToday: cl.date === today,
+          });
           return {
             id: cl.id,
             date: cl.date,
             displayDate: formatDisplayDate(cl.date),
-            pileCount: cp.length,
-            status: dbStatusToDisplay(cl.status, cl.date),
+            pileCount: timings.length,
+            completionPercent: progress.completionPercent,
+            completedCount: progress.completedCount,
+            varianceLabel: formatVariance(progress.varianceMinutes),
+            status,
           } as ChecklistSummary;
         }),
       );
@@ -112,7 +136,6 @@ export default function PlanHistoryScreen() {
             setDeletingId(checklistId);
             try {
               const db = await initDb();
-              // Delete in order: actual steps → plan steps → checklist piles → checklist
               await deleteActualStepsForChecklist(checklistId);
               await deletePlanStepsForChecklist(checklistId);
               await db.delete(pilingChecklistPiles).where(eq(pilingChecklistPiles.checklistId, checklistId));
@@ -134,7 +157,6 @@ export default function PlanHistoryScreen() {
     loadSummaries();
   }, [user?.siteId]);
 
-
   return (
     <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
       <SafeAreaView style={styles.flex} edges={['top']}>
@@ -152,16 +174,19 @@ export default function PlanHistoryScreen() {
           </View>
         ) : summaries.length === 0 ? (
           <GlassCard>
-            <EmptyState
-              icon="calendar"
-              title="No plans yet"
-              message="No plans found for this site yet."
-            />
+            <EmptyState icon="calendar" title="No plans yet" message="No plans found for this site yet." />
           </GlassCard>
         ) : (
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {summaries.map((cl) => {
               const st = statusConfig(cl.status);
+              const showBar = cl.status !== 'upcoming';
+              const subParts = [`${cl.pileCount} pile${cl.pileCount === 1 ? '' : 's'} planned`];
+              if (cl.status !== 'upcoming' && cl.status !== 'not_started') {
+                subParts.push(`${cl.completionPercent}% complete`);
+                if (cl.varianceLabel) subParts.push(cl.varianceLabel);
+              }
+
               return (
                 <Pressable
                   key={cl.id}
@@ -169,36 +194,52 @@ export default function PlanHistoryScreen() {
                   style={({ pressed }) => pressed && styles.pressed}
                 >
                   <GlassCard innerStyle={styles.cardInner}>
-                    <View style={styles.rowLeft}>
-                      <View style={styles.iconWrap}>
-                        <Calendar size={16} color={colors.accent} />
+                    <View style={styles.topRow}>
+                      <View style={styles.rowLeft}>
+                        <View style={styles.iconWrap}>
+                          <Calendar size={16} color={colors.accent} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.dateText}>{cl.displayDate}</Text>
+                          <Text style={styles.subText}>{subParts.join(' · ')}</Text>
+                        </View>
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.dateText}>{cl.displayDate}</Text>
-                        <Text style={styles.subText}>{cl.pileCount} pile{cl.pileCount === 1 ? '' : 's'} planned</Text>
+                      <View style={styles.rowRight}>
+                        <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
+                          <Text style={[styles.statusBadgeText, { color: st.fg }]}>{st.label}</Text>
+                        </View>
+                        {/* DEV ONLY — remove before release */}
+                        <Pressable
+                          hitSlop={8}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleDeleteChecklist(cl.id, cl.displayDate);
+                          }}
+                          style={styles.deleteBtn}
+                          disabled={deletingId === cl.id}
+                        >
+                          {deletingId === cl.id
+                            ? <ActivityIndicator size={14} color={colors.danger} />
+                            : <Trash2 size={16} color={colors.danger} />
+                          }
+                        </Pressable>
+                        <ChevronRight size={18} color={colors.textSecondary} />
                       </View>
                     </View>
-                    <View style={styles.rowRight}>
-                      <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
-                        <Text style={[styles.statusBadgeText, { color: st.fg }]}>{st.label}</Text>
+
+                    {showBar && (
+                      <View style={styles.progressTrack}>
+                        <View
+                          style={[
+                            styles.progressFill,
+                            {
+                              width: `${Math.min(100, cl.completionPercent)}%`,
+                              backgroundColor: progressBarColor(cl.status),
+                            },
+                          ]}
+                        />
                       </View>
-                      {/* DEV ONLY — remove before release */}
-                      <Pressable
-                        hitSlop={8}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          handleDeleteChecklist(cl.id, cl.displayDate);
-                        }}
-                        style={styles.deleteBtn}
-                        disabled={deletingId === cl.id}
-                      >
-                        {deletingId === cl.id
-                          ? <ActivityIndicator size={14} color={colors.danger} />
-                          : <Trash2 size={16} color={colors.danger} />
-                        }
-                      </Pressable>
-                      <ChevronRight size={18} color={colors.textSecondary} />
-                    </View>
+                    )}
                   </GlassCard>
                 </Pressable>
               );
@@ -212,12 +253,7 @@ export default function PlanHistoryScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.md,
-  },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
   headerArea: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -234,45 +270,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pageTitle: {
-    ...typography.h1,
-    color: colors.textPrimary,
-  },
-  loadingText: {
-    ...typography.body,
-    color: colors.textSecondary,
-  },
-  emptyText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    paddingHorizontal: spacing.xl,
-  },
-  scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxxl,
-    gap: spacing.md,
-  },
+  pageTitle: { ...typography.h1, color: colors.textPrimary },
+  loadingText: { ...typography.body, color: colors.textSecondary },
+  scrollContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl, gap: spacing.md },
 
-  cardInner: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-  },
+  cardInner: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
 
-  rowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    flex: 1,
-  },
-  rowRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
+  rowLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 },
+  rowRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   iconWrap: {
     width: 36,
     height: 36,
@@ -281,27 +287,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dateText: {
-    ...typography.cardTitle,
-    color: colors.textPrimary,
-  },
-  subText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  statusBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-  },
-  statusBadgeText: {
-    ...typography.caption,
-    fontWeight: '700',
-  },
-  pressed: {
-    opacity: 0.8,
-  },
+  dateText: { ...typography.cardTitle, color: colors.textPrimary },
+  subText: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
+  statusBadgeText: { ...typography.caption, fontWeight: '700' },
+  pressed: { opacity: 0.8 },
   deleteBtn: {
     width: 32,
     height: 32,
@@ -310,4 +300,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  progressTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: 'rgba(28,28,46,0.06)',
+    overflow: 'hidden',
+    marginTop: spacing.sm,
+  },
+  progressFill: { height: '100%', borderRadius: 3 },
 });

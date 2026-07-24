@@ -1,12 +1,8 @@
 // src/components/plan/generate/steps/pile-assign/BulkAssignBar.tsx
-//
-// Appears once at least one pile is selected. Stays a compact single row —
-// "Assign machines" opens a modal with rig/crane chip pickers, so the pile
-// list below never gets pushed out of view.
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Check } from 'lucide-react-native';
+import { Check, X, Wrench } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import MachineSelect from './MachineSelect';
@@ -15,17 +11,14 @@ import type { SimpleMachine } from './types';
 interface BulkAssignBarProps {
   selectedCount: number;
   onClear: () => void;
-
   panelOpen: boolean;
   onTogglePanel: () => void;
-
   rigs: SimpleMachine[];
   cranes: SimpleMachine[];
   rigId: string | null;
   craneId: string | null;
   onSelectRig: (id: string) => void;
   onSelectCrane: (id: string) => void;
-
   defaulted: boolean;
   onApply: () => void;
 }
@@ -36,17 +29,19 @@ export default function BulkAssignBar({
   defaulted, onApply,
 }: BulkAssignBarProps) {
   return (
-    <View style={styles.card}>
-      <View style={styles.top}>
-        <Text style={styles.selectedText}>{selectedCount} selected</Text>
-        <View style={styles.actions}>
-          <Pressable onPress={onClear} hitSlop={8}>
-            <Text style={styles.clearText}>Clear</Text>
-          </Pressable>
-          <Pressable style={styles.assignButton} onPress={onTogglePanel}>
-            <Text style={styles.assignButtonText}>Assign machines</Text>
-          </Pressable>
-        </View>
+    <View style={styles.row}>
+      <View style={styles.left}>
+        <Text style={styles.label}>{selectedCount} {selectedCount === 1 ? 'pile' : 'piles'} selected</Text>
+      </View>
+
+      <View style={styles.right}>
+        <Pressable style={styles.clearBtn} onPress={onClear} hitSlop={spacing.sm}>
+          <X size={15} color={colors.textSecondary} />
+        </Pressable>
+        <Pressable style={styles.assignButton} onPress={onTogglePanel}>
+          <Wrench size={14} color={colors.white} />
+          <Text style={styles.assignButtonText}>Assign</Text>
+        </Pressable>
       </View>
 
       <AppModal
@@ -54,20 +49,19 @@ export default function BulkAssignBar({
         onClose={onTogglePanel}
         title="Assign machines"
         subtitle={`${selectedCount} ${selectedCount === 1 ? 'pile' : 'piles'} selected`}
+        position="top"
       >
         {defaulted && (
           <Text style={styles.hint}>Defaulted to your last combination — change if needed.</Text>
         )}
-
         <MachineSelect label="Rig" options={rigs} valueId={rigId} onSelect={onSelectRig} />
         <MachineSelect label="Crane" options={cranes} valueId={craneId} onSelect={onSelectCrane} />
-
         <Pressable
           style={[styles.applyButton, (!rigId || !craneId) && styles.applyButtonDisabled]}
           onPress={onApply}
           disabled={!rigId || !craneId}
         >
-          <Check size={14} color="#fff" />
+          <Check size={14} color={colors.white} />
           <Text style={styles.applyButtonText}>Apply to {selectedCount}</Text>
         </Pressable>
       </AppModal>
@@ -76,27 +70,42 @@ export default function BulkAssignBar({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.white, borderWidth: 1, borderColor: colors.accent,
-    borderRadius: radius.lg ?? 16, padding: spacing.md,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
   },
-  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  selectedText: { ...typography.body, fontSize: 14, fontWeight: '600', color: colors.accent },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg ?? spacing.md },
-  clearText: { ...typography.caption, fontWeight: '600', color: colors.textSecondary },
+  left: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  label: { ...typography.caption, color: colors.textPrimary },
+  right: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  clearBtn: {
+    padding: spacing.xs,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   assignButton: {
-    backgroundColor: colors.accent, borderRadius: radius.pill,
-    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.accent,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm + 2,
   },
-  assignButtonText: { ...typography.caption, fontWeight: '700', color: '#fff' },
-
+  assignButtonText: { ...typography.caption, fontWeight: '700', color: colors.white },
   hint: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md },
-
   applyButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: colors.accent, borderRadius: radius.sm, paddingVertical: spacing.sm + 2,
     marginTop: spacing.sm,
   },
   applyButtonDisabled: { opacity: 0.4 },
-  applyButtonText: { ...typography.caption, fontWeight: '700', color: '#fff' },
+  applyButtonText: { ...typography.caption, fontWeight: '700', color: colors.white },
 });

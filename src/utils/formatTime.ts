@@ -7,6 +7,7 @@
 //   2. Minutes-based display helpers — accept minutes-since-midnight numbers
 //   3. Duration helpers            — format a span of time
 //   4. Date math utilities         — addMinutes, timeToMinutes (used by planner + UI)
+//   5. ISO serialization (writes)  — toLocalIsoString, for building the strings sent to the API
 
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -173,4 +174,78 @@ export function timeToMinutes(timeStr: string): number {
  */
 export function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
+/**
+ * Generous cap on how far forward a single actual-time entry can roll across
+ * midnight before it's treated as a genuine backward mistake instead of an
+ * overnight continuation (piling steps run for hours, never ~a full day).
+ */
+const MAX_OVERNIGHT_GAP_MINUTES = 20 * 60; // 20h
+
+/**
+ * True when `candidate` (minutes-since-midnight) is at/after `anchor`, once
+ * overnight wraparound is accounted for. Piling steps legitimately continue
+ * past midnight (e.g. previous step ends 21:45 = 1305, this one finishes
+ * 04:30 the next morning = 270), so a numerically smaller candidate usually
+ * means "the following calendar day," not "earlier today." Only rejects when
+ * the implied continuation gap is implausibly long, which is the signal that
+ * it's actually a same-day backward mistake.
+ */
+export function isAtOrAfterOvernightWrap(candidate: number, anchor: number): boolean {
+  if (candidate >= anchor) return true;
+  return candidate + 1440 - anchor <= MAX_OVERNIGHT_GAP_MINUTES;
+}
+
+/**
+ * Mirror of isAtOrAfterOvernightWrap for upper bounds — true when `candidate`
+ * is at/before `anchor`, tolerating the case where `anchor` itself is the one
+ * that rolled past midnight (e.g. "the next step's start time").
+ */
+export function isAtOrBeforeOvernightWrap(candidate: number, anchor: number): boolean {
+  if (candidate <= anchor) return true;
+  return anchor + 1440 - candidate <= MAX_OVERNIGHT_GAP_MINUTES;
+}
+
+/**
+ * Resolves the correct calendar Date for a newly-picked minutes-since-midnight
+ * value, anchored on the last known real ISO timestamp in this step sequence
+ * (e.g. the previous step's actual end, or this step's own actual start) —
+ * rolling forward one calendar day if the picked time-of-day is earlier than
+ * the anchor's, mirroring pilingPlannerService's window-rollover pattern.
+ */
+export function resolveOvernightDate(anchorIso: string, minutesSinceMidnight: number): Date {
+  const anchor = new Date(anchorIso);
+  const anchorMinutes = anchor.getHours() * 60 + anchor.getMinutes();
+  const d = new Date(anchor);
+  if (minutesSinceMidnight < anchorMinutes) d.setDate(d.getDate() + 1);
+  d.setHours(Math.floor(minutesSinceMidnight / 60), minutesSinceMidnight % 60, 0, 0);
+  return d;
+}
+
+// ─── 5. ISO serialization (writes) ────────────────────────────────────────────
+
+/**
+ * Serialize a Date's own local y/m/d/h/min/s components as a naive
+ * "YYYY-MM-DDTHH:mm:ss" string — no "Z", no UTC offset.
+ *
+ * Use this (never `.toISOString()`) for any plan/actual timestamp sent to the
+ * API. The backend's DateTime columns are timezone-naive and store whatever
+ * wall-clock numbers they're given, so `.toISOString()` — which always
+ * converts to UTC — silently shifts a correctly-built local Date (e.g. one
+ * built from `new Date(y, m-1, d, h, min)` or a wheel-picker) by the device's
+ * UTC offset (5.5h for IST) once it lands in storage. This assumes the
+ * device's own OS timezone matches TIMEZONE (see src/config/env.ts) — the
+ * same assumption every local-component-constructed Date in this app already
+ * makes; this just stops breaking it during serialization.
+ */
+export function toLocalIsoString(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const h = pad(date.getHours());
+  const min = pad(date.getMinutes());
+  const s = pad(date.getSeconds());
+  return `${y}-${m}-${d}T${h}:${min}:${s}`;
 }

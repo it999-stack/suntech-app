@@ -11,8 +11,9 @@ import { formatTimeRange } from '@utils/formatTime';
 import Accordion from '@components/shared/Accordion';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
+import { isContinuingStep } from '@utils/helpers';
 
-export type Track = 'RIG' | 'CRANE';
+export type Track = 'RIG' | 'CRANE' | 'COMPRESSOR';
 export type StepStatus = 'done' | 'upcoming';
 
 export type PlanStep = {
@@ -20,7 +21,8 @@ export type PlanStep = {
   name: string;
   track: Track;
   start: string;
-  end: string;
+  /** null when this step is "continuing" — no committed end time. */
+  end: string | null;
   status: StepStatus;
 };
 
@@ -34,6 +36,12 @@ export type PileItemData = {
   status: 'pending' | 'in_progress' | 'completed';
   steps: PlanStep[];
 };
+
+function trackBadgeColors(track: Track): { bg: string; fg: string } {
+  if (track === 'RIG') return { bg: colors.accentSoft, fg: colors.accent };
+  if (track === 'CRANE') return { bg: 'rgba(255,149,0,0.12)', fg: colors.warning };
+  return { bg: colors.machines.compressor.soft, fg: colors.machines.compressor.color };
+}
 
 function statusConfig(status: PileItemData['status']) {
   if (status === 'completed') return { bg: colors.successSoft, fg: colors.success, label: 'Completed' };
@@ -95,20 +103,24 @@ export default function PileAccordionItem({ pile }: Props) {
                   <View
                     style={[
                       styles.trackBadge,
-                      { backgroundColor: step.track === 'RIG' ? colors.accentSoft : 'rgba(255,149,0,0.12)' },
+                      { backgroundColor: trackBadgeColors(step.track).bg },
                     ]}
                   >
                     <Text
                       style={[
                         styles.trackText,
-                        { color: step.track === 'RIG' ? colors.accent : colors.warning },
+                        { color: trackBadgeColors(step.track).fg },
                       ]}
                     >
                       {step.track}
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.stepTime}>{formatTimeRange(step.start, step.end)}</Text>
+                <Text style={styles.stepTime}>
+                  {isContinuingStep({ plannedEnd: step.end })
+                    ? formatTimeRange(step.start, undefined).replace(/—$/, 'To be continued')
+                    : formatTimeRange(step.start, step.end)}
+                </Text>
               </View>
             );
           })

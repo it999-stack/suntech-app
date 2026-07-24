@@ -11,9 +11,10 @@ import { SyncMachinesStep } from '@sync/steps/syncMachines';
 import { SyncPersonnelStep } from '@sync/steps/syncPersonnel';
 import { SyncStepsStep } from '@sync/steps/syncSteps';
 import { SyncAppPlanStep } from '../steps/syncAppPlan';
+import { SyncActivePlanStep } from '../steps/syncActivePlan';
 
 export const BOOTSTRAP_STEPS: ISyncStep[] = [
-  // Pull data from server
+  // Pull reference data from server
   new SyncAreasStep(),
   new SyncDimensionsStep(),
   new SyncShiftsStep(),
@@ -21,6 +22,14 @@ export const BOOTSTRAP_STEPS: ISyncStep[] = [
   new SyncPersonnelStep(),
   new SyncStepsStep(),
 
-  // sync App to server
+  // Push local dirty checklists (actuals) to the server first — must run
+  // before SyncActivePlanStep below, or that pull's wholesale replace of
+  // plan/actual steps would clobber not-yet-synced local edits before they
+  // ever reach the server.
   new SyncAppPlanStep(),
+
+  // Then pull today's checklist back down — this is what lets a
+  // reinstalled/data-cleared device recover its in-progress plan instead of
+  // regenerating (and colliding with) one.
+  new SyncActivePlanStep(),
 ];

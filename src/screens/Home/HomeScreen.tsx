@@ -10,14 +10,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { CommonActions } from '@react-navigation/native';
-import { ClipboardList, Signpost, Settings, Sparkles, Pencil } from 'lucide-react-native';
+import { ClipboardList, Signpost, Settings, Sparkles, Pencil, CalendarClock } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
+import StatPill from '@components/shared/StatPill';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { usePlan } from '@state/PlanContext';
+import GeneratePlanCalendarSheet from '@components/plan/generate/GeneratePlanCalendarSheet';
 import { useAuthStore } from '@store/authStore';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { formatTime } from '@utils/formatTime';
-import type { PilingPersonnel } from '@db/schema';
+import type { PilingSitePersonnel } from '@db/schema';
 
 function toLocalDateStr(d: Date): string {
   const y = d.getFullYear();
@@ -100,18 +102,9 @@ function ActivePlanCard({
       </View>
 
       <View style={styles.statsRow}>
-        <View style={[styles.statPill, { backgroundColor: 'rgba(52,199,89,0.12)' }]}>
-          <Text style={[styles.statNum, { color: colors.success }]}>{completed}</Text>
-          <Text style={styles.statLabel}>Completed</Text>
-        </View>
-        <View style={[styles.statPill, { backgroundColor: colors.accentSoft }]}>
-          <Text style={[styles.statNum, { color: colors.accent }]}>{inProgress}</Text>
-          <Text style={styles.statLabel}>In Progress</Text>
-        </View>
-        <View style={[styles.statPill, { backgroundColor: 'rgba(255,149,0,0.12)' }]}>
-          <Text style={[styles.statNum, { color: colors.warning }]}>{delayed}</Text>
-          <Text style={styles.statLabel}>Delayed</Text>
-        </View>
+        <StatPill label="Completed" value={completed} tone="success" />
+        <StatPill label="In Progress" value={inProgress} tone="neutral" />
+        <StatPill label="Delayed" value={delayed} tone="warning" />
       </View>
 
       <Pressable style={styles.primaryBtn} onPress={onView}>
@@ -135,7 +128,7 @@ export default function HomeScreen() {
   }, [user?.siteId, today, loadChecklist]);
 
   // Load personnel to resolve supervisor names
-  const [personnel, setPersonnel] = useState<PilingPersonnel[]>([]);
+  const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
   useEffect(() => {
     if (user?.siteId) {
       getPersonnelBySite(user.siteId).then(setPersonnel).catch(() => {});
@@ -163,6 +156,8 @@ export default function HomeScreen() {
 
   const userName = user?.name ?? 'User';
   const siteName = user?.siteName ?? 'Your Site';
+
+  const [calendarSheetVisible, setCalendarSheetVisible] = useState(false);
 
   // ── Loading state ────────────────────────────────────────────────────────
   if (isLoading) {
@@ -192,7 +187,7 @@ export default function HomeScreen() {
           <GreetingHeader userName={userName} siteName={siteName} />
 
           {planStatus === 'none' ? (
-            <NoPlanCard onGenerate={() => navigation.navigate('GeneratePlan')} />
+            <NoPlanCard onGenerate={() => setCalendarSheetVisible(true)} />
           ) : (
             <ActivePlanCard
               onView={() => navigation.navigate('FillActuals')}
@@ -241,15 +236,34 @@ export default function HomeScreen() {
                 <Text style={styles.quickSub}>Continue active work</Text>
               </GlassCard>
             </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.quickCard, pressed && styles.quickPressed]}
+              onPress={() => setCalendarSheetVisible(true)}
+            >
+              <GlassCard innerStyle={styles.quickPad}>
+                <View style={styles.quickIconWrap}>
+                  <CalendarClock size={22} color={colors.accent} />
+                </View>
+                <Text style={styles.quickTitle}>Plan Another Day</Text>
+                <Text style={styles.quickSub}>Pick a future date</Text>
+              </GlassCard>
+            </Pressable>
           </View>
 
-          <View style={styles.syncRow}>
-            <View style={styles.syncDot} />
-            <Text style={styles.syncText}>All changes synced</Text>
-            <Text style={styles.syncTime}>2m ago</Text>
-          </View>
         </ScrollView>
       </SafeAreaView>
+
+      {user?.siteId && (
+        <GeneratePlanCalendarSheet
+          visible={calendarSheetVisible}
+          onClose={() => setCalendarSheetVisible(false)}
+          siteId={user.siteId}
+          onConfirm={(date, hasExistingPlan) => {
+            setCalendarSheetVisible(false);
+            navigation.navigate('GeneratePlan', { date, edit: hasExistingPlan });
+          }}
+        />
+      )}
     </LinearGradient>
   );
 }
@@ -382,21 +396,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.lg,
   },
-  statPill: {
-    flex: 1,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  statNum: {
-    ...typography.h2,
-    fontWeight: '800',
-  },
-  statLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
 
   primaryBtn: {
     backgroundColor: colors.accent,
@@ -414,9 +413,10 @@ const styles = StyleSheet.create({
 
   quickRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.md,
   },
-  quickCard: { flex: 1 },
+  quickCard: { flex: 1, minWidth: 140 },
   quickPressed: { opacity: 0.75 },
   quickPad: {
     padding: spacing.lg,
@@ -441,30 +441,5 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     marginTop: 2,
-  },
-
-  syncRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.5)',
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-  },
-  syncDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.success,
-    marginRight: spacing.sm,
-  },
-  syncText: {
-    ...typography.caption,
-    color: colors.textPrimary,
-    flex: 1,
-  },
-  syncTime: {
-    ...typography.caption,
-    color: colors.textSecondary,
   },
 });

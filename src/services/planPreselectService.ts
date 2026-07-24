@@ -2,7 +2,7 @@
 
 import { MAX_AUTO_PRESELECT_PILES } from '@/constants/planGeneration';
 import type { PileAssignment, ResumeWork } from '@/types/plan';
-import type { PileWorkProgress } from '@db/schema';
+import type { ResumeWorkInfo } from './resumeWorkService';
 
 export type ResumePreselection = {
   resumeWorkByPileId: Record<string, ResumeWork>;
@@ -11,7 +11,7 @@ export type ResumePreselection = {
 };
 
 export type BuildResumePreselectionInput = {
-  pendingItems: PileWorkProgress[];
+  pendingItems: ResumeWorkInfo[];
   activeRigIds: string[];
   activeCraneIds: string[];
   maxPiles?: number;
@@ -42,9 +42,15 @@ export function buildResumePreselection({
   for (const item of selected) {
     resumeWorkByPileId[item.pileId] = {
       stepId: item.stepId,
+      stepName: item.stepName,
       remainingMinutes: item.remainingMinutes,
       lastRigId: item.lastRigId,
       lastCraneId: item.lastCraneId,
+      wasStarted: item.wasStarted,
+      remainingTimeConfirmed: false,
+      pastChecklistPileId: item.pastChecklistPileId,
+      pastActualStart: item.pastActualStart,
+      completedStepNames: item.completedStepNames,
     };
     selectedPileIds.push(item.pileId);
 

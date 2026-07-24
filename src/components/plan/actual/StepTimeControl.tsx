@@ -5,7 +5,7 @@ import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { MessageSquareText } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/TimerSelectMenu';
 import RemarksModal from '@components/plan/actual/RemarksModal';
-import { formatMinutes } from '@utils/formatTime';
+import { formatMinutes12, isAtOrAfterOvernightWrap } from '@utils/formatTime';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
 type Mode = 'start' | 'finish';
@@ -15,11 +15,15 @@ interface Props {
   stepName: string;
   /** Sensible default minutes to seed the picker with (planned start/end). */
   defaultMinutes: number;
-  onConfirm: (minutes: number) => void;
+  onConfirm: (minutes: number) => void | Promise<void>;
   /** Existing remark text for this step, if any. */
   remarks?: string;
   /** Called when the user saves a remark from the icon-triggered modal. */
-  onSaveRemarks?: (text: string) => void;
+  onSaveRemarks?: (text: string) => void | Promise<void>;
+  /** Earliest minutes-since-midnight this time may be set to (inclusive). Omit for no lower bound. */
+  minMinutes?: number;
+  /** Describes what minMinutes represents, used in the rejection message (e.g. "the previous step's end time"). */
+  minMinutesLabel?: string;
 }
 
 function nowAsMinutes(): number {
@@ -34,29 +38,52 @@ export default function StepTimeControl({
   onConfirm,
   remarks,
   onSaveRemarks,
+  minMinutes,
+  minMinutesLabel,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
   const [remarksOpen, setRemarksOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const verb = mode === 'start' ? 'Start' : 'Finish';
   const hasRemarks = !!remarks && remarks.trim().length > 0;
 
   function confirm(minutes: number) {
+    if (minMinutes != null && !isAtOrAfterOvernightWrap(minutes, minMinutes)) {
+      Alert.alert(
+        'Invalid time',
+        `${verb} time can't be before ${minMinutesLabel ?? 'the required time'} (${formatMinutes12(minMinutes)}).`,
+      );
+      return;
+    }
+
     const title = mode === 'start' ? `Start ${stepName}?` : `Finish ${stepName}?`;
     const message =
       mode === 'start'
-        ? `This will log the start time as ${formatMinutes(minutes)}.`
-        : `Are you sure this step is complete? This will log the finish time as ${formatMinutes(minutes)}.`;
+        ? `This will log the start time as ${formatMinutes12(minutes)}.`
+        : `Are you sure this step is complete? This will log the finish time as ${formatMinutes12(minutes)}.`;
 
     Alert.alert(title, message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Confirm',
         style: 'default',
-        onPress: () => {
-          onConfirm(minutes);
-          setPickerOpen(false);
+        onPress: async () => {
+          setSaving(true);
+          try {
+            await onConfirm(minutes);
+            setPickerOpen(false);
+          } catch (err) {
+            Alert.alert(
+              'Failed to save',
+              err instanceof Error
+                ? err.message
+                : `Could not log the ${mode} time. Please try again.`,
+            );
+          } finally {
+            setSaving(false);
+          }
         },
       },
     ]);
@@ -67,13 +94,15 @@ export default function StepTimeControl({
         <View style={styles.wrap}>
           <View style={styles.actionRow}>
             <Pressable
-              style={[styles.actionBtn, styles.nowBtn]}
+              style={[styles.actionBtn, styles.nowBtn, saving && styles.actionBtnDisabled]}
+              disabled={saving}
               onPress={() => confirm(nowAsMinutes())}
             >
               <Text style={styles.nowBtnText}>{verb} Now</Text>
             </Pressable>
             <Pressable
-              style={[styles.actionBtn, styles.pickBtn]}
+              style={[styles.actionBtn, styles.pickBtn, saving && styles.actionBtnDisabled]}
+              disabled={saving}
               onPress={() => {
                 setDraftMinutes(defaultMinutes);
                 setPickerOpen(true);
@@ -138,6 +167,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm + 2,
     alignItems: 'center',
   },
+  actionBtnDisabled: { opacity: 0.5 },
   nowBtn: { backgroundColor: colors.accent },
   nowBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
   pickBtn: { backgroundColor: 'rgba(28,28,46,0.06)' },

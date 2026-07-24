@@ -1,7 +1,7 @@
 // src/components/plan/actual/RemarksModal.tsx
 
 import React, { useState, useEffect } from 'react';
-import { Text, TextInput, Pressable, StyleSheet, Keyboard, View } from 'react-native';
+import { Text, TextInput, Pressable, StyleSheet, Keyboard, View, Alert } from 'react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
@@ -10,11 +10,12 @@ interface Props {
   stepName: string;
   initialValue?: string;
   onClose: () => void;
-  onSave: (text: string) => void;
+  onSave: (text: string) => void | Promise<void>;
 }
 
 export default function RemarksModal({ visible, stepName, initialValue, onClose, onSave }: Props) {
   const [text, setText] = useState(initialValue ?? '');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (visible) setText(initialValue ?? '');
@@ -37,12 +38,22 @@ export default function RemarksModal({ visible, stepName, initialValue, onClose,
           autoFocus
         />
         <Pressable
-          style={[styles.addBtn, !text.trim() && styles.addBtnDisabled]}
-          disabled={!text.trim()}
-          onPress={() => {
+          style={[styles.addBtn, (!text.trim() || saving) && styles.addBtnDisabled]}
+          disabled={!text.trim() || saving}
+          onPress={async () => {
             Keyboard.dismiss();
-            onSave(text.trim());
-            onClose();
+            setSaving(true);
+            try {
+              await onSave(text.trim());
+              onClose();
+            } catch (err) {
+              Alert.alert(
+                'Failed to save',
+                err instanceof Error ? err.message : 'Could not save this remark. Please try again.',
+              );
+            } finally {
+              setSaving(false);
+            }
           }}
         >
           <Text style={styles.addBtnText}>Add Remarks</Text>

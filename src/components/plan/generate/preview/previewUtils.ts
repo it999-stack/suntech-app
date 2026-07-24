@@ -3,6 +3,7 @@
 // Pure helpers used by the preview step.
 
 import type { PlanStepWithMeta } from '@repositories/planRepository';
+import { stepNaturalEndMs } from '@utils/stepTiming';
 
 // formatMinutes (duration) lives in utils/formatTime — re-export for local consumers.
 export { formatDurationMinutes as formatMinutes } from '@/utils/formatTime';
@@ -25,7 +26,7 @@ export function computeWorkingMinutes(
   steps: PlanStepWithMeta[],
 ): number {
   const intervals = steps
-    .filter((s) => s.plannedStart && s.plannedEnd)
+    .filter((s) => s.plannedStart)
     .map((s) => ({
       start: new Date(s.plannedStart!).getTime(),
       // Use pure work duration (durationMinutes + bufferMinutes) instead of
@@ -69,17 +70,20 @@ export function computeWorkingMinutes(
  */
 export function computeElapsedMinutes(steps: PlanStepWithMeta[]): number {
   const starts = steps.filter((s) => s.plannedStart).map((s) => new Date(s.plannedStart).getTime());
-  const ends = steps.filter((s) => s.plannedEnd).map((s) => new Date(s.plannedEnd).getTime());
+  // A continuing step (null plannedEnd) has no committed end time but still
+  // occupies time — use its derived natural end so it isn't silently dropped
+  // and elapsed time understated.
+  const ends = steps.filter((s) => s.plannedStart).map((s) => stepNaturalEndMs(s));
   if (!starts.length || !ends.length) return 0;
   const first = Math.min(...starts);
   const last = Math.max(...ends);
   return Math.max(0, (last - first) / 60000);
 }
 
-/** Sum of a single pile's step durations (plannedEnd - plannedStart), in minutes. */
+/** Sum of a single pile's step durations (natural end - plannedStart), in minutes. */
 export function computeTotalDuration(steps: PlanStepWithMeta[]): number {
   return steps.reduce((sum, s) => {
-    if (!s.plannedStart || !s.plannedEnd) return sum;
-    return sum + (new Date(s.plannedEnd).getTime() - new Date(s.plannedStart).getTime()) / 60000;
+    if (!s.plannedStart) return sum;
+    return sum + (stepNaturalEndMs(s) - new Date(s.plannedStart).getTime()) / 60000;
   }, 0);
 }

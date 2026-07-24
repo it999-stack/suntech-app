@@ -1,43 +1,28 @@
 // src/sync/steps/syncAppPlan.ts
-// Sync step that pushes locally generated plan data and actual times to the server.
+// Bootstrap step that flushes the offline sync queue (pil_sync_queue) to the
+// server. All the read/POST/retry logic lives in SyncManager — this step is
+// just the bridge so "Sync now" (bootstrapSync) triggers the same flush that
+// automatic triggers (reconnect/foreground/periodic/new-write) use.
 
 import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
 import type { SyncContext } from '@sync/bootstrap/syncContext';
 import type { StepResult } from '@sync/bootstrap/syncResult';
 
-import { apiClient } from '@services/apiClient';
-import { getChecklistsForSync } from '@repositories/syncRepository';
-import type { SyncAppPlanResponse } from '@sync/SyncAppPlanPayload';
+import { flushQueue } from '@sync/SyncManager';
 
 export class SyncAppPlanStep implements ISyncStep {
   readonly name = 'sync_app_plan';
 
-  async run(ctx: SyncContext): Promise<StepResult> {
+  async run(_ctx: SyncContext): Promise<StepResult> {
     const syncedAt = Date.now();
 
     try {
-      // 1. Fetch all checklists with complete data from local SQLite
-      const checklists = await getChecklistsForSync(ctx.siteId);
-
-      if (checklists.length === 0) {
-        // No checklists to sync is a valid state, not an error
-        return {
-          step: this.name,
-          count: 0,
-          syncedAt,
-        };
-      }
-
-      // 2. Send to server
-      const { data } = await apiClient.post<SyncAppPlanResponse>(
-        `/piling/sites/${ctx.siteId}/sync-app`,
-        { checklists },
-      );
-
+      const result = await flushQueue();
       return {
         step: this.name,
-        count: Number(data.checklists_synced) || checklists.length,
+        count: result.synced,
         syncedAt,
+        error: result.failed > 0 ? result.error : undefined,
       };
     } catch (err) {
       return {

@@ -33,9 +33,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import * as Haptics from 'expo-haptics';
+import { colors as themeColors } from '@theme/theme';
 
-const ITEM_HEIGHT = 48;
-const VISIBLE_ROWS = 5;
+const ITEM_HEIGHT = 84;
+const VISIBLE_ROWS = 3;
 const HALF = Math.floor(VISIBLE_ROWS / 2);
 
 type WheelListItem = { label: string; index: number };
@@ -54,10 +55,29 @@ const pmBottom = '#626262';
 interface TimerSelectMenuProps {
   visible: boolean;
   onClose: () => void;
-  onTimeSelect: (date: Date) => void;
+  /** Required in 'time' mode (the default). Ignored in 'duration' mode. */
+  onTimeSelect?: (date: Date) => void;
   initialDate?: Date;
-  /** Optional callback fired when user confirms - receives the selected date. */
+  /** Optional callback fired when user confirms - receives the selected date (time mode only). */
   onConfirm?: (date: Date) => void;
+  /**
+   * 'time' (default) — 12-hour wall-clock picker with AM/PM and day/night gradient.
+   * 'duration' — plain hour/minute picker (0-23h), no AM/PM, white background,
+   * a custom title instead of the weekday/date header. Used for things like
+   * "how much time is left on this step" rather than a time of day.
+   */
+  mode?: 'time' | 'duration';
+  /** Duration mode: initial total minutes (0-1439) to preselect the wheels. */
+  initialMinutes?: number;
+  /** Duration mode: fires with the selected total minutes on Confirm. */
+  onDurationSelect?: (totalMinutes: number) => void;
+  /** Header title shown instead of the weekday/date row. Defaults to "Select remaining time" in duration mode. */
+  title?: string;
+  /**
+   * Renders the picker content inline (no own Modal/backdrop) so a caller can
+   * embed it inside their own modal/card. Caller owns visibility in this case.
+   */
+  embedded?: boolean;
 }
 
 function tick() {
@@ -69,9 +89,10 @@ interface WheelItemProps {
   index: number;
   scrollY: SharedValue<number>;
   fontSize: number;
+  textColor: string;
 }
 
-function WheelItem({ label, index, scrollY, fontSize }: WheelItemProps) {
+function WheelItem({ label, index, scrollY, fontSize, textColor }: WheelItemProps) {
   const animatedStyle = useAnimatedStyle(() => {
     const distance = scrollY.value / ITEM_HEIGHT - index;
     const opacity = interpolate(distance, [-2, -1, 0, 1, 2], [0.15, 0.4, 1, 0.4, 0.15], Extrapolation.CLAMP);
@@ -86,7 +107,7 @@ function WheelItem({ label, index, scrollY, fontSize }: WheelItemProps) {
   });
   return (
     <View style={styles.itemRow}>
-      <Animated.Text style={[styles.itemText, { fontSize }, animatedStyle]}>{label}</Animated.Text>
+      <Animated.Text style={[styles.itemText, { fontSize, color: textColor }, animatedStyle]}>{label}</Animated.Text>
     </View>
   );
 }
@@ -97,9 +118,10 @@ interface WheelColumnProps {
   onSelect: (index: number) => void;
   width: number;
   fontSize: number;
+  textColor: string;
 }
 
-function WheelColumn({ values, selectedIndex, onSelect, width, fontSize }: WheelColumnProps) {
+function WheelColumn({ values, selectedIndex, onSelect, width, fontSize, textColor }: WheelColumnProps) {
   const scrollRef = useAnimatedRef<FlatList<WheelListItem>>();
   const len = values.length;
 
@@ -143,7 +165,7 @@ function WheelColumn({ values, selectedIndex, onSelect, width, fontSize }: Wheel
         ref={scrollRef}
         data={fullList}
         renderItem={({ item }) => (
-          <WheelItem label={item.label} index={item.index} scrollY={scrollY} fontSize={fontSize} />
+          <WheelItem label={item.label} index={item.index} scrollY={scrollY} fontSize={fontSize} textColor={textColor} />
         )}
         keyExtractor={(item) => String(item.index)}
         onScroll={scrollHandler}
@@ -169,14 +191,30 @@ export default function TimerSelectMenu({
   onTimeSelect,
   initialDate,
   onConfirm,
+  mode = 'time',
+  initialMinutes,
+  onDurationSelect,
+  title,
+  embedded = false,
 }: TimerSelectMenuProps) {
-  const [hour24, setHour24] = useState((initialDate ?? new Date()).getHours());
-  const [minute, setMinute] = useState((initialDate ?? new Date()).getMinutes());
+  const isDuration = mode === 'duration';
+
+  const [hour24, setHour24] = useState(() =>
+    isDuration ? Math.floor((initialMinutes ?? 0) / 60) : (initialDate ?? new Date()).getHours(),
+  );
+  const [minute, setMinute] = useState(() =>
+    isDuration ? (initialMinutes ?? 0) % 60 : (initialDate ?? new Date()).getMinutes(),
+  );
   const [dayDate, setDayDate] = useState(initialDate ?? new Date());
 
   // Reset the wheels to the current value every time the sheet opens.
   useEffect(() => {
-    if (visible) {
+    if (!visible) return;
+    if (isDuration) {
+      const total = Math.max(0, initialMinutes ?? 0);
+      setHour24(Math.floor(total / 60));
+      setMinute(total % 60);
+    } else {
       const d = initialDate ?? new Date();
       setHour24(d.getHours());
       setMinute(d.getMinutes());
@@ -185,7 +223,7 @@ export default function TimerSelectMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const isPM = hour24 >= 12;
+  const isPM = !isDuration && hour24 >= 12;
   const gradientProgress = useSharedValue(isPM ? 1 : 0);
   useEffect(() => {
     gradientProgress.value = withTiming(isPM ? 1 : 0, { duration: 400 });
@@ -200,10 +238,12 @@ export default function TimerSelectMenu({
     opacity: gradientProgress.value,
   }));
 
-  const displayHour12 = ((hour24 + 11) % 12) + 1; // 1-12
+  const displayHour12 = ((hour24 + 11) % 12) + 1; // 1-12 (time mode)
 
-  const hourValues = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
-  const hourIndex = displayHour12 - 1;
+  const hourValues = isDuration
+    ? Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
+    : Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
+  const hourIndex = isDuration ? hour24 : displayHour12 - 1;
   const minuteValues = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
 
   const headerLabel = useMemo(() => {
@@ -213,12 +253,18 @@ export default function TimerSelectMenu({
   }, [dayDate]);
 
   function commitHour(idx: number) {
+    if (isDuration) {
+      setHour24(idx);
+      if (embedded) onDurationSelect?.(idx * 60 + minute);
+      return;
+    }
     const newHour12 = idx + 1; // 1-12
     setHour24((newHour12 % 12) + (isPM ? 12 : 0));
   }
 
   function commitMinute(idx: number) {
     setMinute(idx);
+    if (isDuration && embedded) onDurationSelect?.(hour24 * 60 + idx);
   }
 
   function commitPeriod(idx: number) {
@@ -227,65 +273,95 @@ export default function TimerSelectMenu({
   }
 
   function handleDone() {
+    if (isDuration) {
+      onDurationSelect?.(hour24 * 60 + minute);
+      onClose();
+      return;
+    }
     const d = new Date(initialDate ?? new Date());
     d.setHours(hour24, minute, 0, 0);
-    onTimeSelect(d);
+    onTimeSelect?.(d);
     onConfirm?.(d);
     onClose();
   }
 
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={styles.sheet}>
-        {/* Base (day) gradient, always present */}
-        <LinearGradient
-          colors={[amTop, amBottom]}
-          style={StyleSheet.absoluteFill}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-        />
-        {/* Night gradient fades in on top as the hour crosses noon */}
-        <Animated.View style={[StyleSheet.absoluteFill, sheetGradientStyle]}>
+  const textColor = isDuration ? themeColors.textPrimary : '#ffffff';
+
+  const content = (
+    <View style={[styles.sheet, isDuration && styles.sheetDuration, embedded && styles.sheetEmbedded]}>
+      {!isDuration && (
+        <>
+          {/* Base (day) gradient, always present */}
           <LinearGradient
-            colors={[pmTop, pmBottom]}
+            colors={[amTop, amBottom]}
             style={StyleSheet.absoluteFill}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
           />
-        </Animated.View>
+          {/* Night gradient fades in on top as the hour crosses noon */}
+          <Animated.View style={[StyleSheet.absoluteFill, sheetGradientStyle]}>
+            <LinearGradient
+              colors={[pmTop, pmBottom]}
+              style={StyleSheet.absoluteFill}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+            />
+          </Animated.View>
+        </>
+      )}
 
-        <View style={styles.grabber} />
+      {!embedded && <View style={[styles.grabber, isDuration && styles.grabberDark]} />}
 
-        <View style={styles.header}>
-          <Animated.View style={[styles.headerDot, topDotStyle]} />
-          <Text style={styles.headerWeekday}>{headerLabel.weekday.toLowerCase()}</Text>
-          <Text style={styles.headerDate}> · {headerLabel.date}</Text>
-        </View>
+      <View style={styles.header}>
+        {isDuration ? (
+          <Text style={styles.headerDateDark}>{title ?? 'Select remaining time'}</Text>
+        ) : (
+          <>
+            <Animated.View style={[styles.headerDot, topDotStyle]} />
+            <Text style={styles.headerWeekday}>{headerLabel.weekday.toLowerCase()}</Text>
+            <Text style={styles.headerDate}> · {headerLabel.date}</Text>
+          </>
+        )}
+      </View>
 
-        <View style={styles.pickerRow}>
-          {/* Translucent selection pill behind the center row, spanning
-              the full width so all columns read as one continuous strip. */}
-          <View pointerEvents="none" style={styles.selectionPill} />
+      <View style={styles.pickerRow}>
+        {/* Translucent selection pill behind the center row, spanning
+            the full width so all columns read as one continuous strip. */}
+        <View pointerEvents="none" style={[styles.selectionPill, isDuration && styles.selectionPillDark]} />
 
-          <WheelColumn values={hourValues} selectedIndex={hourIndex} onSelect={commitHour} width={90} fontSize={32} />
-          <Text style={styles.colon}>:</Text>
-          <WheelColumn values={minuteValues} selectedIndex={minute} onSelect={commitMinute} width={90} fontSize={32} />
+        <WheelColumn values={hourValues} selectedIndex={hourIndex} onSelect={commitHour} width={90} fontSize={32} textColor={textColor} />
+        <Text style={[styles.colon, isDuration && styles.colonDark]}>:</Text>
+        <WheelColumn values={minuteValues} selectedIndex={minute} onSelect={commitMinute} width={90} fontSize={32} textColor={textColor} />
+        {!isDuration && (
           <WheelColumn
             values={['AM', 'PM']}
             selectedIndex={isPM ? 1 : 0}
             onSelect={commitPeriod}
             width={64}
             fontSize={18}
+            textColor={textColor}
           />
-        </View>
+        )}
+      </View>
 
+      {/* Embedded usage reports live via onDurationSelect as the wheels move —
+          the host owns its own submit action, so no internal button here. */}
+      {!embedded && (
         <View style={styles.footer}>
-          <Pressable style={styles.doneBtn} onPress={handleDone} hitSlop={10}>
-            <Text style={styles.doneText}>Confirm</Text>
+          <Pressable style={[styles.doneBtn, isDuration && styles.doneBtnAccent]} onPress={handleDone} hitSlop={10}>
+            <Text style={[styles.doneText, isDuration && styles.doneTextLight]}>Confirm</Text>
           </Pressable>
         </View>
-      </View>
+      )}
+    </View>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.backdrop} onPress={onClose} />
+      {content}
     </Modal>
   );
 }
@@ -306,6 +382,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     paddingBottom: 28,
   },
+  sheetDuration: {
+    backgroundColor: themeColors.white,
+  },
+  sheetEmbedded: {
+    position: 'relative',
+    borderRadius: 20,
+    paddingBottom: 16,
+  },
   grabber: {
     width: 36,
     height: 4,
@@ -314,6 +398,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginTop: 10,
     marginBottom: 4,
+  },
+  grabberDark: {
+    backgroundColor: 'rgba(28,28,46,0.15)',
   },
   header: {
     flexDirection: 'row',
@@ -338,6 +425,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
   },
+  headerDateDark: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: themeColors.textPrimary,
+  },
   pickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -352,6 +444,9 @@ const styles = StyleSheet.create({
     height: ITEM_HEIGHT,
     borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  selectionPillDark: {
+    backgroundColor: 'rgba(28,28,46,0.06)',
   },
   itemRow: {
     height: ITEM_HEIGHT,
@@ -369,6 +464,9 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     marginHorizontal: 2,
   },
+  colonDark: {
+    color: themeColors.textPrimary,
+  },
   footer: {
     paddingHorizontal: 20,
     paddingTop: 10,
@@ -379,9 +477,15 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
   },
+  doneBtnAccent: {
+    backgroundColor: themeColors.accent,
+  },
   doneText: {
     fontSize: 16,
     fontWeight: '700',
     color: '#000000',
+  },
+  doneTextLight: {
+    color: themeColors.white,
   },
 });

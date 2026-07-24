@@ -8,7 +8,7 @@ import * as Crypto from 'expo-crypto';
 // Machine types
 // ---------------------------------------------------------------------------
 
-export type MachineKind = 'RIG' | 'CRANE';
+export type MachineKind = 'RIG' | 'CRANE' | 'COMPRESSOR';
 
 export interface MachineLike {
   id: string;
@@ -28,11 +28,25 @@ export function getMachineColor(machine: MachineLike, indexWithinType: number): 
   const palette =
     machine.type === 'RIG'
       ? colors.machine.rigColors
-      : colors.machine.craneColors;
+      : machine.type === 'CRANE'
+        ? colors.machine.craneColors
+        : colors.machine.compressorColors;
   return palette[indexWithinType % palette.length];
 }
 
 // generate uuid
 export function generateId(): string {
   return Crypto.randomUUID();
+}
+
+// ---------------------------------------------------------------------------
+// Plan step timing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * True when a plan step's natural duration runs past the plan window
+ * boundary, so no committed plannedEnd was persisted for it ("continuing").
+ */
+export function isContinuingStep(step: { plannedEnd: string | null | undefined }): boolean {
+  return step.plannedEnd == null;
 }

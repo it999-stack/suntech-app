@@ -4,7 +4,7 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
 /** A named work zone within a piling site, such as "Zone A" or "Tower 1". */
-export const pilingAreas = sqliteTable('piling_areas', {
+export const pilingAreas = sqliteTable('pil_areas', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   name: text('name').notNull(),
@@ -22,7 +22,7 @@ export type NewPilingArea = typeof pilingAreas.$inferInsert;
  * The unfinished work item for a physical pile. This is deliberately separate
  * from daily checklist records so a step can resume on a later plan.
  */
-export const pileWorkProgress = sqliteTable('pile_work_progress', {
+export const pileWorkProgress = sqliteTable('pil_work_progress', {
   id: text('id').primaryKey(),
   pileId: text('pile_id').notNull().unique(),
   stepId: text('step_id').notNull(),
@@ -45,7 +45,7 @@ export type NewPileWorkProgress = typeof pileWorkProgress.$inferInsert;
  * Rows are replaced wholesale on each sync (upsert by id).
  * synced_at: Unix timestamp (ms) of the sync that wrote this row.
  */
-export const pilingPiles = sqliteTable('piling_piles', {
+export const pilingPiles = sqliteTable('pil_piles', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   areaId: text('area_id'),
@@ -65,7 +65,7 @@ export type NewPilingPile = typeof pilingPiles.$inferInsert;
  * Local cache of piling_dimensions fetched from the server for the user's site.
  * Used to populate Dia/Depth templates in site settings.
  */
-export const pilingDimensions = sqliteTable('piling_dimensions', {
+export const pilingDimensions = sqliteTable('pil_dimensions', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   dia: integer('dia').notNull(),
@@ -83,7 +83,7 @@ export type NewPilingDimension = typeof pilingDimensions.$inferInsert;
  * Local cache of piling_shift_types fetched from the server.
  * Local cache of piling_shift_types fetched from the server for the currently assigned site.
  */
-export const pilingShiftTypes = sqliteTable('piling_shift_types', {
+export const pilingShiftTypes = sqliteTable('pil_shift_types', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   name: text('name').notNull(),
@@ -106,7 +106,7 @@ export type NonWorkingWindowBehavior =
  * Local cache of piling_non_working_windows fetched from the server.
  * Scoped to a site + shift type.
  */
-export const pilingNonWorkingWindows = sqliteTable('piling_non_working_windows', {
+export const pilingNonWorkingWindows = sqliteTable('pil_non_working_windows', {
   id: text('id').primaryKey(),
   shiftTypeId: text('shift_type_id').notNull(),
   label: text('label').notNull(),
@@ -125,7 +125,7 @@ export type NewPilingNonWorkingWindow = typeof pilingNonWorkingWindows.$inferIns
  * Local cache of piling_machines fetched from the server for the user's site.
  * Rows are replaced wholesale on each sync (upsert by id).
  */
-export const pilingMachines = sqliteTable('piling_machines', {
+export const pilingMachines = sqliteTable('pil_machines', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   machineNo: text('machine_no').notNull(),
@@ -137,12 +137,12 @@ export const pilingMachines = sqliteTable('piling_machines', {
 export type PilingMachine = typeof pilingMachines.$inferSelect;
 export type NewPilingMachine = typeof pilingMachines.$inferInsert;
 
-// ─── Piling Personnel (synced from server) ───────────────────────────────────
+// ─── Piling Site Personnel (synced from server) ──────────────────────────────
 
 /**
  * Local cache of piling_site_personnel fetched from the server for the user's site.
  */
-export const pilingPersonnel = sqliteTable('piling_personnel', {
+export const pilingSitePersonnel = sqliteTable('pil_site_personnel', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   name: text('name').notNull(),
@@ -154,8 +154,8 @@ export const pilingPersonnel = sqliteTable('piling_personnel', {
   syncedAt: integer('synced_at').notNull(),
 });
 
-export type PilingPersonnel = typeof pilingPersonnel.$inferSelect;
-export type NewPilingPersonnel = typeof pilingPersonnel.$inferInsert;
+export type PilingSitePersonnel = typeof pilingSitePersonnel.$inferSelect;
+export type NewPilingSitePersonnel = typeof pilingSitePersonnel.$inferInsert;
 
 // ─── Piling Steps (seeded locally on first init) ──────────────────────────────
 
@@ -163,10 +163,10 @@ export type NewPilingPersonnel = typeof pilingPersonnel.$inferInsert;
  * Default workflow steps for piling operations.
  * These are seeded once on initDb() and never synced from server.
  */
-export const pilingSteps = sqliteTable('piling_steps', {
+export const pilingSteps = sqliteTable('pil_steps', {
   id: text('id').primaryKey(),
-  stepName: text('step_name').notNull().unique(),
-  sequenceOrder: integer('sequence_order').notNull(),
+  stepName: text('step_name').notNull(),
+  sequenceOrder: integer('sequence_order').notNull().unique(),
   track: text('track').notNull(),
 });
 
@@ -180,7 +180,7 @@ export type NewPilingStep = typeof pilingSteps.$inferInsert;
  * dimensionId → pilingDimensions.id (carries the dia/depth; no redundant columns).
  * e.g. Boring at dimension_id=<600/18mm row> → 90 min.
  */
-export const pilingStepDurationTemplates = sqliteTable('piling_step_duration_templates', {
+export const pilingStepDurationTemplates = sqliteTable('pil_step_duration_templates', {
   id: text('id').primaryKey(),
   stepId: text('step_id').notNull(),
   dimensionId: text('dimension_id').notNull(),
@@ -202,7 +202,7 @@ export type NewPilingStepDurationTemplate = typeof pilingStepDurationTemplates.$
  * shiftTypeId: the active shift for this day (→ pilingShiftTypes.id)
  * status: 'DRAFT' | 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED'
  */
-export const pilingDailyChecklists = sqliteTable('piling_daily_checklists', {
+export const pilingDailyChecklists = sqliteTable('pil_daily_checklists', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   date: text('date').notNull(),
@@ -225,7 +225,7 @@ export type NewPilingDailyChecklist = typeof pilingDailyChecklists.$inferInsert;
 /**
  * Junction: which personnel were on duty for a given checklist day.
  */
-export const pilingChecklistPersonnel = sqliteTable('piling_checklist_personnel', {
+export const pilingChecklistPersonnel = sqliteTable('pil_checklist_personnel', {
   id: text('id').primaryKey(),
   checklistId: text('checklist_id').notNull(),
   personnelId: text('personnel_id').notNull(),
@@ -242,14 +242,17 @@ export type NewPilingChecklistPersonnel = typeof pilingChecklistPersonnel.$infer
  * rigId, craneId: which machines are assigned to this pile on this day.
  * status: lifecycle of this pile on this day.
  */
-export const pilingChecklistPiles = sqliteTable('piling_checklist_piles', {
+export const pilingChecklistPiles = sqliteTable('pil_checklist_piles', {
   id: text('id').primaryKey(),
   checklistId: text('checklist_id').notNull(),
   pileId: text('pile_id').notNull(),
   seqNo: integer('seq_no').notNull(),
   rigId: text('rig_id').notNull(),
   craneId: text('crane_id').notNull(),
-  status: text('status').notNull().default('NOT_STARTED'),
+  status: text('status')
+    .notNull()
+    .default('NOT_STARTED')
+    .$type<'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'>(),
   createdAt: integer('created_at').notNull(),
 });
 
@@ -263,12 +266,16 @@ export type NewPilingChecklistPile = typeof pilingChecklistPiles.$inferInsert;
  * plannedStart / plannedEnd are ISO timestamp strings.
  * These are regenerated wholesale each time "Generate Plan" is run.
  */
-export const pilePlanSteps = sqliteTable('pile_plan_steps', {
+export const pilePlanSteps = sqliteTable('pil_plan_steps', {
   id: text('id').primaryKey(),
   checklistPileId: text('checklist_pile_id').notNull(),
   stepId: text('step_id').notNull(),
   plannedStart: text('planned_start').notNull(),
-  plannedEnd: text('planned_end').notNull(),
+  // null means this step is "continuing" — its natural duration runs past the
+  // plan window boundary, so no committed end time is persisted. A continuing
+  // row is a frozen historical record: it is never back-filled with a concrete
+  // plannedEnd later. Tomorrow's continuation is always a new row.
+  plannedEnd: text('planned_end'),
   durationMinutes: integer('duration_minutes'),
   bufferMinutes: integer('buffer_minutes'),
   assignedMachineId: text('assigned_machine_id'),
@@ -284,7 +291,7 @@ export type NewPilePlanStep = typeof pilePlanSteps.$inferInsert;
  * User-recorded actual start/end times per pile×step.
  * actualStart / actualEnd are ISO timestamp strings (nullable until filled).
  */
-export const pileActualSteps = sqliteTable('pile_actual_steps', {
+export const pileActualSteps = sqliteTable('pil_actual_steps', {
   id: text('id').primaryKey(),
   checklistPileId: text('checklist_pile_id').notNull(),
   stepId: text('step_id').notNull(),
@@ -297,3 +304,48 @@ export const pileActualSteps = sqliteTable('pile_actual_steps', {
 
 export type PileActualStep = typeof pileActualSteps.$inferSelect;
 export type NewPileActualStep = typeof pileActualSteps.$inferInsert;
+
+// ─── Machine Events (audit log for swap/breakdown reporting) ─────────────────
+
+/**
+ * User-logged machine breakdown/replacement/resume events, recorded against
+ * a pile (and optionally a specific step) within a checklist day.
+ * eventType: 'BREAKDOWN' | 'REPLACED' | 'RESUMED'
+ * occurredAt is an ISO timestamp string (editable by the user, not always "now").
+ */
+export const pilMachineEvents = sqliteTable('pil_machine_events', {
+  id: text('id').primaryKey(),
+  checklistId: text('checklist_id').notNull(),
+  pileId: text('pile_id').notNull(),
+  stepId: text('step_id'),
+  track: text('track').notNull(),
+  eventType: text('event_type').notNull(),
+  machineId: text('machine_id'),
+  replacementId: text('replacement_id'),
+  notes: text('notes'),
+  occurredAt: text('occurred_at').notNull(),
+  createdAt: integer('created_at').notNull(),
+});
+
+export type PilMachineEvent = typeof pilMachineEvents.$inferSelect;
+export type NewPilMachineEvent = typeof pilMachineEvents.$inferInsert;
+
+// ─── Sync Queue (offline outbox — dirty checklists awaiting push) ────────────
+
+/**
+ * Durable "dirty set" of checklists with local changes not yet confirmed
+ * synced to the server. At most one row per checklistId — re-editing an
+ * already-queued checklist just bumps enqueuedAt / resets status to pending.
+ */
+export const pilSyncQueue = sqliteTable('pil_sync_queue', {
+  id: text('id').primaryKey(),
+  checklistId: text('checklist_id').notNull(),
+  status: text('status').notNull().default('pending'), // 'pending' | 'syncing' | 'failed'
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  enqueuedAt: integer('enqueued_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export type PilSyncQueueRow = typeof pilSyncQueue.$inferSelect;
+export type NewPilSyncQueueRow = typeof pilSyncQueue.$inferInsert;

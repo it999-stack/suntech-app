@@ -4,8 +4,8 @@
 // Orchestrates smaller components: main card, timeline bar, summary accordions,
 // and per-pile accordions.
 
-import { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { useMemo, useState } from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Clock, Truck, Users, ListChecks, AlertTriangle } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@/theme/theme';
@@ -28,7 +28,7 @@ export type { PreviewPile } from '@app-types/previewTypes';
 export interface MachineDetail {
   id: string;
   machineNo: string;
-  type: 'RIG' | 'CRANE';
+  type: 'RIG' | 'CRANE' | 'COMPRESSOR';
   description?: string | null;
 }
 
