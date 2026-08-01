@@ -19,6 +19,13 @@ export interface SyncActualStep {
   actual_start?: string | null;
   actual_end?: string | null;
   remarks?: string | null;
+  /**
+   * Optimistic-concurrency base version — the server's own `updated_at`,
+   * echoed back verbatim from the last pull/hydrate (see
+   * pileActualSteps.serverUpdatedAt / pilingChecklistPiles.serverUpdatedAt).
+   * Never derived from the device clock.
+   */
+  updated_at?: string | null;
 }
 
 export interface SyncMachineEvent {
@@ -40,11 +47,21 @@ export interface SyncChecklistPile {
   rig_id: string;
   crane_id: string;
   status: string;
+  /**
+   * Optimistic-concurrency base version — the server's own `updated_at`,
+   * echoed back verbatim from the last pull/hydrate (see
+   * pileActualSteps.serverUpdatedAt / pilingChecklistPiles.serverUpdatedAt).
+   * Never derived from the device clock.
+   */
+  updated_at?: string | null;
 }
 
 export interface SyncChecklistPersonnel {
   id: string;
   personnel_id: string;
+  role: string;
+  machine_id?: string | null;
+  shift_slot?: number | null;
 }
 
 export interface SyncChecklist {
@@ -53,8 +70,6 @@ export interface SyncChecklist {
   shift_type_id?: string;
   plan_start_time?: string;
   plan_end_time?: string;
-  supervisor_id?: string;
-  supervisor_id_2?: string;
   notes?: string;
   status: string;
   personnel: SyncChecklistPersonnel[];
@@ -68,6 +83,13 @@ export interface SyncAppPlanPayload {
   checklists: SyncChecklist[];
 }
 
+export interface SyncConflict {
+  entity: 'actual_step' | 'checklist_pile';
+  id: string;
+  reason: string;
+  current_updated_at: string;
+}
+
 export interface SyncAppPlanResponse {
   success: boolean;
   checklists_synced: number;
@@ -75,4 +97,5 @@ export interface SyncAppPlanResponse {
   actual_steps_synced: number;
   machine_events_synced: number;
   errors?: Array<{ checklist_id: string; error: string }>;
+  conflicts?: SyncConflict[];
 }

@@ -43,6 +43,11 @@ export interface ResumeWorkInfo {
   pastActualStart: string | null;
   /** Names of steps already completed on the pile's most recent checklist, for display context. */
   completedStepNames: string[];
+  /** The historical checklist this pending work belongs to, and its date —
+   * lets a caller (e.g. HomeScreen's "pending from previous day" card) link
+   * straight back to that day's Fill Actuals screen. */
+  checklistId: string;
+  checklistDate: string;
 }
 
 export interface ResumeWorkScanResult {
@@ -80,6 +85,8 @@ export async function findResumeWorkForPiles(
     }
   }
   if (!latestCpByPile.size) return empty;
+
+  const checklistDateById = new Map(checklists.map((c) => [c.id, c.date]));
 
   // Fetch actual steps once per distinct checklist involved.
   const checklistIds = new Set([...latestCpByPile.values()].map((cp) => cp.checklistId));
@@ -157,6 +164,8 @@ export async function findResumeWorkForPiles(
       pastChecklistPileId: cp.id,
       pastActualStart: actualStep?.actualStart ?? null,
       completedStepNames,
+      checklistId: cp.checklistId,
+      checklistDate: checklistDateById.get(cp.checklistId) ?? beforeDate,
     });
   }
 

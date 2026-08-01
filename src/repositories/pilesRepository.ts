@@ -1,7 +1,7 @@
 // src/repositories/pilesRepository.ts
 // Local SQLite access for cached piling_piles data.
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { initDb, db } from '@db/client';
 import { pilingPiles, pilingDimensions, type NewPilingPile, type PilingPile, type PilingDimension } from '@db/schema';
 
@@ -86,6 +86,17 @@ export async function getLastSyncTime(siteId: string): Promise<number | null> {
 export async function clearPilesBySite(siteId: string): Promise<void> {
   const db = await initDb();
   await db.delete(pilingPiles).where(eq(pilingPiles.siteId, siteId));
+}
+
+/**
+ * Hard-delete locally cached piles the server has soft-deleted. The app
+ * never owns this data, so there's no local soft-delete concept to mirror —
+ * a server-reported deletion just means "purge it from the local cache."
+ */
+export async function deletePilesByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await initDb();
+  await db.delete(pilingPiles).where(inArray(pilingPiles.id, ids));
 }
 
 // ─── Live query for useLiveQuery ───────────────────────────────────────────────

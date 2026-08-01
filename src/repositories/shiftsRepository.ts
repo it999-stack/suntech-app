@@ -1,7 +1,7 @@
 // src/repositories/shiftsRepository.ts
 // Local SQLite access for piling_shift_types and piling_non_working_windows.
 
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingShiftTypes,
@@ -45,20 +45,59 @@ export async function getAllShiftTypes(): Promise<PilingShiftType[]> {
   return db.select().from(pilingShiftTypes).all();
 }
 
+/**
+ * Hard-delete locally cached shift types the server has soft-deleted.
+ * Currently a no-op in practice — no delete endpoint exists server-side yet
+ * — but wired for when one does (Phase 3 delta-sync groundwork).
+ */
+export async function deleteShiftTypesByIds(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await initDb();
+  await db.delete(pilingShiftTypes).where(inArray(pilingShiftTypes.id, ids));
+}
+
 // ─── Non-Working Windows ──────────────────────────────────────────────────────
 
 /**
- * Replaces all cached non-working windows with the latest server copy.
+ * Upsert non-working windows by id. Was previously a delete-all-then-insert
+ * — harmless for bootstrap (table starts empty) but would silently wipe
+ * every window not included in a given delta-sync batch, so this must be
+ * upsert-by-id to be safe for both callers.
  */
 export async function saveNonWorkingWindows(
   rows: NewPilingNonWorkingWindow[],
 ): Promise<void> {
-  const db = await initDb();
-  await db.delete(pilingNonWorkingWindows);
-
   if (!rows.length) return;
 
-  await db.insert(pilingNonWorkingWindows).values(rows);
+  const db = await initDb();
+  for (const window of rows) {
+    await db
+      .insert(pilingNonWorkingWindows)
+      .values(window)
+      .onConflictDoUpdate({
+        target: pilingNonWorkingWindows.id,
+        set: {
+          shiftTypeId: window.shiftTypeId,
+          label: window.label,
+          startTime: window.startTime,
+          endTime: window.endTime,
+          behavior: window.behavior,
+          syncedAt: window.syncedAt,
+          updatedAt: window.updatedAt,
+        },
+      });
+  }
+}
+
+/**
+ * Hard-delete locally cached non-working windows the server has soft-deleted.
+ * Currently a no-op in practice — no delete endpoint exists server-side yet
+ * — but wired for when one does (Phase 3 delta-sync groundwork).
+ */
+export async function deleteNonWorkingWindowsByIds(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await initDb();
+  await db.delete(pilingNonWorkingWindows).where(inArray(pilingNonWorkingWindows.id, ids));
 }
 
 /**

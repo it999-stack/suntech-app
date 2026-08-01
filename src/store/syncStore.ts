@@ -4,6 +4,8 @@
 
 import { create } from 'zustand';
 import { runBootstrapSync } from '@sync/bootstrap/bootstrapSync';
+import { runDeltaSync } from '@sync/delta/runDeltaSync';
+import { getCursor } from '@repositories/syncCursorRepository';
 import { getLastSyncTime } from '@repositories/pilesRepository';
 import type { StepResult } from '@sync/bootstrap/syncResult';
 
@@ -43,28 +45,45 @@ export const useSyncStore = create<SyncState>((set) => ({
   sync: async (siteId: string) => {
     set({ isSyncing: true, error: null, currentStep: null, completedSteps: [] });
     try {
-      const result = await runBootstrapSync(
-        { siteId },
-        {
-          onStepStart: (stepName) => set({ currentStep: stepName }),
-          onStepComplete: (stepResult) =>
-            set((state) => ({ completedSteps: [...state.completedSteps, stepResult] })),
-        }
-      );
+      // No cursor yet — never bootstrapped (fresh install/reset) — run the
+      // full bootstrap. Once a cursor exists, steady state is push + delta
+      // pull only; bootstrap never runs again for this device.
+      const cursor = await getCursor(siteId);
 
-      const pilesStep = result.steps.find((s) => s.step === 'piles');
-      const appSyncStep = result.steps.find((s) => s.step === 'sync_app_plan');
-      const pilesCount = pilesStep?.count ?? null;
-      const checklistsSynced = appSyncStep?.count ?? null;
-      const failedStep = result.steps.find((s) => s.error);
+      if (!cursor) {
+        const result = await runBootstrapSync(
+          { siteId },
+          {
+            onStepStart: (stepName) => set({ currentStep: stepName }),
+            onStepComplete: (stepResult) =>
+              set((state) => ({ completedSteps: [...state.completedSteps, stepResult] })),
+          }
+        );
 
+        const pilesStep = result.steps.find((s) => s.step === 'piles');
+        const appSyncStep = result.steps.find((s) => s.step === 'sync_app_plan');
+        const pilesCount = pilesStep?.count ?? null;
+        const checklistsSynced = appSyncStep?.count ?? null;
+        const failedStep = result.steps.find((s) => s.error);
+
+        set({
+          isSyncing: false,
+          lastSyncedAt: result.totalSyncedAt,
+          pilesCount,
+          checklistsSynced,
+          currentStep: null,
+          error: failedStep ? failedStep.error! : null,
+        });
+        return;
+      }
+
+      const result = await runDeltaSync(siteId);
       set({
         isSyncing: false,
-        lastSyncedAt: result.totalSyncedAt,
-        pilesCount,
-        checklistsSynced,
+        lastSyncedAt: Date.now(),
+        checklistsSynced: result.pull?.checklistsApplied ?? null,
         currentStep: null,
-        error: failedStep ? failedStep.error! : null,
+        error: result.error ?? null,
       });
     } catch (err) {
       set({

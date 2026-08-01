@@ -30,7 +30,7 @@ import type { SimpleMachine } from '@components/plan/generate/steps/pile-assign/
 import type { LogMachineEventInput } from '@state/PlanContext';
 import type { PilMachineEvent } from '@db/schema';
 import { colors, spacing, radius, typography } from '@theme/theme';
-import { toLocalIsoString } from '@utils/formatTime';
+import { toLocalIsoString, toLocalDateStr } from '@utils/formatTime';
 
 type Track = 'RIG' | 'CRANE' | 'COMPRESSOR';
 type EventType = 'BREAKDOWN' | 'REPLACED' | 'RESUMED';
@@ -94,13 +94,6 @@ function formatDate(d: Date): string {
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return `${dd}-${mm}-${d.getFullYear()}`;
-}
-
-function formatIsoDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 function formatTimeOfDay(d: Date): string {
@@ -481,10 +474,10 @@ export default function StepActionsModal({
         visible={datePickerOpen}
         onClose={() => setDatePickerOpen(false)}
         title="Select date"
-        position="top"
+        position="center"
       >
         <AppCalendar
-          selectedDate={formatIsoDate(occurredAt)}
+          selectedDate={toLocalDateStr(occurredAt)}
           onSelectDate={(dateStr) => {
             const [y, m, d] = dateStr.split('-').map(Number);
             setOccurredAt((prev) => {
@@ -495,8 +488,8 @@ export default function StepActionsModal({
             setDatePickerOpen(false);
           }}
           getDayState={(dateStr) => ({
-            disabled: dateStr > formatIsoDate(new Date()),
-            selected: dateStr === formatIsoDate(occurredAt),
+            disabled: dateStr > toLocalDateStr(new Date()),
+            selected: dateStr === toLocalDateStr(occurredAt),
           })}
         />
       </AppModal>

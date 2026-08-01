@@ -8,7 +8,7 @@ import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
 import type { SyncContext } from '@sync/bootstrap/syncContext';
 import type { StepResult } from '@sync/bootstrap/syncResult';
 import { apiClient } from '@services/apiClient';
-import { saveMachines } from '@repositories/machinesRepository';
+import { saveMachines, deleteMachinesByIds } from '@repositories/machinesRepository';
 import type { NewPilingMachine } from '@db/schema';
 
 export class SyncMachinesStep implements ISyncStep {
@@ -18,7 +18,7 @@ export class SyncMachinesStep implements ISyncStep {
     const syncedAt = Date.now();
     try {
       const { data } = await apiClient.get(`/piling/sites/${ctx.siteId}/machines`);
-      const rows: NewPilingMachine[] = (data as any[]).map((m) => ({
+      const rows: NewPilingMachine[] = (data.items as any[]).map((m) => ({
         id: m.id,
         siteId: m.site_id,
         machineNo: m.machine_no,
@@ -27,6 +27,7 @@ export class SyncMachinesStep implements ISyncStep {
         syncedAt,
       }));
       await saveMachines(rows);
+      await deleteMachinesByIds((data.deleted_ids as string[]) ?? []);
       return { step: this.name, count: rows.length, syncedAt };
     } catch (err) {
       return {

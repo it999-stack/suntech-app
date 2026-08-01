@@ -20,7 +20,14 @@ import {
   type NewPilePlanStep,
   type NewPileActualStep,
 } from '@db/schema';
-import { isContinuingStep } from '@utils/helpers';
+import { generateId, isContinuingStep } from '@utils/helpers';
+
+/** A plain db handle, or the transaction-scoped one passed into
+ * db.transaction(async (tx) => {...}) — a distinct type from the plain
+ * handle (no $client property), but structurally fine for the query-builder
+ * calls used here. */
+type Db = Awaited<ReturnType<typeof initDb>>;
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 // ─── Daily Checklists ─────────────────────────────────────────────────────────
 
@@ -93,7 +100,7 @@ export async function updateChecklist(
   id: string,
   patch: Partial<Pick<
     PilingDailyChecklist,
-    'shiftTypeId' | 'planStartTime' | 'planEndTime' | 'supervisorId' | 'supervisorId2' | 'notes' | 'status' | 'updatedAt'
+    'shiftTypeId' | 'planStartTime' | 'planEndTime' | 'notes' | 'status' | 'updatedAt'
   >>,
 ): Promise<void> {
   const db = await initDb();
@@ -239,10 +246,6 @@ export async function getChecklistPileTimings(checklistId: string): Promise<Pile
  *     but not yet in local SQLite (e.g. after a reinstall)
  *   - the syncActivePlan bootstrap step
  *
- * Deliberately does not touch pilingChecklistPersonnel — the server's
- * ChecklistPersonnelOut doesn't carry the junction row's own id, and no
- * caller of this function populates that table today (supervisor 1/2 are
- * plain columns on the checklist row itself, not junction rows).
  */
 export async function hydrateChecklistFromServer(serverChecklist: {
   id: string;
@@ -251,10 +254,14 @@ export async function hydrateChecklistFromServer(serverChecklist: {
   shift_type_id: string | null;
   plan_start_time: string | null;
   plan_end_time: string | null;
-  supervisor_id: string | null;
-  supervisor_id_2: string | null;
   notes: string | null;
   status: string;
+  checklist_personnel?: Array<{
+    role: string;
+    machine_id: string | null;
+    shift_slot: number | null;
+    personnel: { id: string };
+  }>;
   checklist_piles?: Array<{
     id: string;
     seq_no: number;
@@ -262,6 +269,9 @@ export async function hydrateChecklistFromServer(serverChecklist: {
     pile: { id: string };
     rig: { id: string };
     crane: { id: string };
+    // The server's own updated_at — echoed back verbatim on the next push as
+    // the optimistic-concurrency version (see pilingChecklistPiles.serverUpdatedAt).
+    updated_at?: string | null;
     plan_steps?: Array<{
       id: string;
       step_id: string;
@@ -277,6 +287,8 @@ export async function hydrateChecklistFromServer(serverChecklist: {
       actual_start: string | null;
       actual_end: string | null;
       remarks: string | null;
+      // See checklist_piles[].updated_at above — same purpose, per actual step.
+      updated_at?: string | null;
     }>;
   }>;
 }): Promise<void> {
@@ -289,97 +301,134 @@ export async function hydrateChecklistFromServer(serverChecklist: {
     shiftTypeId: serverChecklist.shift_type_id,
     planStartTime: serverChecklist.plan_start_time,
     planEndTime: serverChecklist.plan_end_time,
-    supervisorId: serverChecklist.supervisor_id,
-    supervisorId2: serverChecklist.supervisor_id_2,
     notes: serverChecklist.notes,
     status: serverChecklist.status,
   };
 
-  await db
-    .insert(pilingDailyChecklists)
-    .values({ id: serverChecklist.id, ...checklistPatch, createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: pilingDailyChecklists.id,
-      set: { ...checklistPatch, updatedAt: now },
-    });
-
   const checklistId = serverChecklist.id;
   const serverPiles = serverChecklist.checklist_piles ?? [];
 
-  // Capture the *old* checklist-pile ids before replacing them — once they're
-  // deleted below, any plan/actual step rows still referencing them become
-  // orphaned (SQLite FKs aren't enforced here, so nothing cascades). Must
-  // read this before the delete, not after, or it captures the new ids
-  // instead of the stale ones that actually need cleaning up.
-  const staleCpIds = (
-    await db
-      .select({ id: pilingChecklistPiles.id })
-      .from(pilingChecklistPiles)
-      .where(eq(pilingChecklistPiles.checklistId, checklistId))
-      .all()
-  ).map((r) => r.id);
+  // Everything below is one logical "replace this checklist's data with the
+  // server's authoritative copy" operation — wrapped in a single transaction
+  // (instead of ~8-20 separate autocommit statements) so it's atomic and
+  // holds the write lock only once, not repeatedly, shrinking the window for
+  // a concurrent writer (e.g. the background sync puller, which calls this
+  // same function) to collide with it.
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(pilingDailyChecklists)
+      .values({ id: serverChecklist.id, ...checklistPatch, createdAt: now, updatedAt: now })
+      .onConflictDoUpdate({
+        target: pilingDailyChecklists.id,
+        set: { ...checklistPatch, updatedAt: now },
+      });
 
-  // Wholesale replace — the server response is the full authoritative set
-  // for this checklist, not a delta.
-  await db.delete(pilingChecklistPiles).where(eq(pilingChecklistPiles.checklistId, checklistId));
-
-  if (serverPiles.length) {
-    await db.insert(pilingChecklistPiles).values(
-      serverPiles.map(
-        (cp): NewPilingChecklistPile => ({
-          id: cp.id,
-          checklistId,
-          pileId: cp.pile.id,
-          seqNo: cp.seq_no,
-          rigId: cp.rig.id,
-          craneId: cp.crane.id,
-          status: cp.status as NewPilingChecklistPile['status'],
-          createdAt: now,
-        }),
-      ),
+    await setChecklistPersonnel(
+      checklistId,
+      (serverChecklist.checklist_personnel ?? []).map((cp) => ({
+        id: generateId(),
+        checklistId,
+        personnelId: cp.personnel.id,
+        role: cp.role,
+        machineId: cp.machine_id,
+        shiftSlot: cp.shift_slot,
+      })),
+      tx,
     );
-  }
 
-  const planStepRows: NewPilePlanStep[] = [];
-  const actualStepRows: NewPileActualStep[] = [];
-  for (const cp of serverPiles) {
-    for (const ps of cp.plan_steps ?? []) {
-      planStepRows.push({
-        id: ps.id,
-        checklistPileId: cp.id,
-        stepId: ps.step_id,
-        plannedStart: ps.planned_start,
-        plannedEnd: ps.planned_end,
-        durationMinutes: ps.duration_minutes,
-        bufferMinutes: ps.buffer_minutes,
-        assignedMachineId: ps.assigned_machine_id,
-        createdAt: now,
-      });
+    // Capture the *old* checklist-pile ids before replacing them — once
+    // they're deleted below, any plan/actual step rows still referencing
+    // them become orphaned (SQLite FKs aren't enforced here, so nothing
+    // cascades). Must read this before the delete, not after, or it
+    // captures the new ids instead of the stale ones that actually need
+    // cleaning up.
+    const staleCpIds = (
+      await tx
+        .select({ id: pilingChecklistPiles.id })
+        .from(pilingChecklistPiles)
+        .where(eq(pilingChecklistPiles.checklistId, checklistId))
+        .all()
+    ).map((r) => r.id);
+
+    // Wholesale replace — the server response is the full authoritative set
+    // for this checklist, not a delta.
+    await tx.delete(pilingChecklistPiles).where(eq(pilingChecklistPiles.checklistId, checklistId));
+
+    if (serverPiles.length) {
+      await tx.insert(pilingChecklistPiles).values(
+        serverPiles.map(
+          (cp): NewPilingChecklistPile => ({
+            id: cp.id,
+            checklistId,
+            pileId: cp.pile.id,
+            seqNo: cp.seq_no,
+            rigId: cp.rig.id,
+            craneId: cp.crane.id,
+            status: cp.status as NewPilingChecklistPile['status'],
+            createdAt: now,
+            serverUpdatedAt: cp.updated_at ?? null,
+          }),
+        ),
+      );
     }
-    for (const as of cp.actual_steps ?? []) {
-      actualStepRows.push({
-        id: as.id,
-        checklistPileId: cp.id,
-        stepId: as.step_id,
-        actualStart: as.actual_start,
-        actualEnd: as.actual_end,
-        remarks: as.remarks,
-        createdAt: now,
-        updatedAt: now,
-      });
+
+    const planStepRows: NewPilePlanStep[] = [];
+    const actualStepRows: NewPileActualStep[] = [];
+    for (const cp of serverPiles) {
+      for (const ps of cp.plan_steps ?? []) {
+        planStepRows.push({
+          id: ps.id,
+          checklistPileId: cp.id,
+          stepId: ps.step_id,
+          plannedStart: ps.planned_start,
+          plannedEnd: ps.planned_end,
+          durationMinutes: ps.duration_minutes,
+          bufferMinutes: ps.buffer_minutes,
+          assignedMachineId: ps.assigned_machine_id,
+          createdAt: now,
+        });
+      }
+      for (const as of cp.actual_steps ?? []) {
+        actualStepRows.push({
+          id: as.id,
+          checklistPileId: cp.id,
+          stepId: as.step_id,
+          actualStart: as.actual_start,
+          actualEnd: as.actual_end,
+          remarks: as.remarks,
+          createdAt: now,
+          updatedAt: now,
+          serverUpdatedAt: as.updated_at ?? null,
+        });
+      }
     }
-  }
 
-  // deletePlanStepsForChecklist/deleteActualStepsForChecklist (planRepository)
-  // aren't reusable here without a circular import — clean up using the
-  // stale checklist-pile ids captured above, then insert the fresh set.
-  for (const cpId of staleCpIds) {
-    await db.delete(pilePlanSteps).where(eq(pilePlanSteps.checklistPileId, cpId));
-    await db.delete(pileActualSteps).where(eq(pileActualSteps.checklistPileId, cpId));
-  }
+    // deletePlanStepsForChecklist/deleteActualStepsForChecklist (planRepository)
+    // aren't reusable here without a circular import — clean up using the
+    // stale checklist-pile ids captured above, then insert the fresh set.
+    for (const cpId of staleCpIds) {
+      await tx.delete(pilePlanSteps).where(eq(pilePlanSteps.checklistPileId, cpId));
+      await tx.delete(pileActualSteps).where(eq(pileActualSteps.checklistPileId, cpId));
+    }
 
-  if (planStepRows.length) await db.insert(pilePlanSteps).values(planStepRows);
-  if (actualStepRows.length) await db.insert(pileActualSteps).values(actualStepRows);
+    if (planStepRows.length) await tx.insert(pilePlanSteps).values(planStepRows);
+    if (actualStepRows.length) await tx.insert(pileActualSteps).values(actualStepRows);
+  });
+}
+
+/**
+ * Hard-delete locally cached checklist-piles the server has soft-deleted
+ * (Phase 3 delta pull's `deleted_checklist_pile_ids`), plus their plan/actual
+ * steps — the same cleanup hydrateChecklistFromServer already does for stale
+ * checklist-pile ids, reused here for ids the server explicitly reports as
+ * gone rather than ones this function's own wholesale-replace discovered.
+ */
+export async function purgeChecklistPilesByIds(checklistPileIds: string[]): Promise<void> {
+  if (!checklistPileIds.length) return;
+  const db = await initDb();
+  await db.delete(pilePlanSteps).where(inArray(pilePlanSteps.checklistPileId, checklistPileIds));
+  await db.delete(pileActualSteps).where(inArray(pileActualSteps.checklistPileId, checklistPileIds));
+  await db.delete(pilingChecklistPiles).where(inArray(pilingChecklistPiles.id, checklistPileIds));
 }
 
 // ─── Checklist Personnel ──────────────────────────────────────────────────────
@@ -390,8 +439,9 @@ export async function hydrateChecklistFromServer(serverChecklist: {
 export async function setChecklistPersonnel(
   checklistId: string,
   entries: NewPilingChecklistPersonnel[],
+  dbHandle?: Db | Tx,
 ): Promise<void> {
-  const db = await initDb();
+  const db = dbHandle ?? (await initDb());
   await db
     .delete(pilingChecklistPersonnel)
     .where(eq(pilingChecklistPersonnel.checklistId, checklistId));
@@ -413,4 +463,20 @@ export async function getChecklistPersonnelIds(
     .where(eq(pilingChecklistPersonnel.checklistId, checklistId))
     .all();
   return rows.map((r) => r.personnelId);
+}
+
+/**
+ * Get all role-assignment rows for a checklist (role/machineId/shiftSlot
+ * included) — used to rebuild a ChecklistPersonnelAssignment-shaped draft
+ * when reopening an existing plan for edit (Phase 3).
+ */
+export async function getChecklistPersonnel(
+  checklistId: string,
+): Promise<PilingChecklistPersonnel[]> {
+  const db = await initDb();
+  return db
+    .select()
+    .from(pilingChecklistPersonnel)
+    .where(eq(pilingChecklistPersonnel.checklistId, checklistId))
+    .all();
 }

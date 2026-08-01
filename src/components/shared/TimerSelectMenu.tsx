@@ -1,24 +1,11 @@
 // src/components/shared/TimerSelectMenu.tsx
 //
-// Rounded bottom-sheet 12-hour time picker: hour / minute / AM-PM wheels
-// over a gradient sheet that crossfades between a "day" and "night" theme
-// as the selected hour changes. Header shows the selected day and date.
-// A translucent pill sits behind the center row, and a single accent
-// "Confirm" button sits at the bottom.
-//
-// Usage:
-//   const [visible, setVisible] = useState(false);
-//   const [selectedTime, setSelectedTime] = useState(new Date());
-//
-//   <TimerSelectMenu
-//     visible={visible}
-//     onClose={() => setVisible(false)}
-//     onTimeSelect={(date) => setSelectedTime(date)}
-//     initialDate={selectedTime}
-//   />
+// Rounded, centered 12-hour time picker: hour / minute / AM-PM wheels over a
+// gradient sheet that crossfades between "day" and "night" as the hour
+// changes. 'duration' mode swaps this for a plain 0-23h/minute picker.
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { Modal, View, Text, StyleSheet, Pressable, Dimensions, FlatList } from 'react-native';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Modal, View, Text, StyleSheet, Pressable, Dimensions, FlatList, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useAnimatedRef,
@@ -32,21 +19,26 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import * as Haptics from 'expo-haptics';
+import { createAudioPlayer } from 'expo-audio';
 import { colors as themeColors } from '@theme/theme';
 
 const ITEM_HEIGHT = 84;
 const VISIBLE_ROWS = 3;
 const HALF = Math.floor(VISIBLE_ROWS / 2);
 
+// Infinite columns repeat their value array this many times and recenter
+// near either buffer edge — enough that a fling can't outrun a recenter.
+const REPEAT_COUNT = 21;
+const MIDDLE_COPY = Math.floor(REPEAT_COUNT / 2);
+
+// Caps the tick sound's rate (~25/sec) — a fast fling crosses rows far
+// faster than that, and without this cap the backlog of queued tick calls
+// keeps clicking after the wheel has already stopped.
+const MIN_TICK_INTERVAL_MS = 40;
+
 type WheelListItem = { label: string; index: number };
 
-const SHEET_MAX_HEIGHT = Dimensions.get('window').height * 0.6;
-
-// Day (AM) theme: near-black fading into blue.
-// Night (PM) theme: blue fading into grey.
-// Tweak these to reskin — e.g. swap in your theme's colors.accent for a
-// branded look instead of the reference's literal blue.
+// Day (AM) → night (PM) gradient stops — intentionally not theme colors.
 const amTop = '#040404';
 const amBottom = '#007BE5';
 const pmTop = '#007BE5';
@@ -80,8 +72,14 @@ interface TimerSelectMenuProps {
   embedded?: boolean;
 }
 
-function tick() {
-  Haptics.selectionAsync();
+// One shared player for every wheel's tick; volume is set per-play so fast
+// flings tick louder than a settling scroll.
+const tickPlayer = createAudioPlayer(require('../../../assets/sounds/tick.wav'));
+
+function tick(volume: number) {
+  tickPlayer.volume = volume;
+  tickPlayer.seekTo(0);
+  tickPlayer.play();
 }
 
 interface WheelItemProps {
@@ -115,24 +113,56 @@ function WheelItem({ label, index, scrollY, fontSize, textColor }: WheelItemProp
 interface WheelColumnProps {
   values: string[];
   selectedIndex: number;
-  onSelect: (index: number) => void;
+  /** `deltaCycles`: signed wrap count since last selection (0 for non-infinite
+   * columns). Only the hour column uses it, to auto-flip AM/PM. */
+  onSelect: (index: number, deltaCycles?: number) => void;
   width: number;
   fontSize: number;
   textColor: string;
+  /** Loops past both ends instead of stopping — used for the hour/minute wheels. */
+  infinite?: boolean;
 }
 
-function WheelColumn({ values, selectedIndex, onSelect, width, fontSize, textColor }: WheelColumnProps) {
+function WheelColumn({ values, selectedIndex, onSelect, width, fontSize, textColor, infinite = false }: WheelColumnProps) {
   const scrollRef = useAnimatedRef<FlatList<WheelListItem>>();
   const len = values.length;
 
-  // A finite list keeps the picker light: only the actual hour/minute/period
-  // values exist, with no duplicated rows or infinite-scroll recentering.
   const fullList = useMemo(() => {
-    return values.map((label, index) => ({ label, index }));
-  }, [values, len]);
+    const copies = infinite ? REPEAT_COUNT : 1;
+    const list: WheelListItem[] = [];
+    for (let c = 0; c < copies; c++) {
+      for (let i = 0; i < len; i++) {
+        list.push({ label: values[i], index: c * len + i });
+      }
+    }
+    return list;
+  }, [values, len, infinite]);
 
-  const scrollY = useSharedValue(selectedIndex * ITEM_HEIGHT);
-  const lastTicked = useSharedValue(selectedIndex);
+  const initialExpandedIndex = infinite ? MIDDLE_COPY * len + selectedIndex : selectedIndex;
+
+  const scrollY = useSharedValue(initialExpandedIndex * ITEM_HEIGHT);
+  const lastTicked = useSharedValue(initialExpandedIndex);
+  const lastExpandedIndex = useSharedValue(initialExpandedIndex);
+  const prevScrollY = useSharedValue(initialExpandedIndex * ITEM_HEIGHT);
+  const prevScrollT = useSharedValue(0);
+  const lastTickTime = useSharedValue(0);
+
+  // Distinguishes "parent echoed our own scroll" (skip re-scroll — may rest
+  // in any buffer copy) from a real external change. `null` forces one
+  // corrective scrollToOffset on mount, since initialScrollIndex isn't
+  // reliable at this list size.
+  const lastReportedIndexRef = useRef<number | null>(null);
+
+  function handleColumnSelect(index: number, deltaCycles: number, settleTo: number) {
+    lastReportedIndexRef.current = index;
+    // Only jump when settleTo is a real target (-1 means the native rest
+    // position was already correct) — snapping unconditionally, even to the
+    // same spot it's already at, produced a visible little "push" on settle.
+    if (settleTo >= 0) {
+      scrollRef.current?.scrollToOffset({ offset: settleTo * ITEM_HEIGHT, animated: false });
+    }
+    onSelect(index, deltaCycles);
+  }
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (e) => {
@@ -140,22 +170,67 @@ function WheelColumn({ values, selectedIndex, onSelect, width, fontSize, textCol
       const idx = Math.round(e.contentOffset.y / ITEM_HEIGHT);
       if (idx !== lastTicked.value) {
         lastTicked.value = idx;
-        scheduleOnRN(tick);
+
+        // Faster scroll → louder tick. Computed here (not the native
+        // `velocity` field) since that's unreliable on Android.
+        const now = performance.now();
+        const dt = now - prevScrollT.value;
+        const dy = e.contentOffset.y - prevScrollY.value;
+        const velocity = dt > 0 ? Math.abs(dy / dt) : 0;
+        prevScrollY.value = e.contentOffset.y;
+        prevScrollT.value = now;
+        const volume = interpolate(velocity, [0, 2.5], [0.35, 1], Extrapolation.CLAMP);
+
+        // Cap the tick rate (~25/sec) so a fast fling never queues up more
+        // JS-thread audio calls than can be drained in real time — otherwise
+        // the backlog keeps clicking after the wheel has already stopped.
+        if (now - lastTickTime.value >= MIN_TICK_INTERVAL_MS) {
+          lastTickTime.value = now;
+          // scheduleOnRN(tick, volume);
+        }
       }
     },
     onMomentumEnd: (e) => {
-      const index = Math.round(e.contentOffset.y / ITEM_HEIGHT);
-      scheduleOnRN(onSelect, Math.max(0, Math.min(len - 1, index)));
+      const rawIndex = Math.round(e.contentOffset.y / ITEM_HEIGHT);
+      const clampedIndex = infinite ? rawIndex : Math.max(0, Math.min(len - 1, rawIndex));
+      const realIndex = infinite ? ((clampedIndex % len) + len) % len : clampedIndex;
+
+      let deltaCycles = 0;
+      let settleIndex = clampedIndex;
+      if (infinite) {
+        deltaCycles = Math.round((clampedIndex - lastExpandedIndex.value) / len);
+        lastExpandedIndex.value = clampedIndex;
+
+        // Recenter near either buffer edge — via handleColumnSelect's
+        // JS-thread scrollToOffset, since a UI-thread scrollTo here desyncs
+        // VirtualizedList's render window and leaves the column blank.
+        const copy = Math.floor(clampedIndex / len);
+        if (copy <= 1 || copy >= REPEAT_COUNT - 2) {
+          settleIndex = MIDDLE_COPY * len + realIndex;
+          lastExpandedIndex.value = settleIndex;
+        }
+      }
+
+      // Only correct the rest position when it actually drifted off the
+      // exact row grid (or a recenter is needed) — jumping unconditionally,
+      // even back to the same spot, causes a visible little "push" on settle.
+      const alreadyAligned = Math.abs(e.contentOffset.y - settleIndex * ITEM_HEIGHT) < 0.5;
+      const settleTo = alreadyAligned ? -1 : settleIndex;
+
+      scheduleOnRN(handleColumnSelect, realIndex, deltaCycles, settleTo);
     },
   });
 
-  // Keep the wheel synced when the value is changed from outside
-  // (e.g. AM/PM toggle nudging the hour column).
+  // Re-sync on external changes (sheet reopening, AM/PM nudging the hour
+  // column) — not on infinite columns' own echoed selection. First run snaps
+  // instantly; later ones animate.
   useEffect(() => {
-    scrollRef.current?.scrollToOffset({
-      offset: selectedIndex * ITEM_HEIGHT,
-      animated: true,
-    });
+    if (infinite && lastReportedIndexRef.current === selectedIndex) return;
+    const isInitialMount = lastReportedIndexRef.current === null;
+    lastReportedIndexRef.current = selectedIndex;
+    const offset = infinite ? (MIDDLE_COPY * len + selectedIndex) * ITEM_HEIGHT : selectedIndex * ITEM_HEIGHT;
+    scrollRef.current?.scrollToOffset({ offset, animated: !isInitialMount });
+    if (infinite) lastExpandedIndex.value = MIDDLE_COPY * len + selectedIndex;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex]);
 
@@ -174,11 +249,10 @@ function WheelColumn({ values, selectedIndex, onSelect, width, fontSize, textCol
         snapToInterval={ITEM_HEIGHT}
         decelerationRate="fast"
         getItemLayout={(_, index) => ({ length: ITEM_HEIGHT, offset: ITEM_HEIGHT * index, index })}
-        initialScrollIndex={selectedIndex}
+        initialScrollIndex={initialExpandedIndex}
         initialNumToRender={VISIBLE_ROWS + 2}
         maxToRenderPerBatch={VISIBLE_ROWS + 2}
         windowSize={5}
-        contentOffset={{ x: 0, y: selectedIndex * ITEM_HEIGHT }}
         contentContainerStyle={{ paddingVertical: ITEM_HEIGHT * HALF }}
       />
     </View>
@@ -238,12 +312,28 @@ export default function TimerSelectMenu({
     opacity: gradientProgress.value,
   }));
 
-  const displayHour12 = ((hour24 + 11) % 12) + 1; // 1-12 (time mode)
+  // Entrance: fade + scale in place — sliding reads wrong for something
+  // that's supposed to simply appear where it sits.
+  const centerProgress = useSharedValue(0);
 
+  useEffect(() => {
+    if (embedded) return;
+    centerProgress.value = withTiming(visible ? 1 : 0, { duration: 220 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, embedded]);
+
+  const entranceStyle = useAnimatedStyle(() => ({
+    opacity: centerProgress.value,
+    transform: [{ scale: interpolate(centerProgress.value, [0, 1], [0.92, 1]) }],
+  }));
+
+  // Hour wheel starts at "12" so the array's cycle boundary lands between
+  // "11" and "12" (12 starts a half-day, doesn't end one) — index 0 ==
+  // hour24 % 12.
   const hourValues = isDuration
     ? Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
-    : Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
-  const hourIndex = isDuration ? hour24 : displayHour12 - 1;
+    : ['12', ...Array.from({ length: 11 }, (_, i) => String(i + 1).padStart(2, '0'))];
+  const hourIndex = isDuration ? hour24 : hour24 % 12;
   const minuteValues = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
 
   const headerLabel = useMemo(() => {
@@ -252,14 +342,19 @@ export default function TimerSelectMenu({
     return { weekday, date };
   }, [dayDate]);
 
-  function commitHour(idx: number) {
+  function commitHour(idx: number, deltaCycles = 0) {
     if (isDuration) {
       setHour24(idx);
       if (embedded) onDurationSelect?.(idx * 60 + minute);
       return;
     }
-    const newHour12 = idx + 1; // 1-12
-    setHour24((newHour12 % 12) + (isPM ? 12 : 0));
+    // Odd wrap count flips AM/PM (± 12h); even count cancels out.
+    setHour24((prevHour24) => {
+      const currentIsPM = prevHour24 >= 12;
+      const flips = ((deltaCycles % 2) + 2) % 2;
+      const newIsPM = flips === 1 ? !currentIsPM : currentIsPM;
+      return idx + (newIsPM ? 12 : 0);
+    });
   }
 
   function commitMinute(idx: number) {
@@ -269,7 +364,7 @@ export default function TimerSelectMenu({
 
   function commitPeriod(idx: number) {
     // idx 0 = AM, 1 = PM
-    setHour24((displayHour12 % 12) + (idx === 1 ? 12 : 0));
+    setHour24((hour24 % 12) + (idx === 1 ? 12 : 0));
   }
 
   function handleDone() {
@@ -285,20 +380,29 @@ export default function TimerSelectMenu({
     onClose();
   }
 
-  const textColor = isDuration ? themeColors.textPrimary : '#ffffff';
+  const textColor = isDuration ? themeColors.textPrimary : themeColors.white;
+
+  const { height: windowHeight } = useWindowDimensions();
+  const sheetMaxHeight = windowHeight * 0.6;
 
   const content = (
-    <View style={[styles.sheet, isDuration && styles.sheetDuration, embedded && styles.sheetEmbedded]}>
+    <Animated.View
+      style={[
+        styles.sheet,
+        { maxHeight: sheetMaxHeight },
+        isDuration && styles.sheetDuration,
+        embedded && styles.sheetEmbedded,
+        !embedded && entranceStyle,
+      ]}
+    >
       {!isDuration && (
         <>
-          {/* Base (day) gradient, always present */}
           <LinearGradient
             colors={[amTop, amBottom]}
             style={StyleSheet.absoluteFill}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
           />
-          {/* Night gradient fades in on top as the hour crosses noon */}
           <Animated.View style={[StyleSheet.absoluteFill, sheetGradientStyle]}>
             <LinearGradient
               colors={[pmTop, pmBottom]}
@@ -309,8 +413,6 @@ export default function TimerSelectMenu({
           </Animated.View>
         </>
       )}
-
-      {!embedded && <View style={[styles.grabber, isDuration && styles.grabberDark]} />}
 
       <View style={styles.header}>
         {isDuration ? (
@@ -325,13 +427,12 @@ export default function TimerSelectMenu({
       </View>
 
       <View style={styles.pickerRow}>
-        {/* Translucent selection pill behind the center row, spanning
-            the full width so all columns read as one continuous strip. */}
+        {/* Translucent pill behind the center row, spanning all columns. */}
         <View pointerEvents="none" style={[styles.selectionPill, isDuration && styles.selectionPillDark]} />
 
-        <WheelColumn values={hourValues} selectedIndex={hourIndex} onSelect={commitHour} width={90} fontSize={32} textColor={textColor} />
+        <WheelColumn values={hourValues} selectedIndex={hourIndex} onSelect={commitHour} width={90} fontSize={32} textColor={textColor} infinite />
         <Text style={[styles.colon, isDuration && styles.colonDark]}>:</Text>
-        <WheelColumn values={minuteValues} selectedIndex={minute} onSelect={commitMinute} width={90} fontSize={32} textColor={textColor} />
+        <WheelColumn values={minuteValues} selectedIndex={minute} onSelect={commitMinute} width={90} fontSize={32} textColor={textColor} infinite />
         {!isDuration && (
           <WheelColumn
             values={['AM', 'PM']}
@@ -344,8 +445,7 @@ export default function TimerSelectMenu({
         )}
       </View>
 
-      {/* Embedded usage reports live via onDurationSelect as the wheels move —
-          the host owns its own submit action, so no internal button here. */}
+      {/* Embedded host owns its own submit action via onDurationSelect. */}
       {!embedded && (
         <View style={styles.footer}>
           <Pressable style={[styles.doneBtn, isDuration && styles.doneBtnAccent]} onPress={handleDone} hitSlop={10}>
@@ -353,15 +453,17 @@ export default function TimerSelectMenu({
           </Pressable>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 
   if (embedded) return content;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose} statusBarTranslucent>
+    <Modal visible={visible} animationType="none" transparent onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose} />
-      {content}
+      <View style={styles.centerWrap} pointerEvents="box-none">
+        {content}
+      </View>
     </Modal>
   );
 }
@@ -370,15 +472,27 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(10,10,20,0.45)',
-  },
-  sheet: {
     position: 'absolute',
+    top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    maxHeight: SHEET_MAX_HEIGHT,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+  },
+  centerWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  sheet: {
+    position: 'relative',
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 28,
     overflow: 'hidden',
     paddingBottom: 28,
   },
@@ -389,18 +503,6 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderRadius: 20,
     paddingBottom: 16,
-  },
-  grabber: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.35)',
-    alignSelf: 'center',
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  grabberDark: {
-    backgroundColor: 'rgba(28,28,46,0.15)',
   },
   header: {
     flexDirection: 'row',
@@ -423,7 +525,7 @@ const styles = StyleSheet.create({
   headerDate: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
+    color: themeColors.white,
   },
   headerDateDark: {
     fontSize: 15,
@@ -455,13 +557,13 @@ const styles = StyleSheet.create({
   },
   itemText: {
     fontWeight: '700',
-    color: '#ffffff',
+    color: themeColors.white,
     fontVariant: ['tabular-nums'],
   },
   colon: {
     fontSize: 32,
     fontWeight: '700',
-    color: '#ffffff',
+    color: themeColors.white,
     marginHorizontal: 2,
   },
   colonDark: {
@@ -472,7 +574,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   doneBtn: {
-    backgroundColor: '#ffffff',
+    backgroundColor: themeColors.white,
     paddingVertical: 15,
     borderRadius: 999,
     alignItems: 'center',
@@ -483,7 +585,7 @@ const styles = StyleSheet.create({
   doneText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#000000',
+    color: themeColors.black,
   },
   doneTextLight: {
     color: themeColors.white,

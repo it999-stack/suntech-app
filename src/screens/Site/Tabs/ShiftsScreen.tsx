@@ -24,7 +24,7 @@ export default function ShiftsScreen() {
 
   return (
     <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-      <SafeAreaView style={styles.flex} edges={['top']}>
+      <SafeAreaView style={styles.flex} edges={[]}>
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
             <Pressable onPress={() => navigation.goBack()} hitSlop={12}>

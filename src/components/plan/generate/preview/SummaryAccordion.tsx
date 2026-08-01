@@ -19,6 +19,8 @@ interface SummaryAccordionProps {
   tone?: 'default' | 'warning';
   /** If provided, shows an "Edit" pill that jumps back to that wizard step. */
   onEdit?: () => void;
+  /** Whether to start open. Defaults to false (matches Accordion's own default). */
+  defaultOpen?: boolean;
   children: React.ReactNode;
 }
 
@@ -28,10 +30,12 @@ export default function SummaryAccordion({
   summary,
   tone = 'default',
   onEdit,
+  defaultOpen,
   children,
 }: SummaryAccordionProps) {
   return (
     <Accordion
+      defaultOpen={defaultOpen}
       header={
         <View style={styles.headerRow}>
           <View style={styles.headerIcon}>{icon}</View>

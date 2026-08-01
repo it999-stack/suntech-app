@@ -122,11 +122,20 @@ export async function getChecklistsForSync(
       shift_type_id: cl.shiftTypeId ?? undefined,
       plan_start_time: cl.planStartTime ?? undefined,
       plan_end_time: cl.planEndTime ?? undefined,
-      supervisor_id: cl.supervisorId ?? undefined,
-      supervisor_id_2: cl.supervisorId2 ?? undefined,
       notes: cl.notes ?? undefined,
       status: cl.status,
-      personnel: personnel.map((p) => ({ id: p.id, personnel_id: p.personnelId })),
+      // Rows without a role (shouldn't exist post-hydrate, but the local
+      // column stays nullable since SQLite can't add NOT NULL retroactively)
+      // are dropped rather than sent — the server's role column is NOT NULL.
+      personnel: personnel
+        .filter((p): p is typeof p & { role: string } => !!p.role)
+        .map((p) => ({
+          id: p.id,
+          personnel_id: p.personnelId,
+          role: p.role,
+          machine_id: p.machineId,
+          shift_slot: p.shiftSlot,
+        })),
       piles: piles.map((cp) => ({
         id: cp.id,
         pile_id: cp.pileId,
@@ -134,6 +143,10 @@ export async function getChecklistsForSync(
         rig_id: cp.rigId,
         crane_id: cp.craneId,
         status: cp.status,
+        // Verbatim passthrough of the server's own last-known updated_at —
+        // never the device's edit clock (cp.updatedAt), which drifts against
+        // the server's clock and causes false optimistic-concurrency conflicts.
+        updated_at: cp.serverUpdatedAt ?? undefined,
       })),
       plan_steps: planSteps.map((ps) => ({
         id: ps.id,
@@ -152,6 +165,10 @@ export async function getChecklistsForSync(
         actual_start: as.actualStart ?? undefined,
         actual_end: as.actualEnd ?? undefined,
         remarks: as.remarks ?? undefined,
+        // Verbatim passthrough of the server's own last-known updated_at —
+        // never the device's edit clock (as.updatedAt), which drifts against
+        // the server's clock and causes false optimistic-concurrency conflicts.
+        updated_at: as.serverUpdatedAt ?? undefined,
       })),
       machine_events: machineEvents.map((e) => ({
         id: e.id,

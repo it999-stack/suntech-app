@@ -3,21 +3,17 @@
 // Shows all daily checklists for this site, most-recent first, loaded from SQLite.
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Calendar, ChevronRight, ChevronLeft, Trash2 } from 'lucide-react-native';
-import { eq } from 'drizzle-orm';
+import { Calendar, ChevronRight, ChevronLeft } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { HomeStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
 import { getChecklistsBySite, getChecklistPileTimings } from '@repositories/checklistRepository';
-import { deletePlanStepsForChecklist, deleteActualStepsForChecklist } from '@repositories/planRepository';
-import { initDb } from '@db/client';
-import { pilingDailyChecklists, pilingChecklistPiles } from '@db/schema';
 import EmptyState from '@/components/shared/EmptyState';
 import {
   computeChecklistProgress,
@@ -26,6 +22,7 @@ import {
   type DisplayStatus,
 } from '@utils/checklistProgress';
 import { planEndTime } from '@app-types/plan';
+import { formatRelativeDayLabel, toLocalDateStr } from '@utils/formatTime';
 
 type HomeNav = NativeStackNavigationProp<HomeStackParamList, 'PlanHistory'>;
 
@@ -39,22 +36,6 @@ type ChecklistSummary = {
   varianceLabel: string | null;
   status: DisplayStatus;
 };
-
-function toLocalDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function formatDisplayDate(dateStr: string): string {
-  const today = toLocalDateStr(new Date());
-  const yesterday = toLocalDateStr(new Date(Date.now() - 86400000));
-  if (dateStr === today) return 'Today';
-  if (dateStr === yesterday) return 'Yesterday';
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-}
 
 function statusConfig(status: DisplayStatus) {
   switch (status) {
@@ -84,7 +65,6 @@ export default function PlanHistoryScreen() {
 
   const [summaries, setSummaries] = useState<ChecklistSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function loadSummaries() {
     if (!user?.siteId) {
@@ -107,7 +87,11 @@ export default function PlanHistoryScreen() {
           return {
             id: cl.id,
             date: cl.date,
-            displayDate: formatDisplayDate(cl.date),
+            displayDate: formatRelativeDayLabel(cl.date, {
+              neighbor: 'yesterday',
+              locale: 'en-IN',
+              dateFormatOptions: { day: 'numeric', month: 'short', year: 'numeric' },
+            }),
             pileCount: timings.length,
             completionPercent: progress.completionPercent,
             completedCount: progress.completedCount,
@@ -120,37 +104,6 @@ export default function PlanHistoryScreen() {
     } finally {
       setLoading(false);
     }
-  }
-
-  // DEV ONLY — delete a checklist and all its related data
-  async function handleDeleteChecklist(checklistId: string, displayDate: string) {
-    Alert.alert(
-      '[DEV] Delete Plan',
-      `Delete the plan for "${displayDate}" and all its steps?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setDeletingId(checklistId);
-            try {
-              const db = await initDb();
-              await deleteActualStepsForChecklist(checklistId);
-              await deletePlanStepsForChecklist(checklistId);
-              await db.delete(pilingChecklistPiles).where(eq(pilingChecklistPiles.checklistId, checklistId));
-              await db.delete(pilingDailyChecklists).where(eq(pilingDailyChecklists.id, checklistId));
-              setSummaries((prev) => prev.filter((s) => s.id !== checklistId));
-            } catch (err) {
-              console.error('[DEV] Failed to delete checklist:', err);
-              Alert.alert('Error', 'Failed to delete. Check console.');
-            } finally {
-              setDeletingId(null);
-            }
-          },
-        },
-      ],
-    );
   }
 
   useEffect(() => {
@@ -208,21 +161,7 @@ export default function PlanHistoryScreen() {
                         <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
                           <Text style={[styles.statusBadgeText, { color: st.fg }]}>{st.label}</Text>
                         </View>
-                        {/* DEV ONLY — remove before release */}
-                        <Pressable
-                          hitSlop={8}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            handleDeleteChecklist(cl.id, cl.displayDate);
-                          }}
-                          style={styles.deleteBtn}
-                          disabled={deletingId === cl.id}
-                        >
-                          {deletingId === cl.id
-                            ? <ActivityIndicator size={14} color={colors.danger} />
-                            : <Trash2 size={16} color={colors.danger} />
-                          }
-                        </Pressable>
+                        
                         <ChevronRight size={18} color={colors.textSecondary} />
                       </View>
                     </View>
@@ -292,14 +231,6 @@ const styles = StyleSheet.create({
   statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
   statusBadgeText: { ...typography.caption, fontWeight: '700' },
   pressed: { opacity: 0.8 },
-  deleteBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.sm,
-    backgroundColor: 'rgba(239,68,68,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   progressTrack: {
     height: 5,
     borderRadius: 3,

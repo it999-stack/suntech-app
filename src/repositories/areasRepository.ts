@@ -1,7 +1,7 @@
 // src/repositories/areasRepository.ts
 // Local CRUD helpers for site work areas.
 
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import { pilingAreas, type NewPilingArea, type PilingArea } from '@db/schema';
 
@@ -50,4 +50,15 @@ export async function deactivateArea(areaId: string): Promise<void> {
     .update(pilingAreas)
     .set({ isActive: false, updatedAt: Date.now() })
     .where(eq(pilingAreas.id, areaId));
+}
+
+/**
+ * Hard-delete locally cached areas the server has soft-deleted. Currently a
+ * no-op in practice — no delete endpoint exists for areas server-side yet —
+ * but wired for when one does (Phase 3 delta-sync groundwork).
+ */
+export async function deleteAreasByIds(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await initDb();
+  await db.delete(pilingAreas).where(inArray(pilingAreas.id, ids));
 }

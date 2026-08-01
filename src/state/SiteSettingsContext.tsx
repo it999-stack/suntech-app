@@ -4,10 +4,8 @@
 // This context is read-only — the server is the source of truth.
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Shift, NonWorkingWindow, DiaDepthTemplate } from '@app-types/siteSettings';
+import { Shift, NonWorkingWindow } from '@app-types/siteSettings';
 import type { NonWorkingWindowBehavior } from '@db/schema';
-import { getDimensionsBySite } from '@repositories/dimensionsRepository';
-import { getDurationTemplatesBySite } from '@repositories/durationTemplatesRepository';
 import { getAllShiftsWithWindows, type ShiftWithWindows } from '@repositories/shiftsRepository';
 import { useAuthStore } from '@store/authStore';
 
@@ -20,7 +18,6 @@ function timeToMinutes(t: string): number {
 type SiteSettingsContextValue = {
   shifts: Shift[];
   windows: NonWorkingWindow[];
-  templates: DiaDepthTemplate[];
   /** Get windows for a specific shift (read-only). */
   windowsForShift: (shiftId: string) => NonWorkingWindow[];
   /** Re-load all site settings from local SQLite. Call after a sync completes. */
@@ -32,7 +29,6 @@ const SiteSettingsContext = createContext<SiteSettingsContextValue | undefined>(
 export function SiteSettingsProvider({ children }: { children: React.ReactNode }) {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [windows, setWindows] = useState<NonWorkingWindow[]>([]);
-  const [templates, setTemplates] = useState<DiaDepthTemplate[]>([]);
   const user = useAuthStore((state) => state.user);
 
   // ─── Load from SQLite ────────────────────────────────────────────────────
@@ -74,33 +70,6 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
       setShifts([]);
       setWindows([]);
     }
-
-    try {
-      const [dimRows, durationTemplates] = await Promise.all([
-        getDimensionsBySite(siteId),
-        getDurationTemplatesBySite(siteId),
-      ]);
-      const stepCountsByDimensionId = new Map<string, number>();
-
-      for (const template of durationTemplates) {
-        stepCountsByDimensionId.set(
-          template.dimensionId,
-          (stepCountsByDimensionId.get(template.dimensionId) ?? 0) + 1,
-        );
-      }
-
-      setTemplates(
-        dimRows.map((d) => ({
-          id: d.id,
-          dia: d.dia,
-          depth: d.depth,
-          stepCount: stepCountsByDimensionId.get(d.id) ?? 0,
-        }))
-      );
-    } catch (err) {
-      console.warn('[SiteSettings] Failed to load dimensions from DB:', err);
-      setTemplates([]);
-    }
   };
 
   useEffect(() => {
@@ -119,11 +88,10 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
     () => ({
       shifts,
       windows,
-      templates,
       windowsForShift,
       reloadFromDb,
     }),
-    [shifts, windows, templates, windowsForShift]
+    [shifts, windows, windowsForShift]
   );
 
   return <SiteSettingsContext.Provider value={value}>{children}</SiteSettingsContext.Provider>;

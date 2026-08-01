@@ -1,41 +1,73 @@
 // src/screens/HomeScreen.tsx
-//
-// Dynamic home screen. On mount, loads today's checklist from SQLite to
-// determine whether a plan exists. Shows real user/site data from auth store
-// and resolves supervisor names from local personnel data.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { CommonActions } from '@react-navigation/native';
-import { ClipboardList, Signpost, Settings, Sparkles, Pencil, CalendarClock } from 'lucide-react-native';
+import { NotebookPen, Settings, Sparkles, Pencil, Cylinder } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
-import StatPill from '@components/shared/StatPill';
+import ProgressRing from '@components/shared/ProgressRing';
+import GradientTile from '@components/shared/GradientTile';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { usePlan } from '@state/PlanContext';
 import GeneratePlanCalendarSheet from '@components/plan/generate/GeneratePlanCalendarSheet';
+import WorkingDateSheet from '@components/shared/WorkingDateSheet';
 import { useAuthStore } from '@store/authStore';
+import { useWorkingDate } from '@store/workingDateStore';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
+import { getChecklistPersonnel } from '@repositories/checklistRepository';
 import { formatTime } from '@utils/formatTime';
-import type { PilingSitePersonnel } from '@db/schema';
+import { derivePileStatus } from '@utils/helpers';
+import type { PilingSitePersonnel, PilingChecklistPersonnel } from '@db/schema';
 
-function toLocalDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+function getDateParts(dateStr: string): { day: string; month: string } {
+  const d = new Date(`${dateStr}T00:00:00`);
+  return {
+    day: d.toLocaleDateString('en-IN', { day: '2-digit' }),
+    month: d.toLocaleDateString('en-IN', { month: 'short' }).toUpperCase(),
+  };
 }
 
-function GreetingHeader({ userName, siteName }: { userName: string; siteName: string }) {
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+function DateBadge({ dateStr, onPress }: { dateStr: string; onPress: () => void }) {
+  const { day, month } = getDateParts(dateStr);
   return (
-    <View style={styles.greetingBlock}>
-      <Text style={styles.eyebrow}>{greeting}</Text>
-      <Text style={styles.helloText}>Hello, {userName} 👋</Text>
-      <Text style={styles.siteText}>{siteName}</Text>
+    <Pressable hitSlop={10} onPress={onPress}>
+      <View style={styles.dateBadge}>
+        <Text style={styles.dateBadgeDay}>{day}</Text>
+        <Text style={styles.dateBadgeMonth}>{month}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function HeaderArea({
+  userName,
+  siteName,
+  workingDate,
+  onSettingsPress,
+  onDatePress,
+}: {
+  userName: string;
+  siteName: string;
+  workingDate: string;
+  onSettingsPress: () => void;
+  onDatePress: () => void;
+}) {
+  return (
+    <View style={styles.headerRow}>
+      <View style={styles.greetingBlock}>
+        <Text style={styles.helloText}>Hello, {userName}</Text>
+        <Text style={styles.siteText}>{siteName}</Text>
+      </View>
+      <View style={styles.headerRightCol}>
+        <Pressable hitSlop={10} onPress={onSettingsPress}>
+          <View style={styles.settingsBtn}>
+            <Settings size={18} color={colors.textSecondary} />
+          </View>
+        </Pressable>
+        <DateBadge dateStr={workingDate} onPress={onDatePress} />
+      </View>
     </View>
   );
 }
@@ -43,16 +75,15 @@ function GreetingHeader({ userName, siteName }: { userName: string; siteName: st
 function NoPlanCard({ onGenerate }: { onGenerate: () => void }) {
   return (
     <GlassCard style={styles.planCard} innerStyle={styles.noPlanPad}>
-      <View style={styles.noPlanIconWrap}>
-        <Sparkles size={24} color={colors.accent} />
+      <View style={styles.noPlanHeaderRow}>
+        <Text style={styles.noPlanTitle}>No plan generated yet</Text>
+        <Sparkles size={20} color={colors.accent} />
       </View>
-      <Text style={styles.noPlanTitle}>No plan generated yet</Text>
       <Text style={styles.noPlanBody}>
-        Build today's 24-hour plan: pick your piles, assign a rig and crane to
-        each, choose a supervisor, and set a start time.
+        Pick your piles, assign a rig and crane, choose a supervisor, and set a start time.
       </Text>
       <Pressable style={styles.primaryBtn} onPress={onGenerate}>
-        <Text style={styles.primaryBtnText}>Generate Today's Plan</Text>
+        <Text style={styles.primaryBtnText}>Generate today's plan</Text>
       </Pressable>
     </GlassCard>
   );
@@ -64,8 +95,6 @@ function ActivePlanCard({
   supervisor,
   planStartTime,
   completed,
-  inProgress,
-  delayed,
   totalSteps,
 }: {
   onView: () => void;
@@ -73,42 +102,50 @@ function ActivePlanCard({
   supervisor: string;
   planStartTime: string | null;
   completed: number;
-  inProgress: number;
-  delayed: number;
   totalSteps: number;
 }) {
-  const total = totalSteps || 1;
+  const total = Math.max(totalSteps, 1);
   const pct = Math.round((completed / total) * 100);
 
   return (
     <GlassCard style={styles.planCard} innerStyle={{ padding: spacing.lg }}>
+      {/* Header */}
       <View style={styles.planHeaderRow}>
-        <Text style={styles.planTitle}>Today's Plan</Text>
-        <View style={styles.planHeaderRight}>
-          <Pressable onPress={onEdit} hitSlop={10} style={styles.editBtn}>
-            <Pencil size={15} color={colors.textSecondary} />
-          </Pressable>
-          <View style={styles.pctBadge}>
-            <Text style={styles.pctText}>{pct}%</Text>
-          </View>
+        <View>
+          <Text style={styles.planTitle}>Today's Plan</Text>
+          <Text style={styles.planMeta}>
+            Started {formatTime(planStartTime)}
+          </Text>
         </View>
-      </View>
-      <Text style={styles.planMeta}>
-        {supervisor} · Started {formatTime(planStartTime)}
-      </Text>
 
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct}%` }]} />
-      </View>
-
-      <View style={styles.statsRow}>
-        <StatPill label="Completed" value={completed} tone="success" />
-        <StatPill label="In Progress" value={inProgress} tone="neutral" />
-        <StatPill label="Delayed" value={delayed} tone="warning" />
+        <Pressable
+          onPress={onEdit}
+          hitSlop={10}
+          style={styles.editCircle}
+        >
+          <Pencil size={16} color={colors.white} />
+        </Pressable>
       </View>
 
+      {/* Progress */}
+      <View style={styles.progressSection}>
+        <ProgressRing percent={pct}>
+          <Text style={styles.progressPercent}>{pct}%</Text>
+          <Text style={styles.progressLabel}>Overall</Text>
+        </ProgressRing>
+
+        <Text style={styles.progressTitle}>
+          Keep recording actuals
+        </Text>
+
+        <Text style={styles.progressSubtitle}>
+          Update today's progress by filling actual values.
+        </Text>
+      </View>
+
+      {/* CTA */}
       <Pressable style={styles.primaryBtn} onPress={onView}>
-        <Text style={styles.primaryBtnText}>Fill Actuals</Text>
+        <Text style={styles.primaryBtnText}>Update progress</Text>
       </Pressable>
     </GlassCard>
   );
@@ -117,15 +154,15 @@ function ActivePlanCard({
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
-  const { checklist, planStatus, actualSteps, planSteps, loadChecklist, isLoading } = usePlan();
-  const today = toLocalDateStr(new Date());
+  const { checklist, planStatus, actualSteps, planSteps, checklistPiles, loadChecklist, isLoading } = usePlan();
+  const workingDate = useWorkingDate();
 
-  // Load today's checklist on mount
+  // Load the working date's checklist on mount (or whenever the working date changes)
   useEffect(() => {
     if (user?.siteId) {
-      loadChecklist(user.siteId, today);
+      loadChecklist(user.siteId, workingDate);
     }
-  }, [user?.siteId, today, loadChecklist]);
+  }, [user?.siteId, workingDate, loadChecklist]);
 
   // Load personnel to resolve supervisor names
   const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
@@ -135,29 +172,46 @@ export default function HomeScreen() {
     }
   }, [user?.siteId]);
 
-  // Resolve supervisor name from ID
-  const supervisorName = useMemo(() => {
-    if (!checklist?.supervisorId) return 'Supervisor';
-    const p = personnel.find((p) => p.id === checklist.supervisorId);
-    return p?.name ?? 'Supervisor';
-  }, [checklist?.supervisorId, personnel]);
+  // Load this checklist's role assignments, to resolve the Shift Incharge
+  // (Shift 1) name shown on the home card — the closest equivalent to what
+  // "supervisor" used to mean before the multi-role system replaced it.
+  const [checklistPersonnel, setChecklistPersonnel] = useState<PilingChecklistPersonnel[]>([]);
+  useEffect(() => {
+    if (checklist) {
+      getChecklistPersonnel(checklist.id).then(setChecklistPersonnel).catch(() => {});
+    } else {
+      setChecklistPersonnel([]);
+    }
+  }, [checklist]);
 
-  // Step stats from actual steps
-  const stepStats = useMemo(() => {
-    let completed = 0;
-    let inProgress = 0;
-    let delayed = 0;
-    actualSteps.forEach((a) => {
-      if (a.actualEnd) completed += 1;
-      else if (a.actualStart) inProgress += 1;
-    });
-    return { completed, inProgress, delayed };
-  }, [actualSteps]);
+  const supervisorName = useMemo(() => {
+    const shiftIncharge1 = checklistPersonnel.find((r) => r.role === 'SHIFT_INCHARGE' && r.shiftSlot === 1);
+    if (!shiftIncharge1) return 'Shift Incharge';
+    const p = personnel.find((p) => p.id === shiftIncharge1.personnelId);
+    return p?.name ?? 'Shift Incharge';
+  }, [checklistPersonnel, personnel]);
+
+  // Completed-step count for the plan card's progress ring.
+  const completedSteps = useMemo(
+    () => actualSteps.filter((a) => a.actualEnd).length,
+    [actualSteps],
+  );
+
+  // Active count shown on the "Piles in progress" quick-action tile.
+  const pilesInProgressCount = useMemo(() => {
+    if (planStatus === 'none') return 0;
+    return checklistPiles.filter((cp) => {
+      const pileSteps = planSteps.filter((s) => s.checklistPileId === cp.id);
+      const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
+      return derivePileStatus(pileSteps.length, pileActuals) === 'in_progress';
+    }).length;
+  }, [planStatus, checklistPiles, planSteps, actualSteps]);
 
   const userName = user?.name ?? 'User';
   const siteName = user?.siteName ?? 'Your Site';
 
   const [calendarSheetVisible, setCalendarSheetVisible] = useState(false);
+  const [workingDateSheetVisible, setWorkingDateSheetVisible] = useState(false);
 
   // ── Loading state ────────────────────────────────────────────────────────
   if (isLoading) {
@@ -172,84 +226,53 @@ export default function HomeScreen() {
   }
 
   return (
-    <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
+    <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={[styles.flex, styles.space]}>
       <SafeAreaView style={styles.flex} edges={['top']}>
-        <View style={styles.topBar}>
-          <Text style={styles.pageTitle}>Home</Text>
-          <Pressable hitSlop={10}>
-            <View style={styles.settingsBtn}>
-              <Settings size={20} color={colors.textSecondary} />
-            </View>
-          </Pressable>
+        <View style={styles.headerArea}>
+          <HeaderArea
+            userName={userName}
+            siteName={siteName}
+            workingDate={workingDate}
+            onSettingsPress={() => setWorkingDateSheetVisible(true)}
+            onDatePress={() => setWorkingDateSheetVisible(true)}
+          />
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          <GreetingHeader userName={userName} siteName={siteName} />
-
           {planStatus === 'none' ? (
             <NoPlanCard onGenerate={() => setCalendarSheetVisible(true)} />
           ) : (
             <ActivePlanCard
-              onView={() => navigation.navigate('FillActuals')}
-              onEdit={() => navigation.navigate('GeneratePlan', { edit: true })}
+              onView={() => navigation.navigate('FillActuals', { date: workingDate })}
+              onEdit={() => navigation.navigate('GeneratePlan', { edit: true, date: workingDate })}
               supervisor={supervisorName}
               planStartTime={checklist?.planStartTime ?? null}
-              completed={stepStats.completed}
-              inProgress={stepStats.inProgress}
-              delayed={stepStats.delayed}
+              completed={completedSteps}
               totalSteps={planSteps.length}
             />
           )}
 
           <View style={styles.quickRow}>
-            <Pressable
-              style={({ pressed }) => [styles.quickCard, pressed && styles.quickPressed]}
+            <GradientTile
+              style={styles.quickCard}
+              gradientColors={colors.backdropGradient}
+              icon={<NotebookPen size={16} color={colors.white} />}
+              iconBg={colors.textPrimary}
+              title="Plan history"
+              subtitle="Past 12 days"
               onPress={() => navigation.navigate('PlanHistory')}
-            >
-              <GlassCard innerStyle={styles.quickPad}>
-                <View style={styles.quickIconWrap}>
-                  <ClipboardList size={22} color={colors.accent} />
-                </View>
-                <Text style={styles.quickTitle}>Plan History</Text>
-                <Text style={styles.quickSub}>View previous plans</Text>
-              </GlassCard>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.quickCard, pressed && styles.quickPressed]}
-              onPress={() =>
-                navigation.dispatch(
-                  CommonActions.navigate({
-                    name: 'PilesTab',
-                    params: {
-                      screen: 'PilesScreen',
-                      params: { initialView: 'today', initialFilter: 'in_progress' },
-                    },
-                  }),
-                )
-              }
-            >
-              <GlassCard innerStyle={styles.quickPad}>
-                <View style={[styles.quickIconWrap, { backgroundColor: 'rgba(255,149,0,0.12)' }]}>
-                  <Signpost size={22} color={colors.warning} />
-                </View>
-                <Text style={styles.quickTitle}>Piles In Progress</Text>
-                <Text style={styles.quickSub}>Continue active work</Text>
-              </GlassCard>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.quickCard, pressed && styles.quickPressed]}
-              onPress={() => setCalendarSheetVisible(true)}
-            >
-              <GlassCard innerStyle={styles.quickPad}>
-                <View style={styles.quickIconWrap}>
-                  <CalendarClock size={22} color={colors.accent} />
-                </View>
-                <Text style={styles.quickTitle}>Plan Another Day</Text>
-                <Text style={styles.quickSub}>Pick a future date</Text>
-              </GlassCard>
-            </Pressable>
+            />
+            <GradientTile
+              style={styles.quickCard}
+              gradientColors={colors.creamGradient}
+              icon={<Cylinder  size={16} color={colors.white} />}
+              iconBg={colors.accentPink}
+              title={'Piles in progress'}
+              subtitle={`${pilesInProgressCount} active`}
+              onPress={() => navigation.navigate('FillActuals', { date: workingDate })}
+              iconAlign="right"
+            />
           </View>
-
         </ScrollView>
       </SafeAreaView>
 
@@ -264,50 +287,81 @@ export default function HomeScreen() {
           }}
         />
       )}
+
+      <WorkingDateSheet
+        visible={workingDateSheetVisible}
+        onClose={() => setWorkingDateSheetVisible(false)}
+      />
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  space: { paddingVertical: spacing.sm},
   center: { justifyContent: 'center', alignItems: 'center' },
   loadingText: { ...typography.body, color: colors.textSecondary },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+
+  headerArea: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
-  pageTitle: {
-    ...typography.h1,
-    color: colors.textPrimary,
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  headerRightCol: {
+    alignItems: 'flex-end',
+    gap: spacing.sm,
   },
   settingsBtn: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: radius.pill,
-    backgroundColor: 'rgba(28,28,46,0.06)',
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
+  dateBadge: {
+    width: 50,
+    height: 54,
+    borderRadius: radius.lg,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.soft,
+  },
+  dateBadgeDay: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    lineHeight: 20,
+  },
+  dateBadgeMonth: {
+    fontSize: 9,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.4,
+    marginTop: 2,
+  },
+
   scrollContent: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
     paddingBottom: spacing.xxxl,
     gap: spacing.lg,
   },
 
-  greetingBlock: { marginBottom: spacing.xs },
-  eyebrow: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
+  greetingBlock: {},
   helloText: {
     ...typography.h1,
     color: colors.textPrimary,
-    marginTop: 2,
   },
   siteText: {
     ...typography.body,
@@ -320,19 +374,16 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     alignItems: 'flex-start',
   },
-  noPlanIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
+  noPlanHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    width: '100%',
+    marginBottom: spacing.xs,
   },
   noPlanTitle: {
     ...typography.h2,
     color: colors.textPrimary,
-    marginBottom: spacing.xs,
   },
   noPlanBody: {
     ...typography.body,
@@ -345,60 +396,51 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  planHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  editBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.pill,
-    backgroundColor: 'rgba(28,28,46,0.06)',
-    alignItems: 'center',
+
+  editCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.lg,
+    backgroundColor: colors.accent,
     justifyContent: 'center',
+    alignItems: 'center',
   },
-  planTitle: {
-    ...typography.h2,
+
+  progressSection: {
+    alignItems: 'center',
+    marginTop: spacing.xl,
+    marginBottom: spacing.xl,
+  },
+
+  progressPercent: {
+    fontSize: 38,
+    fontWeight: '700',
     color: colors.textPrimary,
   },
-  pctBadge: {
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentSoft,
-  },
-  pctText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.accent,
-  },
-  planMeta: {
-    ...typography.caption,
+
+  progressLabel: {
+    fontSize: 15,
     color: colors.textSecondary,
     marginTop: 2,
-    marginBottom: spacing.md,
   },
-  progressTrack: {
-    height: 8,
-    borderRadius: radius.pill,
-    backgroundColor: 'rgba(28,28,46,0.08)',
-    overflow: 'hidden',
-    marginBottom: spacing.md,
+
+  progressTitle: {
+    marginTop: spacing.lg,
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
+
+  progressSubtitle: {
+    marginTop: 6,
+    textAlign: 'center',
+    color: colors.textSecondary,
+    lineHeight: 20,
+    paddingHorizontal: spacing.lg,
   },
 
   primaryBtn: {
-    backgroundColor: colors.accent,
+    backgroundColor: colors.textPrimary,
     borderRadius: radius.pill,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
@@ -410,36 +452,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.white,
   },
-
-  quickRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
-  },
-  quickCard: { flex: 1, minWidth: 140 },
-  quickPressed: { opacity: 0.75 },
-  quickPad: {
-    padding: spacing.lg,
-    alignItems: 'center',
-  },
-  quickIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  quickTitle: {
-    ...typography.cardTitle,
+  planTitle: {
+    ...typography.h2,
     color: colors.textPrimary,
-    textAlign: 'center',
   },
-  quickSub: {
+  planMeta: {
     ...typography.caption,
     color: colors.textSecondary,
-    textAlign: 'center',
     marginTop: 2,
+    marginBottom: spacing.md,
   },
+
+  // ── Quick action row — two uniform GradientTile tiles ────────────────────
+  quickRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  quickCard: { flex: 1 },
 });

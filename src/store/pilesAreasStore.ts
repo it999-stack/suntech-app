@@ -8,7 +8,8 @@
 import { create } from 'zustand';
 import { getPilesBySiteWithDimensions, type PileWithDimension } from '@repositories/pilesRepository';
 import { getAreasBySite } from '@repositories/areasRepository';
-import type { PilingArea } from '@db/schema';
+import { getDimensionsBySite } from '@repositories/dimensionsRepository';
+import type { PilingArea, PilingDimension } from '@db/schema';
 
 // Extended pile type for display that includes dia/depth from joined dimensions
 export type DisplayPile = PileWithDimension & {
@@ -18,6 +19,7 @@ export type DisplayPile = PileWithDimension & {
 type PilesAreasState = {
   piles: DisplayPile[];
   areas: PilingArea[];
+  dimensions: PilingDimension[];
   isLoading: boolean;
   error: string | null;
   currentSiteId: string | null;
@@ -33,6 +35,7 @@ type PilesAreasState = {
 export const usePilesAreasStore = create<PilesAreasState>((set, get) => ({
   piles: [],
   areas: [],
+  dimensions: [],
   isLoading: false,
   error: null,
   currentSiteId: null,
@@ -40,20 +43,22 @@ export const usePilesAreasStore = create<PilesAreasState>((set, get) => ({
   loadAll: async (siteId: string | undefined | null) => {
     // Clear state if no siteId provided (e.g., on logout)
     if (!siteId) {
-      set({ piles: [], areas: [], error: null, currentSiteId: null });
+      set({ piles: [], areas: [], dimensions: [], error: null, currentSiteId: null });
       return;
     }
 
     set({ isLoading: true, error: null, currentSiteId: siteId });
     try {
-      const [pilesRaw, areas] = await Promise.all([
+      const [pilesRaw, areas, dimensions] = await Promise.all([
         getPilesBySiteWithDimensions(siteId),
         getAreasBySite(siteId),
+        getDimensionsBySite(siteId),
       ]);
-      set({ 
-        piles: pilesRaw.map(p => ({ ...p, code: p.pileIdCode })), 
-        areas, 
-        isLoading: false 
+      set({
+        piles: pilesRaw.map(p => ({ ...p, code: p.pileIdCode })),
+        areas,
+        dimensions,
+        isLoading: false
       });
     } catch (err) {
       set({
@@ -71,6 +76,6 @@ export const usePilesAreasStore = create<PilesAreasState>((set, get) => ({
   },
 
   clear: () => {
-    set({ piles: [], areas: [], error: null, currentSiteId: null });
+    set({ piles: [], areas: [], dimensions: [], error: null, currentSiteId: null });
   },
 }));

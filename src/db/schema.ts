@@ -13,6 +13,9 @@ export const pilingAreas = sqliteTable('pil_areas', {
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
+  // Phase 3: mirrors the server's deleted_at, added for full reference-table
+  // symmetry even though no delete endpoint exists for areas yet.
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingArea = typeof pilingAreas.$inferSelect;
@@ -54,6 +57,9 @@ export const pilingPiles = sqliteTable('pil_piles', {
   dimensionId: text('dimension_id').notNull(),
   notes: text('notes'),
   syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingPile = typeof pilingPiles.$inferSelect;
@@ -72,6 +78,9 @@ export const pilingDimensions = sqliteTable('pil_dimensions', {
   depth: integer('depth').notNull(),
   label: text('label'),
   syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingDimension = typeof pilingDimensions.$inferSelect;
@@ -90,6 +99,9 @@ export const pilingShiftTypes = sqliteTable('pil_shift_types', {
   startTime: text('start_time').notNull(),
   endTime: text('end_time').notNull(),
   syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingShiftType = typeof pilingShiftTypes.$inferSelect;
@@ -114,6 +126,9 @@ export const pilingNonWorkingWindows = sqliteTable('pil_non_working_windows', {
   endTime: text('end_time').notNull(),
   behavior: text('behavior').notNull().default('FIXED'),
   syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingNonWorkingWindow = typeof pilingNonWorkingWindows.$inferSelect;
@@ -132,6 +147,9 @@ export const pilingMachines = sqliteTable('pil_machines', {
   type: text('type').notNull(),
   status: text('status').notNull(),
   syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingMachine = typeof pilingMachines.$inferSelect;
@@ -152,6 +170,9 @@ export const pilingSitePersonnel = sqliteTable('pil_site_personnel', {
   employeeCode: text('employee_code'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingSitePersonnel = typeof pilingSitePersonnel.$inferSelect;
@@ -168,6 +189,8 @@ export const pilingSteps = sqliteTable('pil_steps', {
   stepName: text('step_name').notNull(),
   sequenceOrder: integer('sequence_order').notNull().unique(),
   track: text('track').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
 });
 
 export type PilingStep = typeof pilingSteps.$inferSelect;
@@ -187,6 +210,8 @@ export const pilingStepDurationTemplates = sqliteTable('pil_step_duration_templa
   durationMinutes: integer('duration_minutes').notNull(),
   bufferBeforeMinutes: integer('buffer_before_minutes').notNull().default(0),
   syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
 });
 
 export type PilingStepDurationTemplate = typeof pilingStepDurationTemplates.$inferSelect;
@@ -209,30 +234,63 @@ export const pilingDailyChecklists = sqliteTable('pil_daily_checklists', {
   shiftTypeId: text('shift_type_id'),
   planStartTime: text('plan_start_time'),
   planEndTime: text('plan_end_time'),
-  supervisorId: text('supervisor_id'),
-  supervisorId2: text('supervisor_id_2'),
   notes: text('notes'),
   status: text('status').notNull().default('DRAFT'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingDailyChecklist = typeof pilingDailyChecklists.$inferSelect;
 export type NewPilingDailyChecklist = typeof pilingDailyChecklists.$inferInsert;
 
-// ─── Checklist Personnel (who was on duty this day) ───────────────────────────
+// ─── Checklist Personnel (role assignments for this checklist day) ────────────
 
 /**
- * Junction: which personnel were on duty for a given checklist day.
+ * Junction: which personnel hold which role on a given checklist day.
+ * role: 'PROJECT_MANAGER' | 'PLANNING_ENGINEER' | 'SHIFT_INCHARGE' | 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR'
+ * machineId: set for ENGINEER/SUPERVISOR/MACHINE_OPERATOR rows (→ pilingMachines.id), null otherwise.
+ * shiftSlot: set for SHIFT_INCHARGE rows (1 or 2), null otherwise.
+ * A person can have multiple rows on one checklist (e.g. an ENGINEER row per
+ * machine in their group) — uniqueness is enforced per-shape by the three
+ * partial indexes in db/client.ts, not a single (checklist_id, personnel_id) pair.
  */
 export const pilingChecklistPersonnel = sqliteTable('pil_checklist_personnel', {
   id: text('id').primaryKey(),
   checklistId: text('checklist_id').notNull(),
   personnelId: text('personnel_id').notNull(),
+  role: text('role'),
+  machineId: text('machine_id'),
+  shiftSlot: integer('shift_slot'),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
 });
 
 export type PilingChecklistPersonnel = typeof pilingChecklistPersonnel.$inferSelect;
 export type NewPilingChecklistPersonnel = typeof pilingChecklistPersonnel.$inferInsert;
+
+// ─── Site Role Defaults (site-scoped "last used" personnel per role) ─────────
+
+/**
+ * Local cache of pil_role_defaults, synced from GET /piling/sites/:id/role-defaults.
+ * Server is the sole writer of this data — the app never computes it locally,
+ * only reads it once at draft-init time to pre-fill a new plan's role pickers.
+ * Rows are replaced wholesale on each sync, same as pilingMachines/pilingSitePersonnel.
+ */
+export const pilingSiteRoleDefaults = sqliteTable('pil_role_defaults', {
+  id: text('id').primaryKey(),
+  siteId: text('site_id').notNull(),
+  role: text('role').notNull(),
+  machineId: text('machine_id'),
+  shiftSlot: integer('shift_slot'),
+  personnelId: text('personnel_id').notNull(),
+  syncedAt: integer('synced_at').notNull(),
+  updatedAt: integer('updated_at'),
+});
+
+export type PilingSiteRoleDefault = typeof pilingSiteRoleDefaults.$inferSelect;
+export type NewPilingSiteRoleDefault = typeof pilingSiteRoleDefaults.$inferInsert;
 
 // ─── Checklist Piles (piles scheduled for a day) ─────────────────────────────
 
@@ -254,6 +312,15 @@ export const pilingChecklistPiles = sqliteTable('pil_checklist_piles', {
     .default('NOT_STARTED')
     .$type<'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'>(),
   createdAt: integer('created_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  // The server's own `updated_at`, echoed back verbatim from the last pull/
+  // hydrate — used as the optimistic-concurrency version on the next push.
+  // Opaque string: never parse into a Date or re-serialize, or the forced UTC
+  // shift on re-stringifying reintroduces the timezone bug toLocalIsoString()
+  // was written to fix. Only ever set by hydrateChecklistFromServer.
+  serverUpdatedAt: text('server_updated_at'),
+  deletedAt: integer('deleted_at'),
 });
 
 export type PilingChecklistPile = typeof pilingChecklistPiles.$inferSelect;
@@ -280,6 +347,8 @@ export const pilePlanSteps = sqliteTable('pil_plan_steps', {
   bufferMinutes: integer('buffer_minutes'),
   assignedMachineId: text('assigned_machine_id'),
   createdAt: integer('created_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
 });
 
 export type PilePlanStep = typeof pilePlanSteps.$inferSelect;
@@ -300,6 +369,10 @@ export const pileActualSteps = sqliteTable('pil_actual_steps', {
   remarks: text('remarks'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
+  // The server's own `updated_at`, echoed back verbatim — see the matching
+  // field/comment on pilingChecklistPiles above. Never derive this from
+  // Date.now(); only hydrateChecklistFromServer may set it.
+  serverUpdatedAt: text('server_updated_at'),
 });
 
 export type PileActualStep = typeof pileActualSteps.$inferSelect;
@@ -325,6 +398,8 @@ export const pilMachineEvents = sqliteTable('pil_machine_events', {
   notes: text('notes'),
   occurredAt: text('occurred_at').notNull(),
   createdAt: integer('created_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
 });
 
 export type PilMachineEvent = typeof pilMachineEvents.$inferSelect;
@@ -349,3 +424,22 @@ export const pilSyncQueue = sqliteTable('pil_sync_queue', {
 
 export type PilSyncQueueRow = typeof pilSyncQueue.$inferSelect;
 export type NewPilSyncQueueRow = typeof pilSyncQueue.$inferInsert;
+
+// ─── Sync Cursor (Phase 2 groundwork — inert until Phase 3 delta sync) ───────
+
+/**
+ * Persists the site's delta-sync cursor once Phase 3 introduces
+ * GET /sync/pull?cursor=. Single row per site; not read or written by
+ * anything yet.
+ */
+export const pilSyncCursor = sqliteTable('pil_sync_cursor', {
+  siteId: text('site_id').primaryKey(),
+  // ISO-8601 string, consistent with every other datetime field on the wire
+  // (Phase 2 scaffolded this as an integer before any real value existed —
+  // corrected here in Phase 3, the first phase that actually uses it).
+  cursorValue: text('cursor_value'),
+  updatedAt: integer('updated_at'),
+});
+
+export type PilSyncCursorRow = typeof pilSyncCursor.$inferSelect;
+export type NewPilSyncCursorRow = typeof pilSyncCursor.$inferInsert;

@@ -15,7 +15,7 @@
 // work with.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { addDays } from 'date-fns';
 import AppModal from '@components/shared/AppModal';
 import AppCalendar, { type DayVisualState } from '@components/shared/AppCalendar';
@@ -24,25 +24,11 @@ import { apiClient } from '@services/apiClient';
 import { hydrateChecklistFromServer } from '@repositories/checklistRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import { getPrimaryShiftType, combineDateAndTime, isWithinGenerationGrace } from '@utils/shiftHelpers';
+import { toLocalDateStr, formatHeaderDate } from '@utils/formatTime';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import { FUTURE_DAYS_AHEAD, ALLOW_ANY_PLAN_DATE } from '@/constants/planGeneration';
 
 const DEFAULT_START_TIME = '08:00';
-
-function toLocalDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function formatHeaderDate(dateStr: string): string {
-  return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
-}
 
 function formatShortDate(dateStr: string): string {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', {
@@ -124,7 +110,7 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
         if (!todayUsable && rangeDates[1]) setSelectedDate(rangeDates[1]);
       } catch {
         if (!cancelled) {
-          setLoadError('Could not reach the server. Connect to generate or edit a plan.');
+          setLoadError('Sync failed - Please try again later.');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -172,13 +158,11 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
 
   const selectedDisabled = getDayState(selectedDate).disabled === true;
 
-  const planWindowStart = combineDateAndTime(selectedDate, planStartTimeOfDay);
-  const planWindowEnd = planEndTime(planWindowStart);
-
   return (
     <AppModal
       visible={visible}
       onClose={onClose}
+      position="center"
       title="Select Date"
       subtitle="Choose which day's plan to generate"
     >
@@ -187,20 +171,8 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
         onSelectDate={setSelectedDate}
         getDayState={getDayState}
         initialMonth={today}
-        legend={[
-          { tone: 'default', label: 'Ready' },
-          { tone: 'primary', label: 'Planned' },
-          { tone: 'muted', label: 'Window closed' },
-        ]}
+        legend={[]}
       />
-
-      <View style={styles.windowCard}>
-        <Text style={styles.windowLabel}>SELECTED DATE</Text>
-        <Text style={styles.windowDate}>{formatHeaderDate(selectedDate)}</Text>
-        <Text style={styles.windowRange}>
-          Plan window: {fmtPlanTime(planWindowStart)} → {fmtPlanTime(planWindowEnd)}
-        </Text>
-      </View>
 
       {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
 
@@ -209,7 +181,11 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
         disabled={loading || !!loadError || selectedDisabled}
         onPress={() => onConfirm(selectedDate, plannedDates.has(selectedDate))}
       >
-        <Text style={styles.confirmBtnText}>Continue with {formatShortDate(selectedDate)}</Text>
+        {loading ? (
+          <ActivityIndicator color={colors.textInverse} />
+        ) : (
+          <Text style={styles.confirmBtnText}>Continue with {formatShortDate(selectedDate)}</Text>
+        )}
       </Pressable>
     </AppModal>
   );
@@ -221,27 +197,6 @@ const styles = StyleSheet.create({
     color: colors.danger,
     textAlign: 'center',
     marginTop: spacing.md,
-  },
-  windowCard: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginTop: spacing.lg,
-  },
-  windowLabel: {
-    ...typography.label,
-    color: colors.textSecondary,
-    letterSpacing: 0.6,
-  },
-  windowDate: {
-    ...typography.h2,
-    color: colors.textPrimary,
-    marginTop: 2,
-  },
-  windowRange: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 4,
   },
   plannedDot: {
     width: 6,

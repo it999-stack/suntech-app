@@ -1,3 +1,5 @@
+// src/components/shared/GlassCard.tsx
+
 import React from 'react';
 import { View, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { BlurView } from 'expo-blur';
@@ -17,11 +19,16 @@ interface Props {
  *
  * Stretches to fill its parent width by default (`alignSelf: 'stretch'`).
  * Pass `style` for outer layout (margin, flex) and `innerStyle` for padding.
+ *
+ * Blur intensity is intentionally lower than a typical frosted-glass value
+ * (25 vs. the more common 40+) — the backdrop is now a pale cream/lavender
+ * wash rather than a saturated gradient, so heavier blur just flattens the
+ * card into the page instead of reading as "frosted over light".
  */
 export default function GlassCard({ children, style, innerStyle, borderless = false }: Props) {
   return (
     <View style={[styles.shadowWrap, style]}>
-      <BlurView intensity={40} tint="light" style={[styles.blur, borderless && styles.borderless]}>
+      <BlurView intensity={25} tint="light" style={[styles.blur, borderless && styles.borderless]}>
         <View style={[styles.inner, innerStyle]}>{children}</View>
       </BlurView>
     </View>
@@ -36,6 +43,7 @@ const styles = StyleSheet.create({
     ...shadow.glass,
   },
   blur: {
+    flex: 1,
     borderRadius: radius.xl,
     overflow: 'hidden',
     borderWidth: 1,
@@ -43,6 +51,7 @@ const styles = StyleSheet.create({
   },
   borderless: { borderWidth: 0 },
   inner: {
+    flex: 1,
     backgroundColor: colors.glassFill,
     padding: 16,
   },

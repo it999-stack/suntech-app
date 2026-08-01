@@ -1,6 +1,7 @@
 // src/navigation/MainTabNavigator.tsx
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { getFocusedRouteNameFromRoute, type RouteProp } from '@react-navigation/native';
 import { MainTabParamList } from '@app-types/navigation';
 import HomeStackNavigator from './Home/HomeStackNavigator';
 import PilesStackNavigator from './Piles/PilesStackNavigator';
@@ -15,6 +16,16 @@ import {
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
+// Full-screen step wizards inside the Home stack render their own bottom
+// action button flush with the screen edge — the tab bar must be hidden
+// underneath them or the button ends up sandwiched above it.
+const HIDE_TAB_BAR_FOR_ROUTES = ['GeneratePlan', 'EditPlan'];
+
+function getHomeTabBarStyle(route: RouteProp<MainTabParamList, 'HomeTab'>) {
+  const routeName = getFocusedRouteNameFromRoute(route) ?? 'HomeScreen';
+  return HIDE_TAB_BAR_FOR_ROUTES.includes(routeName) ? { display: 'none' as const } : undefined;
+}
+
 export default function MainTabNavigator() {
   return (
     <Tab.Navigator
@@ -25,12 +36,13 @@ export default function MainTabNavigator() {
         <Tab.Screen
             name="HomeTab"
             component={HomeStackNavigator}
-            options={{
+            options={({ route }) => ({
                 title: 'Home',
                 tabBarIcon: ({ color, size }) => (
                 <LayoutDashboard color={color} size={size} />
                 ),
-            }}
+                tabBarStyle: getHomeTabBarStyle(route),
+            })}
             />
 
             <Tab.Screen

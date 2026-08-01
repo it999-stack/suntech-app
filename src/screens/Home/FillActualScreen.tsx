@@ -8,19 +8,24 @@ import {
   Pressable,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
-import { ChevronLeft, CheckCircle2, Circle, ArrowRight, MoreHorizontal, AlertTriangle } from 'lucide-react-native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { HomeStackParamList } from '@app-types/navigation';
+import { ChevronLeft, CheckCircle2, Circle, ArrowRight, MoreHorizontal, AlertTriangle, ListOrdered } from 'lucide-react-native';
 import { colors, spacing, typography } from '@theme/theme';
 import { formatTime, formatMinutes12, toLocalIsoString, resolveOvernightDate } from '@utils/formatTime';
+import { stepWorkStart } from '@utils/helpers';
 import { usePlan, type LogMachineEventInput } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
+import { useWorkingDate } from '@store/workingDateStore';
 import PileProgressCard from '@components/plan/actual/PileProgressCard';
 import { getMachinesBySite } from '@repositories/machinesRepository';
 import { getPilesBySite } from '@repositories/pilesRepository';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
+import { getChecklistPersonnel } from '@repositories/checklistRepository';
 import { getMachineEventsForChecklistPile } from '@repositories/machineEventsRepository';
 import type { PilingMachine, PilingPile, PilingSitePersonnel, PilMachineEvent } from '@db/schema';
 import type { ActualEntry } from '@app-types/plan';
@@ -36,14 +41,6 @@ type PileGroup = {
   /** True when a not-yet-done step's assigned machine has status BREAKDOWN. */
   hasBreakdownWarning: boolean;
 };
-
-/** Merge plan steps + actual steps into ActualEntry shape used by existing components. */
-function toLocalDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
 
 /** Convert ISO timestamp to minutes-since-midnight (used by old components). */
 function isoToMinutes(iso: string | null | undefined): number | undefined {
@@ -62,11 +59,15 @@ function nowMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
+type FillActualsRouteProp = RouteProp<HomeStackParamList, 'FillActuals'>;
+
 export default function FillActualsScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<FillActualsRouteProp>();
   const user = useAuthStore((s) => s.user);
   const siteId = user?.siteId ?? '';
-  const today = toLocalDateStr(new Date());
+  const deviceWorkingDate = useWorkingDate();
+  const workingDate = route.params?.date ?? deviceWorkingDate;
 
   const {
     checklist,
@@ -74,16 +75,26 @@ export default function FillActualsScreen() {
     actualSteps,
     checklistPiles,
     isLoading,
+    conflictNotice,
+    dismissConflictNotice,
     loadChecklist,
     setActualTime,
     setRemarks,
     logMachineEvent,
   } = usePlan();
 
-  // ── Load today's checklist on mount ────────────────────────────────────
+  // ── Load the working date's checklist on mount ─────────────────────────
   useEffect(() => {
-    if (siteId) loadChecklist(siteId, today);
-  }, [siteId, today, loadChecklist]);
+    if (siteId) loadChecklist(siteId, workingDate);
+  }, [siteId, workingDate, loadChecklist]);
+
+  // ── Surface genuine sync conflicts instead of silently overwriting ──────
+  useEffect(() => {
+    if (!conflictNotice) return;
+    Alert.alert('Updated elsewhere', conflictNotice, [
+      { text: 'OK', onPress: dismissConflictNotice },
+    ]);
+  }, [conflictNotice, dismissConflictNotice]);
 
   // ── Local machine + pile name lookups ───────────────────────────────────
   const [machines, setMachines] = useState<PilingMachine[]>([]);
@@ -91,6 +102,23 @@ export default function FillActualsScreen() {
   const [pileMap, setPileMap] = useState<Map<string, PilingPile>>(new Map());
   const [personnelMap, setPersonnelMap] = useState<Map<string, PilingSitePersonnel>>(new Map());
   const [lookupsLoading, setLookupsLoading] = useState(true);
+
+  // Shift Incharge (Shift 1) for the header subtitle — the closest
+  // equivalent to what "supervisor" used to mean before the multi-role
+  // system replaced it.
+  const [shiftIncharge1Id, setShiftIncharge1Id] = useState<string | null>(null);
+  useEffect(() => {
+    if (!checklist) {
+      setShiftIncharge1Id(null);
+      return;
+    }
+    getChecklistPersonnel(checklist.id)
+      .then((rows) => {
+        const row = rows.find((r) => r.role === 'SHIFT_INCHARGE' && r.shiftSlot === 1);
+        setShiftIncharge1Id(row?.personnelId ?? null);
+      })
+      .catch(() => setShiftIncharge1Id(null));
+  }, [checklist]);
 
   useEffect(() => {
     if (!siteId) return;
@@ -134,7 +162,7 @@ export default function FillActualsScreen() {
           stepName: ps.stepName,
           track: ps.track as 'RIG' | 'CRANE' | 'COMPRESSOR',
           sequenceOrder: ps.sequenceOrder,
-          plannedStart: isoToMinutes(ps.plannedStart) ?? 0,
+          plannedStart: isoToMinutes(stepWorkStart(ps)) ?? 0,
           // Preserve undefined (rather than fabricating midnight) when this
           // step is "continuing" — it never had a committed end time.
           plannedEnd: isoToMinutes(ps.plannedEnd),
@@ -168,6 +196,37 @@ export default function FillActualsScreen() {
       };
     });
   }, [checklistPiles, planSteps, actualSteps, pileMap, machineMap, machineStatusById]);
+
+  // ── Partition piles into "up next per machine" vs the rest ──────────────
+  // A pile's own "current step" isn't the same as "this pile's machine is
+  // actively on it right now" — a machine works piles one at a time in
+  // seq_no order, so several not-yet-finished piles assigned to the same
+  // rig can each nominally have an unfinished rig step even though the rig
+  // has only reached the first one. The real signal, per machine, is the
+  // earliest-seq_no pile that still has an unfinished step assigned to it —
+  // pileGroups is already seq_no order, so the first match per machine is
+  // that machine's front-of-queue pile.
+  const { activeGroups, upcomingGroups } = useMemo(() => {
+    const machineIds = new Set<string>();
+    pileGroups.forEach((g) =>
+      g.steps.forEach((s) => {
+        if (s.assignedMachineId) machineIds.add(s.assignedMachineId);
+      }),
+    );
+
+    const frontPileIds = new Set<string>();
+    machineIds.forEach((machineId) => {
+      const front = pileGroups.find((g) =>
+        g.steps.some((s) => s.assignedMachineId === machineId && s.actualEnd === undefined),
+      );
+      if (front) frontPileIds.add(front.checklistPileId);
+    });
+
+    return {
+      activeGroups: pileGroups.filter((g) => frontPileIds.has(g.checklistPileId)),
+      upcomingGroups: pileGroups.filter((g) => !frontPileIds.has(g.checklistPileId)),
+    };
+  }, [pileGroups]);
 
   // ── Modal state ─────────────────────────────────────────────────────────
   const [openCpId, setOpenCpId] = useState<string | null>(null);
@@ -236,9 +295,9 @@ export default function FillActualsScreen() {
     [openGroup, logMachineEvent],
   );
 
-  // ── Supervisor display ──────────────────────────────────────────────────
-  const supervisorName = checklist?.supervisorId
-    ? personnelMap.get(checklist.supervisorId)?.name ?? 'Unknown'
+  // ── Shift Incharge display ──────────────────────────────────────────────
+  const supervisorName = shiftIncharge1Id
+    ? personnelMap.get(shiftIncharge1Id)?.name ?? 'Unknown'
     : null;
 
   const startTimeDisplay = checklist?.planStartTime
@@ -258,14 +317,15 @@ export default function FillActualsScreen() {
               <ChevronLeft size={22} color={colors.textPrimary} />
             </Pressable>
             <Text style={styles.pageTitle}>Log Actuals</Text>
-            <View style={{ width: 22 }} />
+            <Pressable
+              onPress={() => navigation.navigate('EditPlan', { date: workingDate })}
+              hitSlop={12}
+              disabled={!checklist}
+              style={{ opacity: checklist ? 1 : 0.35 }}
+            >
+              <ListOrdered size={22} color={colors.textPrimary} />
+            </Pressable>
           </View>
-          {checklist && (
-            <Text style={styles.subtitle}>
-              {supervisorName ? `${supervisorName} · ` : ''}
-              {startTimeDisplay ? `Started ${startTimeDisplay}` : checklist.date}
-            </Text>
-          )}
         </View>
 
         <ScrollView
@@ -296,17 +356,39 @@ export default function FillActualsScreen() {
             />
           )}
 
-          {!isLoading && !lookupsLoading && pileGroups.map((group) => (
-            <PileProgressCard
-              key={group.checklistPileId}
-              pileCode={group.pileCode}
-              rig={group.rig}
-              crane={group.crane}
-              steps={group.steps}
-              hasBreakdownWarning={group.hasBreakdownWarning}
-              onPress={() => setOpenCpId(group.checklistPileId)}
-            />
-          ))}
+          {!isLoading && !lookupsLoading && activeGroups.length > 0 && (
+            <>
+              <Text style={styles.sectionHeader}>Up Next</Text>
+              {activeGroups.map((group) => (
+                <PileProgressCard
+                  key={group.checklistPileId}
+                  pileCode={group.pileCode}
+                  rig={group.rig}
+                  crane={group.crane}
+                  steps={group.steps}
+                  hasBreakdownWarning={group.hasBreakdownWarning}
+                  onPress={() => setOpenCpId(group.checklistPileId)}
+                />
+              ))}
+            </>
+          )}
+
+          {!isLoading && !lookupsLoading && upcomingGroups.length > 0 && (
+            <>
+              {activeGroups.length > 0 && <Text style={styles.sectionHeader}>Remaining Piles</Text>}
+              {upcomingGroups.map((group) => (
+                <PileProgressCard
+                  key={group.checklistPileId}
+                  pileCode={group.pileCode}
+                  rig={group.rig}
+                  crane={group.crane}
+                  steps={group.steps}
+                  hasBreakdownWarning={group.hasBreakdownWarning}
+                  onPress={() => setOpenCpId(group.checklistPileId)}
+                />
+              ))}
+            </>
+          )}
         </ScrollView>
       </SafeAreaView>
 
@@ -451,6 +533,9 @@ function PileStepsModalAdapter({
         const isCurrent = step.stepId === currentStepId;
         const isLocked = !isDone && !isCurrent;
         const isEditableDoneStep = isDone && idx === lastDoneIndex;
+        const lateMinutes =
+          isDone && step.plannedEnd != null ? step.actualEnd! - step.plannedEnd : null;
+        const isLate = lateMinutes != null && lateMinutes > 0;
 
         return (
           <View key={step.stepId} style={modalStyles.stepRow}>
@@ -479,7 +564,7 @@ function PileStepsModalAdapter({
                         { color: trackColors(step.track).fg },
                       ]}
                     >
-                      {step.track}
+                      {`${step.track}${step.assignedMachineNo ? ` (${step.assignedMachineNo})` : ''}`}
                     </Text>
                   </View>
                   <Pressable
@@ -500,11 +585,10 @@ function PileStepsModalAdapter({
                   </Pressable>
                 </View>
               </View>
-              {step.assignedMachineNo ? (
-                <Text style={modalStyles.machineText}>{step.assignedMachineNo}</Text>
-              ) : null}
+              
 
               <View style={modalStyles.timeRow}>
+                <Text style={modalStyles.rowLabel}>PLAN</Text>
                 <Text style={modalStyles.timeText}>{formatMinutes12(step.plannedStart)}</Text>
                 <ArrowRight size={12} color={colors.textSecondary} style={modalStyles.timeIcon} />
                 <Text style={modalStyles.timeText}>
@@ -514,6 +598,7 @@ function PileStepsModalAdapter({
 
               {isDone && (
                 <View style={modalStyles.timeRow}>
+                  <Text style={[modalStyles.rowLabel, modalStyles.rowLabelActual]}>ACTUAL</Text>
                   <Text style={modalStyles.loggedText}>{formatMinutes12(step.actualStart!)}</Text>
                   {isEditableDoneStep && (
                     <EditTimeButton
@@ -527,7 +612,9 @@ function PileStepsModalAdapter({
                     />
                   )}
                   <ArrowRight size={12} color={colors.success} style={modalStyles.timeIcon} />
-                  <Text style={modalStyles.loggedText}>{formatMinutes12(step.actualEnd!)}</Text>
+                  <Text style={[modalStyles.loggedText, isLate && modalStyles.lateText]}>
+                    {formatMinutes12(step.actualEnd!)}
+                  </Text>
                   {isEditableDoneStep && (
                     <EditTimeButton
                       minutes={step.actualEnd!}
@@ -636,7 +723,7 @@ function PileStepsModalAdapter({
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  headerArea: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  headerArea: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -661,6 +748,14 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.xxl,
+  },
+  sectionHeader: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: spacing.xs,
   },
 });
 
@@ -704,6 +799,35 @@ const modalStyles = StyleSheet.create({
   },
   allDoneWrap: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
   allDoneText: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
+  rowLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: colors.textSecondary,
+    width: 46,
+  },
+  rowLabelActual: {
+    color: colors.success,
+  },
+  lateText: {
+    color: colors.danger,
+  },
+  varianceChip: {
+    marginLeft: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  varianceChipLate: {
+    backgroundColor: colors.dangerSoft,
+  },
+  varianceChipOnTime: {
+    backgroundColor: colors.successSoft,
+  },
+  varianceChipText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
   timeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -728,12 +852,6 @@ const modalStyles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  machineText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginTop: 2,
   },
   warningBanner: {
     flexDirection: 'row',

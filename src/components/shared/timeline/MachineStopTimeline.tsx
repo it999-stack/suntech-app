@@ -6,11 +6,11 @@
 // Build the stop log with buildMachineStops() from '@/utils/timeline'.
 
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { Drill, Forklift } from 'lucide-react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { Drill, Forklift, Pencil } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { formatTime, formatDurationMinutes } from '@/utils/formatTime';
-import { getMachineColor } from '@/utils/helpers';
+import { getMachineColor, buildTypeIndexById } from '@/utils/helpers';
 import { type TimelineStop, type MachineInfo } from '@/types/timeline';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 
@@ -22,42 +22,70 @@ export interface MachineStopTimelineProps {
   onSelectMachine?: (machineId: string) => void;
   dayLabel?: string;
   emptyLabel?: string;
+  /** Shows a pencil icon next to the machine label when provided, e.g. to open a reorder modal. */
+  onEditMachine?: (machineId: string) => void;
 }
 
 function stopColor(kind: TimelineStop['kind'], activeColor: string): string {
   if (kind === 'active') return activeColor;
   if (kind === 'break') return colors.machine.break;
+  if (kind === 'buffer') return colors.accentBlue;
   return colors.machine.idle;
 }
 
 function stopKindLabel(kind: TimelineStop['kind']): string {
   if (kind === 'active') return 'Working';
   if (kind === 'break') return 'Break';
+  if (kind === 'buffer') return 'Buffer';
   return 'Idle';
 }
 
-function StopRow({ stop, color, isLast }: { stop: TimelineStop; color: string; isLast: boolean }) {
+function StopRow({
+  stop,
+  color,
+  isLast,
+  isNewPile,
+}: {
+  stop: TimelineStop;
+  color: string;
+  isLast: boolean;
+  isNewPile: boolean;
+}) {
   const durationMinutes = (stop.end - stop.start) / 60000;
   const dimmed = stop.kind !== 'active';
   return (
     <View style={styles.logItem}>
       <Text style={styles.logTime}>{formatTime(new Date(stop.start).toISOString())}</Text>
       <View style={styles.logRail}>
-        <View style={[styles.logDot, { backgroundColor: color }]} />
+        <View
+          style={[
+            styles.logDot,
+            { backgroundColor: color },
+            isNewPile && styles.logDotNewPile,
+          ]}
+        />
         {!isLast && <View style={styles.logLine} />}
       </View>
-      <View style={[styles.logCard, dimmed && styles.logCardDim]}>
-        <Text style={[styles.logKind, { color: stop.kind === 'active' ? color : colors.textSecondary }]}>
-          {stop.kindLabel ?? stopKindLabel(stop.kind)}
-        </Text>
-        <Text style={styles.logTitle}>{stop.title}</Text>
-        {stop.subtitle ? <Text style={styles.logSubtitle}>{stop.subtitle}</Text> : null}
-        {stop.showDuration !== false ? (
-          <Text style={styles.logDuration}>
-          {formatDurationMinutes(durationMinutes)} · until {formatTime(new Date(stop.end).toISOString())}
+      {stop.kind === 'buffer' ? (
+        <View style={styles.logCardBuffer}>
+          <Text style={styles.logBufferText}>
+            {stop.kindLabel ?? stopKindLabel(stop.kind)} · {formatDurationMinutes(durationMinutes)}
           </Text>
-        ) : null}
-      </View>
+        </View>
+      ) : (
+        <View style={[styles.logCard, dimmed && styles.logCardDim]}>
+          <Text style={[styles.logKind, { color: stop.kind === 'active' ? color : colors.textSecondary }]}>
+            {stop.kindLabel ?? stopKindLabel(stop.kind)}
+          </Text>
+          <Text style={styles.logTitle}>{stop.title}</Text>
+          {stop.subtitle ? <Text style={styles.logSubtitle}>{stop.subtitle}</Text> : null}
+          {stop.showDuration !== false ? (
+            <Text style={styles.logDuration}>
+            {formatDurationMinutes(durationMinutes)} · until {formatTime(new Date(stop.end).toISOString())}
+            </Text>
+          ) : null}
+        </View>
+      )}
     </View>
   );
 }
@@ -76,16 +104,25 @@ export function TimelineStopLog({
 }: TimelineStopLogProps) {
   if (stops.length === 0) return <Text style={styles.detailEmpty}>{emptyLabel}</Text>;
 
+  let lastActivePileTitle: string | undefined;
+
   return (
     <View>
-      {stops.map((stop, idx) => (
-        <StopRow
-          key={stop.id}
-          stop={stop}
-          color={stopColor(stop.kind, activeColor)}
-          isLast={idx === stops.length - 1}
-        />
-      ))}
+      {stops.map((stop, idx) => {
+        // A "new pile" starts at an active stop whose pile (title) differs
+        // from the last active stop's — including the very first one.
+        const isNewPile = stop.kind === 'active' && stop.title !== lastActivePileTitle;
+        if (stop.kind === 'active') lastActivePileTitle = stop.title;
+        return (
+          <StopRow
+            key={stop.id}
+            stop={stop}
+            color={stopColor(stop.kind, activeColor)}
+            isLast={idx === stops.length - 1}
+            isNewPile={isNewPile}
+          />
+        );
+      })}
     </View>
   );
 }
@@ -97,20 +134,12 @@ export default function MachineStopTimeline({
   onSelectMachine,
   dayLabel,
   emptyLabel = 'No activity scheduled for this machine.',
+  onEditMachine,
 }: MachineStopTimelineProps) {
   const [internalSelected, setInternalSelected] = useState<string | undefined>(machines[0]?.id);
   const activeId = selectedMachineId ?? internalSelected;
 
-  const typeIndexById = useMemo(() => {
-    const counters: Record<string, number> = {};
-    const map: Record<string, number> = {};
-    machines.forEach((m) => {
-      const i = counters[m.type] ?? 0;
-      map[m.id] = i;
-      counters[m.type] = i + 1;
-    });
-    return map;
-  }, [machines]);
+  const typeIndexById = useMemo(() => buildTypeIndexById(machines), [machines]);
 
   if (machines.length === 0) {
     return <Text style={styles.detailEmpty}>No machines to show.</Text>;
@@ -142,23 +171,45 @@ export default function MachineStopTimeline({
         return (
           <View>
             <View style={styles.selHeadRow}>
-              {machine.type === 'RIG' ? <Drill size={16} color={color} /> : <Forklift size={16} color={color} />}
-              <Text style={[styles.selName, { color }]}>
-                {machine.machineNo} · {machine.type === 'RIG' ? 'Rig' : 'Crane'}
-              </Text>
-              {dayLabel ? (
-                <View style={styles.selDayBadge}>
-                  <Text style={styles.selDayText}>{dayLabel}</Text>
-                </View>
+              <View style={styles.selLeft}>
+                {machine.type === 'RIG' ? <Drill size={16} color={color} /> : <Forklift size={16} color={color} />}
+                <Text style={[styles.selName, { color }]}>
+                  {machine.machineNo} · {machine.type === 'RIG' ? 'Rig' : 'Crane'}
+                </Text>
+                {dayLabel ? (
+                  <View style={styles.selDayBadge}>
+                    <Text style={styles.selDayText}>{dayLabel}</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {onEditMachine ? (
+                <Pressable
+                  onPress={() => onEditMachine(machine.id)}
+                  hitSlop={10}
+                  style={styles.editBtn}
+                >
+                  <Pencil size={14} color={colors.textSecondary} />
+                </Pressable>
               ) : null}
             </View>
 
-            <TimelineStopLog stops={stops} activeColor={color} emptyLabel={emptyLabel} />
+            <ScrollView
+              style={styles.logScroll}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              <TimelineStopLog stops={stops} activeColor={color} emptyLabel={emptyLabel} />
+            </ScrollView>
 
             <View style={styles.legendRow}>
               <View style={styles.legendChip}>
                 <View style={[styles.legendDot, { backgroundColor: color }]} />
                 <Text style={styles.legendText}>Working</Text>
+              </View>
+              <View style={styles.legendChip}>
+                <View style={[styles.legendDot, { backgroundColor: colors.accentBlue }]} />
+                <Text style={styles.legendText}>Buffer</Text>
               </View>
               <View style={styles.legendChip}>
                 <View style={[styles.legendDot, { backgroundColor: colors.machine.break }]} />
@@ -180,19 +231,35 @@ const styles = StyleSheet.create({
   selHeadRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    justifyContent: 'space-between',
     marginBottom: spacing.md,
     paddingHorizontal: spacing.sm,
+    width: '100%',
+  },
+  selLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    flexShrink: 1,
   },
   selName: { fontSize: 14, fontWeight: '800' },
   selDayBadge: {
-    marginLeft: 'auto',
     backgroundColor: colors.glassFill,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
   },
   selDayText: { fontSize: 10.5, fontWeight: '700', color: colors.textSecondary },
+  editBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(28,28,46,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  logScroll: { maxHeight: 520 },
   logItem: { flexDirection: 'row', gap: spacing.sm },
   logTime: {
     width: 58,
@@ -208,8 +275,17 @@ const styles = StyleSheet.create({
     height: 11,
     borderRadius: 6,
     borderWidth: 2.5,
-    borderColor: '#fff',
+    borderColor: colors.white,
     marginTop: 2,
+  },
+  logDotNewPile: {
+    width: 15,
+    height: 15,
+    borderRadius: 8,
+    borderWidth: 2.5,
+    borderColor: colors.accentBlue,
+    backgroundColor: colors.backdropStart,
+    marginTop: 0,
   },
   logLine: {
     width: 2,
@@ -227,6 +303,23 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
   logCardDim: { backgroundColor: 'rgba(28,28,46,0.03)' },
+  logCardBuffer: {
+    flex: 1,
+    justifyContent: 'center',
+    backgroundColor: colors.backdropStart,
+    borderRadius: radius.sm,
+    paddingVertical: 4,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+    marginTop: -2,
+    minHeight: 22,
+  },
+  logBufferText: {
+    ...typography.caption,
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
   logKind: {
     fontSize: 9.5,
     fontWeight: '800',

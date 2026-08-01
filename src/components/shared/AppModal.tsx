@@ -19,6 +19,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   withSpring,
+  interpolate,
   runOnJS,
 } from 'react-native-reanimated';
 import { X } from 'lucide-react-native';
@@ -37,8 +38,9 @@ interface Props {
   subtitle?: string;
   children: React.ReactNode;
   contentContainerStyle?: ViewStyle;
-  /** Anchors the sheet to the top or bottom of the screen. Defaults to 'bottom'. */
-  position?: 'bottom' | 'top';
+  /** Anchors the sheet to the top/bottom edge, or floats it centered with a
+   * fade+scale entrance. Defaults to 'bottom'. */
+  position?: 'bottom' | 'top' | 'center';
   /** For position="top": distance from the screen top, clearing the status bar / notch. */
   topOffset?: number;
   /**
@@ -62,19 +64,30 @@ export default function AppModal({
   scrollable = true,
 }: Props) {
   const isTop = position === 'top';
+  const isCenter = position === 'center';
   const hiddenValue = isTop ? -SCREEN_HEIGHT : SCREEN_HEIGHT;
+
+  // Edge-anchored sheets slide via translateY; center uses its own
+  // 0→1 progress value driving fade+scale instead (translateY has no
+  // meaningful "hidden" position for a floating, content-sized box).
   const translateY = useSharedValue(hiddenValue);
+  const centerProgress = useSharedValue(0);
 
   useEffect(() => {
-    translateY.value = withTiming(visible ? 0 : hiddenValue, { duration: 260 });
-  }, [visible, hiddenValue, translateY]);
+    if (isCenter) {
+      centerProgress.value = withTiming(visible ? 1 : 0, { duration: 220 });
+    } else {
+      translateY.value = withTiming(visible ? 0 : hiddenValue, { duration: 260 });
+    }
+  }, [visible, hiddenValue, isCenter, centerProgress, translateY]);
 
   // Swipe-down-to-dismiss, scoped to the grabber/header zone only — the
   // scrollable body below keeps its own native scroll untouched, so there's
   // no gesture arbitration needed between this and the content ScrollView.
-  // Bottom sheets only (a "top" popover would need the opposite direction).
+  // Only meaningful for a bottom sheet; top and center don't have an edge
+  // to drag back toward.
   const dragGesture = Gesture.Pan()
-    .enabled(!isTop)
+    .enabled(!isTop && !isCenter)
     .onUpdate((e) => {
       if (e.translationY > 0) {
         translateY.value = e.translationY;
@@ -91,9 +104,15 @@ export default function AppModal({
       }
     });
 
-  const sheetAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
-  }));
+  const sheetAnimatedStyle = useAnimatedStyle(() => {
+    if (isCenter) {
+      return {
+        opacity: centerProgress.value,
+        transform: [{ scale: interpolate(centerProgress.value, [0, 1], [0.92, 1]) }],
+      };
+    }
+    return { transform: [{ translateY: translateY.value }] };
+  });
 
   return (
     <Modal visible={visible} animationType="none" transparent onRequestClose={onClose} statusBarTranslucent>
@@ -106,45 +125,53 @@ export default function AppModal({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <Pressable style={styles.backdrop} onPress={onClose} />
-        <Animated.View
-          style={[
-            styles.sheet,
-            isTop ? [styles.sheetTop, { top: topOffset }] : styles.sheetBottom,
-            sheetAnimatedStyle,
-          ]}
+
+        {/* Center mode centers via flex (content-sized box, no known edge to
+            anchor from); top/bottom keep their existing absolute anchoring. */}
+        <View
+          style={isCenter ? styles.centerWrap : styles.flexContainer}
+          pointerEvents="box-none"
         >
-          <GestureDetector gesture={dragGesture}>
-            <View>
-              {!isTop && <View style={styles.grabber} />}
+          <Animated.View
+            style={[
+              styles.sheet,
+              isCenter ? styles.sheetCenter : isTop ? [styles.sheetTop, { top: topOffset }] : styles.sheetBottom,
+              sheetAnimatedStyle,
+            ]}
+          >
+            <GestureDetector gesture={dragGesture}>
+              <View>
+                {!isTop && !isCenter && <View style={styles.grabber} />}
 
-              {(title || subtitle) && (
-                <View style={styles.headerRow}>
-                  <View style={styles.headerTextWrap}>
-                    {title && <Text style={styles.title}>{title}</Text>}
-                    {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+                {(title || subtitle) && (
+                  <View style={styles.headerRow}>
+                    <View style={styles.headerTextWrap}>
+                      {title && <Text style={styles.title}>{title}</Text>}
+                      {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+                    </View>
+                    <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
+                      <X size={18} color={colors.textSecondary} />
+                    </Pressable>
                   </View>
-                  <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
-                    <X size={18} color={colors.textSecondary} />
-                  </Pressable>
-                </View>
-              )}
-            </View>
-          </GestureDetector>
+                )}
+              </View>
+            </GestureDetector>
 
-          {scrollable ? (
-            <ScrollView
-              contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-            >
-              {children}
-            </ScrollView>
-          ) : (
-            <View style={[styles.scrollContent, contentContainerStyle]}>{children}</View>
-          )}
+            {scrollable ? (
+              <ScrollView
+                contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                {children}
+              </ScrollView>
+            ) : (
+              <View style={[styles.scrollContent, contentContainerStyle]}>{children}</View>
+            )}
 
-          {isTop && <View style={styles.grabberTop} />}
-        </Animated.View>
+            {isTop && <View style={styles.grabberTop} />}
+          </Animated.View>
+        </View>
       </KeyboardAvoidingView>
       </GestureHandlerRootView>
     </Modal>
@@ -161,6 +188,12 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+  },
+  centerWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
   },
   sheet: {
     backgroundColor: colors.white,
@@ -180,6 +213,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+  },
+  sheetCenter: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '80%',
     borderRadius: radius.lg,
     overflow: 'hidden',
   },

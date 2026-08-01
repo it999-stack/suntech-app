@@ -6,35 +6,56 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { CheckCircle2 } from 'lucide-react-native';
-import { formatTime, formatDuration, formatDurationMinutes } from '@/utils/formatTime';
+import { formatTime, formatDurationMinutes } from '@/utils/formatTime';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import { colors, spacing, radius, typography } from '@/theme/theme';
-import { isContinuingStep } from '@utils/helpers';
+import { isContinuingStep, stepWorkStart } from '@utils/helpers';
+import TrackChoiceTiles, { type TrackChoice } from './TrackChoiceTiles';
 
 interface StepTimelineRowProps {
   step: PlanStepWithMeta;
   isLast: boolean;
   /** True once this step's actual end time has been recorded. */
   isCompleted?: boolean;
+  rigMachineNo: string;
+  craneMachineNo: string;
+  /** Only provided for CRANE-track steps in an editable (not-yet-confirmed) plan preview —
+   * lets the tiles reflect a pending selection and respond to taps. Omitted everywhere else
+   * (RIG-track steps, which have no alternative to offer, and read-only screens), where the
+   * tiles just display the step's actual assigned machine. */
+  trackChoice?: {
+    selected: TrackChoice;
+    onSelect: (track: TrackChoice) => void;
+  };
 }
 
-export default function StepTimelineRow({ step, isLast, isCompleted }: StepTimelineRowProps) {
+export default function StepTimelineRow({
+  step,
+  isLast,
+  isCompleted,
+  rigMachineNo,
+  craneMachineNo,
+  trackChoice,
+}: StepTimelineRowProps) {
+  // Eligibility for the Crane tile is the step's nominal (business) track, not the
+  // currently-displayed one — once overridden, step.track reads as 'RIG', but the
+  // Crane tile must stay offered so it can be toggled back.
+  const businessTrack = step.businessTrack ?? step.track;
+
   return (
     <View style={[styles.stepRow, isLast && styles.stepRowLast]}>
-      <View style={styles.stepTrackBadge}>
-        <Text
-          style={[
-            styles.stepTrackText,
-            step.track === 'RIG'
-              ? styles.trackRig
-              : step.track === 'CRANE'
-                ? styles.trackCrane
-                : styles.trackCompressor,
-          ]}
-        >
-          {step.track}
-        </Text>
-      </View>
+      {businessTrack === 'COMPRESSOR' ? (
+        <View style={styles.stepTrackBadge}>
+          <Text style={[styles.stepTrackText, styles.trackCompressor]}>{step.track}</Text>
+        </View>
+      ) : (
+        <TrackChoiceTiles
+          rigMachineNo={rigMachineNo}
+          craneMachineNo={businessTrack === 'CRANE' ? craneMachineNo : undefined}
+          selected={trackChoice?.selected ?? (step.track === 'RIG' ? 'RIG' : 'CRANE')}
+          onSelect={trackChoice?.onSelect}
+        />
+      )}
       <View style={styles.stepInfo}>
         <Text style={styles.stepName}>{step.stepName}</Text>
         {isCompleted ? (
@@ -44,18 +65,14 @@ export default function StepTimelineRow({ step, isLast, isCompleted }: StepTimel
           </View>
         ) : (
           <Text style={styles.stepTimes}>
-            {step.plannedStart ? formatTime(step.plannedStart) : '—'}
+            {step.plannedStart ? formatTime(stepWorkStart(step)) : '—'}
             {' → '}
             {isContinuingStep(step) ? 'To be continued' : step.plannedEnd ? formatTime(step.plannedEnd) : '—'}
           </Text>
         )}
       </View>
       <Text style={styles.stepDuration}>
-        {isContinuingStep(step)
-          ? formatDurationMinutes((step.durationMinutes ?? 0) + (step.bufferMinutes ?? 0))
-          : step.plannedStart && step.plannedEnd
-            ? formatDuration(step.plannedStart, step.plannedEnd)
-            : '—'}
+        {formatDurationMinutes(step.durationMinutes ?? 0)}
       </Text>
     </View>
   );
@@ -85,11 +102,8 @@ const styles = StyleSheet.create({
     fontSize: 9,
     letterSpacing: 0.5,
   },
-  // Note: this file's rig/crane colors (violet/blue) are a local, pre-existing
-  // pair that doesn't match theme.ts's rig=orange/crane=blue — not changed here,
-  // compressor just picks a third hue distinct from both of this file's colors.
-  trackRig: { color: '#7c3aed' },
-  trackCrane: { color: '#0369a1' },
+  // COMPRESSOR has no machine-tile UI yet (no compressor assignment exists in the
+  // wizard) — falls back to the old plain badge, this hue distinct from rig/crane.
   trackCompressor: { color: '#B45309' },
   stepInfo: { flex: 1 },
   stepName: {

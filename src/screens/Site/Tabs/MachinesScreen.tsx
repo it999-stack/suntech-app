@@ -102,7 +102,7 @@ export default function MachinesScreen() {
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
       style={styles.flex}
     >
-      <SafeAreaView style={styles.flex} edges={['top']}>
+      <SafeAreaView style={styles.flex} edges={[]}>
         <View style={styles.headerArea}>
           <Text style={styles.pageTitle}>Machines</Text>
           <Text style={styles.pageSubtitle}>
@@ -139,7 +139,6 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   headerArea: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
     paddingBottom: spacing.sm,
   },
   pageTitle: {
@@ -187,7 +186,7 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     ...typography.caption,
-    color: '#ffffff',
+    color: colors.white,
     fontWeight: '700',
     fontSize: 10,
     letterSpacing: 0.4,

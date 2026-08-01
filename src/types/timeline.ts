@@ -6,7 +6,7 @@
 
 import type { MachineKind } from '@/utils/helpers';
 
-export type StopKind = 'active' | 'break' | 'idle';
+export type StopKind = 'active' | 'break' | 'idle' | 'buffer';
 
 export interface TimelineStop {
   id: string;
@@ -38,6 +38,17 @@ export interface TimelineSourceItem {
   groupLabel: string;
   /** Optional detail shown under the title, e.g. the step name. */
   detailLabel?: string;
+  /** Minutes at the start of this item that are buffer, not actual work — split into its own 'buffer' stop. */
+  bufferMinutes?: number;
+}
+
+/** A non-working window (e.g. a lunch break) to carve out of the built stops. */
+export interface NonWorkingWindowInput {
+  id: string;
+  /** Real display label from the source window, e.g. "Lunch". */
+  label: string;
+  start: string | Date;
+  end: string | Date;
 }
 
 export interface BuildMachineStopsOptions {
@@ -48,6 +59,12 @@ export interface BuildMachineStopsOptions {
   /** Gaps at/under this length, within the *same* group, are absorbed into
    *  the stop rather than shown as a break. Default 10. */
   minMergeGapMinutes?: number;
+  /**
+   * Non-working windows to carve out of the built stops, wherever they land
+   * — inside an active stop or inside an idle/break gap. Each carved portion
+   * becomes its own 'break' stop titled with the window's label.
+   */
+  nonWorkingWindows?: NonWorkingWindowInput[];
 }
 
 /** Minimal machine identity consumed by timeline views. */

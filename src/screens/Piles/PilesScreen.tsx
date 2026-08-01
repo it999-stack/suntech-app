@@ -1,26 +1,30 @@
 // src/screens/Piles/PilesScreen.tsx
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  ScrollView,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  LayoutAnimation,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRoute } from '@react-navigation/native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import SearchBar from '@components/piles/SearchBar';
-import PileFilterBar, { PileFilterKey } from '@components/piles/PileFilterBar';
-import PileAccordionItem, { PileItemData } from '@components/piles/PileAccordionItem';
-import { SegmentedToggle } from '@components/shared/SegmentedToggle';
+import { Search, X } from 'lucide-react-native';
+import PileRow, { type PileRowData } from '@components/piles/PileRow';
+import PileStepsModal, { type CompletedStepRow } from '@components/piles/PileStepsModal';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { usePilesAreasStore } from '@store/pilesAreasStore';
 import { usePlan } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
-import { getMachinesBySite } from '@repositories/machinesRepository';
-import type { PilesStackParamList } from '@app-types/navigation';
 import EmptyState from '@/components/shared/EmptyState';
+import { derivePileStatus } from '@utils/helpers';
 
-type Props = NativeStackScreenProps<PilesStackParamList, 'PilesScreen'>;
-
-type ViewMode = 'all' | 'today';
+const PAGE_SIZE = 50;
 
 // Steps carry plannedStart/plannedEnd as ISO-ish datetime strings, so a
 // straight ascending string/Date comparison sorts them chronologically.
@@ -33,188 +37,162 @@ function byPlannedStartAsc<T extends { plannedStart?: string }>(a: T, b: T): num
   return new Date(a.plannedStart).getTime() - new Date(b.plannedStart).getTime();
 }
 
-const VIEW_MODE_OPTIONS = [
-  { label: "Today's Target", value: 'today' as const },
-  { label: 'All Piles', value: 'all' as const },
-];
-
 export default function PilesScreen() {
-  const route = useRoute<Props['route']>();
-  const initialView = route.params?.initialView ?? 'today';
-  const initialFilter = (route.params?.initialFilter as PileFilterKey | undefined) ?? 'all';
-
   const user = useAuthStore((s) => s.user);
 
-  const { piles, isLoading: pilesLoading, error, loadAll } = usePilesAreasStore();
+  const { piles, areas, dimensions, isLoading: pilesLoading, error, loadAll } = usePilesAreasStore();
   const { checklistPiles, planSteps, actualSteps } = usePlan();
 
-  // Load piles + areas for the current site on mount and whenever siteId changes.
   useEffect(() => {
     loadAll(user?.siteId);
   }, [user?.siteId, loadAll]);
 
-  const [machineMap, setMachineMap] = useState<Map<string, string>>(new Map());
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeDimensionId, setActiveDimensionId] = useState<string>('all');
+
+  function toggleSearch(): void {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (searchOpen) {
+      setQuery('');
+      setSearchOpen(false);
+    } else {
+      setSearchOpen(true);
+    }
+  }
+
+  // ── Lookups ──────────────────────────────────────────────────────────────
+  const areaNameById = useMemo(() => new Map(areas.map((a) => [a.id, a.name])), [areas]);
+  const pileById = useMemo(() => new Map(piles.map((p) => [p.id, p])), [piles]);
+
+  const checklistPileByPileId = useMemo(
+    () => new Map(checklistPiles.map((cp) => [cp.pileId, cp])),
+    [checklistPiles],
+  );
+  const planStepsByChecklistPileId = useMemo(() => {
+    const map = new Map<string, typeof planSteps>();
+    for (const s of planSteps) {
+      const list = map.get(s.checklistPileId);
+      if (list) list.push(s);
+      else map.set(s.checklistPileId, [s]);
+    }
+    return map;
+  }, [planSteps]);
+  const actualsByChecklistPileId = useMemo(() => {
+    const map = new Map<string, typeof actualSteps>();
+    for (const a of actualSteps) {
+      const list = map.get(a.checklistPileId);
+      if (list) list.push(a);
+      else map.set(a.checklistPileId, [a]);
+    }
+    return map;
+  }, [actualSteps]);
+
+  function statusForPile(pileId: string): PileRowData['status'] {
+    const cp = checklistPileByPileId.get(pileId);
+    if (!cp) return 'pending';
+    const steps = planStepsByChecklistPileId.get(cp.id) ?? [];
+    const actuals = actualsByChecklistPileId.get(cp.id) ?? [];
+    return derivePileStatus(steps.length, actuals);
+  }
+
+  // ── Dimension pills ──────────────────────────────────────────────────────
+  const pileCountByDimensionId = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const p of piles) map[p.dimensionId] = (map[p.dimensionId] ?? 0) + 1;
+    return map;
+  }, [piles]);
+
+  const dimensionOptions = useMemo(
+    () => dimensions.filter((d) => (pileCountByDimensionId[d.id] ?? 0) > 0),
+    [dimensions, pileCountByDimensionId],
+  );
+
+  // ── Row data + filtering ─────────────────────────────────────────────────
+  const rows = useMemo<PileRowData[]>(
+    () =>
+      piles.map((p) => ({
+        id: p.id,
+        code: p.code,
+        dia: p.dia,
+        depth: p.depth,
+        areaName: p.areaId ? areaNameById.get(p.areaId) ?? null : null,
+        status: statusForPile(p.id),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [piles, areaNameById, checklistPileByPileId, planStepsByChecklistPileId, actualsByChecklistPileId],
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((r) => {
+      const matchesQuery = !q || r.code.toLowerCase().includes(q);
+      const matchesDimension =
+        activeDimensionId === 'all' || pileById.get(r.id)?.dimensionId === activeDimensionId;
+      return matchesQuery && matchesDimension;
+    });
+  }, [rows, query, activeDimensionId, pileById]);
+
+  // ── Pagination (batches of 50, guarded against duplicate onEndReached) ──
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   useEffect(() => {
-    if (!user?.siteId) return;
-    getMachinesBySite(user.siteId).then((machines) => {
-      setMachineMap(new Map(machines.map((m) => [m.id, m.machineNo])));
-    }).catch(() => {});
-  }, [user?.siteId]);
+    setVisibleCount(PAGE_SIZE);
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+  }, [query, activeDimensionId]);
 
-  const [viewMode, setViewMode] = useState<ViewMode>(initialView);
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<PileFilterKey>(initialFilter);
+  useEffect(() => {
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+  }, [visibleCount]);
 
-// ── Build "Today's Target" items from plan context ─────────────────────────
-   const todayItems = useMemo<PileItemData[]>(() => {
-     return checklistPiles.map((cp) => {
-       const pile = piles.find((p) => p.id === cp.pileId);
-       const pileSteps = planSteps
-         .filter((s) => s.checklistPileId === cp.id)
-         .slice()
-         .sort(byPlannedStartAsc);
-       // actualSteps are keyed by checklistPileId + stepId
-       const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
+  function handleEndReached() {
+    if (loadingMoreRef.current) return;
+    if (visibleCount >= filtered.length) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length));
+  }
 
-       // Derive pile status
-       let status: PileItemData['status'] = 'pending';
-       if (pileActuals.some((a) => a.actualStart && !a.actualEnd)) status = 'in_progress';
-       else if (
-         pileSteps.length > 0 &&
-         pileActuals.filter((a) => a.actualEnd).length === pileSteps.length
-       ) status = 'completed';
+  const visibleRows = filtered.slice(0, visibleCount);
 
-       return {
-         id: cp.id,
-         code: pile?.code ?? cp.pileId,
-         dia: pile?.dia ?? 0,
-         depth: pile?.depth ?? 0,
-         rig: machineMap.get(cp.rigId) ?? '—',
-         crane: machineMap.get(cp.craneId) ?? '—',
-         status,
-         steps: pileSteps.map((s) => {
-           const actual = pileActuals.find((a) => a.stepId === s.stepId);
-           return {
-             id: s.id,
-             name: s.stepName ?? '',
-             track: (s.track ?? 'RIG') as 'RIG' | 'CRANE' | 'COMPRESSOR',
-             start: s.plannedStart,
-             end: s.plannedEnd,
-             status: actual?.actualEnd ? 'done' : 'upcoming',
-           } satisfies import('../../components/piles/PileAccordionItem').PlanStep;
-         }),
-       };
-     });
-   }, [checklistPiles, piles, planSteps, actualSteps, machineMap]);
+  // ── Steps modal (computed lazily, only for the tapped pile) ─────────────
+  const [selectedPile, setSelectedPile] = useState<PileRowData | null>(null);
 
-   // ── Build "All Piles" items ─────────────────────────────────────────────────
-   // Cross-reference with today's plan so piles that are planned show live status.
-   const allItems = useMemo<PileItemData[]>(
-     () =>
-       piles.map((p) => {
-         // Check if this pile is in today's plan
-         const cp = checklistPiles.find((c) => c.pileId === p.id);
-         if (!cp) {
-           // Not planned today — show as pending with no steps
-           return {
-             id: p.id,
-             code: p.code,
-             dia: p.dia,
-             depth: p.depth,
-             rig: '—',
-             crane: '—',
-             status: 'pending' as const,
-             steps: [],
-           };
-         }
-
-         // Planned today — derive live status from actuals
-         const pileSteps = planSteps
-           .filter((s) => s.checklistPileId === cp.id)
-           .slice()
-           .sort(byPlannedStartAsc);
-         const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
-
-         let status: PileItemData['status'] = 'pending';
-         if (pileActuals.some((a) => a.actualStart && !a.actualEnd)) status = 'in_progress';
-         else if (
-           pileSteps.length > 0 &&
-           pileActuals.filter((a) => a.actualEnd).length === pileSteps.length
-         ) status = 'completed';
-
-         return {
-           id: p.id,
-           code: p.code,
-           dia: p.dia,
-           depth: p.depth,
-           rig: machineMap.get(cp.rigId) ?? '—',
-           crane: machineMap.get(cp.craneId) ?? '—',
-           status,
-           steps: pileSteps.map((s) => {
-             const actual = pileActuals.find((a) => a.stepId === s.stepId);
-             return {
-               id: s.id,
-               name: s.stepName ?? '',
-               track: (s.track ?? 'RIG') as 'RIG' | 'CRANE' | 'COMPRESSOR',
-               start: s.plannedStart,
-               end: s.plannedEnd,
-               status: actual?.actualEnd ? 'done' : 'upcoming',
-             } satisfies import('../../components/piles/PileAccordionItem').PlanStep;
-           }),
-         };
-       }),
-     [piles, checklistPiles, planSteps, actualSteps, machineMap],
-   );
-
-  // ── Filter ──────────────────────────────────────────────────────────────────
-  const sourceItems = viewMode === 'today' ? todayItems : allItems;
-  const filtered = useMemo(() => {
-    return sourceItems.filter((p) => {
-      const matchesQuery = p.code.toLowerCase().includes(query.trim().toLowerCase());
-      const matchesFilter = filter === 'all' || p.status === filter;
-      return matchesQuery && matchesFilter;
-    });
-  }, [sourceItems, query, filter]);
+  const selectedPileSteps = useMemo<CompletedStepRow[]>(() => {
+    if (!selectedPile) return [];
+    const cp = checklistPileByPileId.get(selectedPile.id);
+    if (!cp) return [];
+    const steps = (planStepsByChecklistPileId.get(cp.id) ?? []).slice().sort(byPlannedStartAsc);
+    const actuals = actualsByChecklistPileId.get(cp.id) ?? [];
+    return steps
+      .map((s) => {
+        const actual = actuals.find((a) => a.stepId === s.stepId);
+        return actual?.actualEnd && actual.actualStart
+          ? {
+              id: s.id,
+              name: s.stepName ?? '',
+              track: (s.track ?? 'RIG') as CompletedStepRow['track'],
+              actualStart: actual.actualStart,
+              actualEnd: actual.actualEnd,
+            }
+          : null;
+      })
+      .filter((s): s is CompletedStepRow => s !== null);
+  }, [selectedPile, checklistPileByPileId, planStepsByChecklistPileId, actualsByChecklistPileId]);
 
   const shownCount = filtered.length;
 
-  function getEmptyStateContent() {
-    if (viewMode === 'today' && checklistPiles.length === 0) {
-      return {
-        icon: 'calendar' as const,
-        title: 'No plan generated',
-        message: 'Go to Home to create a plan for today.',
-      };
-    }
-    if (viewMode === 'today') {
-      return {
-        icon: 'search' as const,
-        title: 'No matches',
-        message: 'No piles match your filter.',
-      };
-    }
-    if (piles.length === 0) {
-      return {
-        icon: 'download' as const,
-        title: 'No piles synced',
-        message: 'No piles synced yet. Pull data from the Profile tab.',
-      };
-    }
-    return {
-      icon: 'search' as const,
-      title: 'No matches',
-      message: 'No piles match your search or filter.',
-    };
-  }
-
-  // ── Loading ─────────────────────────────────────────────────────────────────
+  // ── Loading ─────────────────────────────────────────────────────────────
   if (pilesLoading) {
     return (
       <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
         <SafeAreaView style={[styles.flex, styles.center]} edges={['top']}>
           <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={[styles.emptyText, { marginTop: spacing.md }]}>Loading piles…</Text>
+          <Text style={styles.emptyText}>Loading piles…</Text>
         </SafeAreaView>
       </LinearGradient>
     );
@@ -235,30 +213,86 @@ export default function PilesScreen() {
             </View>
           </View>
 
-          <SegmentedToggle options={VIEW_MODE_OPTIONS} value={viewMode} onChange={setViewMode} />
-          
-          <SearchBar value={query} onChangeText={setQuery} />
-          <PileFilterBar active={filter} onChange={setFilter} />
+          <View style={styles.toolbarRow}>
+            <View style={styles.flexSlot}>
+              {searchOpen ? (
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search piles by code"
+                  placeholderTextColor={colors.textSecondary}
+                  style={styles.input}
+                  autoFocus
+                  returnKeyType="search"
+                />
+              ) : dimensionOptions.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
+                  <Pill
+                    label={`All (${piles.length})`}
+                    active={activeDimensionId === 'all'}
+                    onPress={() => setActiveDimensionId('all')}
+                  />
+                  {dimensionOptions.map((d) => (
+                    <Pill
+                      key={d.id}
+                      label={`${d.label && d.label.trim() ? d.label : `Ø${d.dia}mm · ${d.depth}m`} (${pileCountByDimensionId[d.id] ?? 0})`}
+                      active={activeDimensionId === d.id}
+                      onPress={() => setActiveDimensionId(d.id)}
+                    />
+                  ))}
+                </ScrollView>
+              ) : null}
+            </View>
+
+            <Pressable style={styles.iconBtn} onPress={toggleSearch} hitSlop={spacing.sm}>
+              {searchOpen ? <X size={16} color={colors.textSecondary} /> : <Search size={16} color={colors.textSecondary} />}
+            </Pressable>
+          </View>
         </View>
 
-        {/* Scrollable list */}
-        <ScrollView
+        {/* Paginated list */}
+        <FlatList
+          data={visibleRows}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <PileRow pile={item} onPress={() => setSelectedPile(item)} />}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-        >
-          {error && <Text style={styles.errorText}>⚠ {error}</Text>}
+          onEndReachedThreshold={0.4}
+          onEndReached={handleEndReached}
+          ListHeaderComponent={error ? <Text style={styles.errorText}>⚠ {error}</Text> : null}
+          ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={colors.accent} style={styles.footerSpinner} /> : null}
+          ListEmptyComponent={
+            !error ? (
+              <EmptyState
+                icon={piles.length === 0 ? 'download' : 'search'}
+                title={piles.length === 0 ? 'No piles synced' : 'No matches'}
+                message={
+                  piles.length === 0
+                    ? 'No piles synced yet. Pull data from the Profile tab.'
+                    : 'No piles match your search or filter.'
+                }
+              />
+            ) : null
+          }
+        />
 
-          {filtered.map((pile) => (
-            <PileAccordionItem key={pile.id} pile={pile} />
-          ))}
-
-          {filtered.length === 0 && !error && (
-            <EmptyState {...getEmptyStateContent()} />
-          )}
-        </ScrollView>
+        <PileStepsModal
+          visible={!!selectedPile}
+          onClose={() => setSelectedPile(null)}
+          pileCode={selectedPile?.code ?? ''}
+          steps={selectedPileSteps}
+        />
       </SafeAreaView>
     </LinearGradient>
+  );
+}
+
+function Pill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable style={[styles.pill, active && styles.pillActive]} onPress={onPress}>
+      <Text style={[styles.pillText, active && styles.pillTextActive]} numberOfLines={1}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -268,7 +302,7 @@ const styles = StyleSheet.create({
 
   headerArea: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
+    paddingVertical: spacing.sm,
     gap: spacing.md,
   },
 
@@ -295,18 +329,63 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
 
+  toolbarRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  flexSlot: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  input: {
+    ...typography.caption,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    color: colors.textPrimary,
+  },
+  iconBtn: {
+    padding: spacing.sm,
+    aspectRatio: 1,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  pill: {
+    minWidth: 84,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.glassFill,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  pillText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  pillTextActive: { color: colors.textInverse },
+
   listContent: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.xxxl,
-    gap: spacing.md,
+  },
+
+  footerSpinner: {
+    marginVertical: spacing.lg,
   },
 
   emptyText: {
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'center',
-    marginTop: spacing.xxl,
+    marginTop: spacing.md,
   },
 
   errorText: {

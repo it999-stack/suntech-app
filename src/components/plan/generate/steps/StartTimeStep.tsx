@@ -7,49 +7,106 @@
 
 import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Calendar, Pencil, Clock } from 'lucide-react-native';
+import { Calendar, Pencil, Clock, Briefcase, HardHat } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
+import AppModal from '@components/shared/AppModal';
+import PersonnelPickerList, { type SimplePersonnel } from '@components/shared/PersonnelPickerList';
 import TimerSelectMenu from '@/components/shared/TimerSelectMenu';
 import { TimelineStopLog } from '@/components/shared/timeline/MachineStopTimeline';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { type PlanDraft, planEndTime } from '@/types/plan';
 import type { TimelineStop } from '@/types/timeline';
-import { formatTime, toLocalIsoString } from '@/utils/formatTime';
+import { matchesRoleDesignation } from '@/utils/personnelRoles';
+import { formatTime, toLocalIsoString, toLocalDateStr, formatRelativeDayLabel } from '@/utils/formatTime';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function toLocalDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-/**
- * "Today" / "Tomorrow" / "Jul 13" label for an ISO timestamp, relative to now.
- * Not in formatTime.ts (which only formats absolute dates) — kept local since
- * it's specific to this banner's relative-day framing.
- */
-function fmtPlanDate(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  const tomorrow = new Date();
-  tomorrow.setDate(today.getDate() + 1);
-  if (toLocalDateStr(d) === toLocalDateStr(today)) return 'Today';
-  if (toLocalDateStr(d) === toLocalDateStr(tomorrow)) return 'Tomorrow';
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
+const fmtPlanDate = (iso: string) =>
+  formatRelativeDayLabel(iso, { neighbor: 'tomorrow', dateFormatOptions: { month: 'short', day: 'numeric' } });
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface StartTimeStepProps {
   draft: PlanDraft;
   onUpdate: (patch: Partial<PlanDraft>) => void;
+  personnel: SimplePersonnel[];
 }
 
-export default function StartTimeStep({ draft, onUpdate }: StartTimeStepProps) {
+function RolePickerCard({
+  icon,
+  label,
+  personnel,
+  selectedId,
+  onSelect,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  personnel: SimplePersonnel[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = personnel.find((p) => p.id === selectedId);
+  const isRequired = !selected;
+
+  return (
+    <>
+      <Pressable onPress={() => setOpen(true)}>
+        {({ pressed }) => (
+          <GlassCard
+            innerStyle={[
+              styles.startPad,
+              isRequired && styles.startPadRequired,
+              pressed && styles.startPadPressed,
+            ]}
+          >
+            <View style={styles.startRow}>
+              <View style={[styles.startIconWrap, isRequired && styles.startIconWrapRequired]}>
+                {React.isValidElement(icon)
+                  ? React.cloneElement(icon as React.ReactElement<{ color?: string }>, {
+                      color: isRequired ? colors.warning : colors.accent,
+                    })
+                  : icon}
+              </View>
+              <View style={styles.startTextWrap}>
+                <Text style={styles.startLabel}>{label}</Text>
+                <Text style={[styles.startValue, isRequired && styles.startValueRequired]}>
+                  {selected ? selected.name : 'Not assigned'}
+                </Text>
+              </View>
+              <Pencil size={18} color={isRequired ? colors.warning : colors.textSecondary} />
+            </View>
+          </GlassCard>
+        )}
+      </Pressable>
+
+      <AppModal visible={open} onClose={() => setOpen(false)} title={label} position="center">
+        <PersonnelPickerList
+          personnel={personnel}
+          selectedId={selectedId}
+          onSelect={(id) => {
+            onSelect(id);
+            setOpen(false);
+          }}
+          allowNone={false}
+        />
+      </AppModal>
+    </>
+  );
+}
+
+export default function StartTimeStep({ draft, onUpdate, personnel }: StartTimeStepProps) {
   const endIso = planEndTime(draft.planStartTime);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
+
+  const projectManagers = useMemo(
+    () => personnel.filter((p) => matchesRoleDesignation('PROJECT_MANAGER', p.designation)),
+    [personnel],
+  );
+  const planningEngineers = useMemo(
+    () => personnel.filter((p) => matchesRoleDesignation('PLANNING_ENGINEER', p.designation)),
+    [personnel],
+  );
   const windowStops = useMemo<TimelineStop[]>(
     () => [
       {
@@ -103,21 +160,39 @@ export default function StartTimeStep({ draft, onUpdate }: StartTimeStepProps) {
         )}
       </Pressable>
 
+      <RolePickerCard
+        icon={<Briefcase size={20} color={colors.accent} />}
+        label="Project Manager"
+        personnel={projectManagers}
+        selectedId={draft.checklistPersonnel.projectManagerId}
+        onSelect={(id) =>
+          onUpdate({ checklistPersonnel: { ...draft.checklistPersonnel, projectManagerId: id } })
+        }
+      />
+
+      <RolePickerCard
+        icon={<HardHat size={20} color={colors.accent} />}
+        label="Planning Engineer"
+        personnel={planningEngineers}
+        selectedId={draft.checklistPersonnel.planningEngineerId}
+        onSelect={(id) =>
+          onUpdate({ checklistPersonnel: { ...draft.checklistPersonnel, planningEngineerId: id } })
+        }
+      />
+
       {/* Uses the same stop-log component and card treatment as the machine timeline. */}
-      <Pressable onPress={() => setTimePickerOpen(true)}>
-        {({ pressed }) => (
-          <GlassCard borderless innerStyle={[styles.timelinePad, pressed && styles.timelinePadPressed]}>
-            <View style={styles.timelineHeader}>
-              <Clock size={16} color={colors.accent} />
-              <View>
-                <Text style={styles.timelineTitle}>Plan Timeline</Text>
-                <Text style={styles.timelineSubtitle}>24-hour window · tap to change start time</Text>
-              </View>
-            </View>
-            <TimelineStopLog stops={windowStops} activeColor={colors.accent} />
-          </GlassCard>
-        )}
-      </Pressable>
+      <GlassCard borderless innerStyle={styles.timelinePad}>
+        <View style={styles.timelineHeader}>
+          <View style={styles.startIconWrap}>
+            <Clock size={20} color={colors.accent} />
+          </View>
+          <View>
+            <Text style={styles.timelineTitle}>Plan Timeline</Text>
+            <Text style={styles.timelineSubtitle}>24-hour window</Text>
+          </View>
+        </View>
+        <TimelineStopLog stops={windowStops} activeColor={colors.accent} />
+      </GlassCard>
 
       <TimerSelectMenu
         visible={timePickerOpen}
@@ -134,6 +209,10 @@ export default function StartTimeStep({ draft, onUpdate }: StartTimeStepProps) {
 const styles = StyleSheet.create({
   // Start card
   startPad: { padding: spacing.lg },
+  startPadRequired: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.warning,
+  },
   startPadPressed: { backgroundColor: 'rgba(28,28,46,0.04)' },
   startRow: {
     flexDirection: 'row',
@@ -147,6 +226,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  startIconWrapRequired: {
+    backgroundColor: 'rgba(255,149,0,0.16)',
   },
   startTextWrap: { flex: 1 },
   startLabel: {
@@ -163,10 +245,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     color: colors.textPrimary,
   },
+  startValueRequired: {
+    color: colors.warning,
+  },
 
   // Timeline card
   timelinePad: { padding: spacing.lg, marginTop: spacing.md },
-  timelinePadPressed: { backgroundColor: 'rgba(28,28,46,0.04)' },
   timelineHeader: {
     flexDirection: 'row',
     alignItems: 'center',

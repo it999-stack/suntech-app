@@ -87,3 +87,26 @@ export function computeTotalDuration(steps: PlanStepWithMeta[]): number {
     return sum + (stepNaturalEndMs(s) - new Date(s.plannedStart).getTime()) / 60000;
   }, 0);
 }
+
+/** Sum of durationMinutes + bufferMinutes for steps assigned to a specific machine — the
+ * time that machine is actually occupied on this pile. Buffer time is included since it's
+ * genuinely reserved on the machine's timeline, not idle. */
+export function computeMachineOccupancyMinutes(steps: PlanStepWithMeta[], machineId: string): number {
+  return steps
+    .filter((s) => s.assignedMachineId === machineId)
+    .reduce((sum, s) => sum + (s.durationMinutes ?? 0) + (s.bufferMinutes ?? 0), 0);
+}
+
+/** Count of (pile, step) entries that differ between two step-track-override maps — used
+ * both to gate a Confirm action and to show "N reassigned" without a full deep-equal helper. */
+export function countOverrideDiff(a: Record<string, string[]>, b: Record<string, string[]>): number {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  let count = 0;
+  for (const key of keys) {
+    const av = new Set(a[key] ?? []);
+    const bv = new Set(b[key] ?? []);
+    for (const id of av) if (!bv.has(id)) count++;
+    for (const id of bv) if (!av.has(id)) count++;
+  }
+  return count;
+}

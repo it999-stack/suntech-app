@@ -1,32 +1,44 @@
 // src/theme/theme.ts
-// Design tokens for the liquid-glass visual system.
-// Backdrop: soft indigo/lavender gradient. Surfaces: frosted glass cards.
-// Accent: calm indigo — deliberately not construction-site orange/yellow,
-// so the app reads as a considered tool rather than a hazard sign.
+//
+// Design tokens for the light glassmorphism visual system.
+// Backdrop: soft cream / blush / lavender wash (no strong hue dominates).
+// Surfaces: frosted white cards over that wash, bold near-black text
+// carrying the hierarchy instead of color. Indigo stays the primary accent
+// for actions; pink is a secondary accent reserved for small badges.
+
+// Backdrop gradient stops — declared standalone so backdropGradient below can
+// bundle them into a reusable array without duplicating the hex values.
+const backdropStart = '#dae5f3';
+const backdropMid = '#eaecf8';
+const backdropEnd = '#EBD8D6';
 
 export const colors = {
   // Backdrop gradient stops (used with expo-linear-gradient)
-  backdropStart: '#EEF2FF',
-  backdropMid: '#E0E7FF',
-  backdropEnd: '#F5F3FF',
+  backdropStart,
+  backdropMid,
+  backdropEnd,
 
   // border / divider / muted text
-  border: 'rgba(28,28,46,0.08)',
+  border: 'rgba(20,20,31,0.08)',
 
-  // Glass surfaces
-  glassFill: 'rgba(255,255,255,0.55)',
-  glassFillStrong: 'rgba(255,255,255,0.72)',
-  glassBorder: 'rgba(255,255,255,0.8)',
-  glassShadow: 'rgba(91,95,239,0.15)',
+  // Glass surfaces — lighter and less tinted than before, so cards read as
+  // frosted-over-light rather than frosted-over-color
+  glassFill: 'rgba(255,255,255,0.65)',
+  glassFillStrong: 'rgba(255,255,255,0.85)',
+  glassBorder: 'rgba(255,255,255,0.85)',
+  glassShadow: 'rgba(20,20,31,0.08)',
 
-  // Text
-  textPrimary: '#1C1C2E',
-  textSecondary: '#6B6B80',
+  // Text — near-black instead of navy, for the bold-headline look
+  textPrimary: '#14141F',
+  textSecondary: '#8A8A94',
   textInverse: '#FFFFFF',
 
-  // Accent
-  accent: '#5B5FEF',
-  accentSoft: 'rgba(91,95,239,0.12)',
+  // Accent — indigo for primary actions, pink as a secondary badge accent
+  accent: '#14141F',
+  accentPink: '#E8467C',
+  accentBlue: '#66b5da',
+  accentSoft: 'rgba(91,95,239,0.10)',
+  accentPinkSoft: 'rgba(232,70,124,0.10)',
 
   // Status
   success: '#34C759',
@@ -41,7 +53,16 @@ export const colors = {
   black: '#000000',
   transparent: 'transparent',
 
-  // Machine visualizations (timelines, charts, chips)
+  // Decorative gradient blob (used behind gradient-tile quick actions)
+  blobStops: ['#FBD9C4', '#F3B7A6', '#D9C9F0'] as [string, string, string],
+
+  // GradientTile backgrounds (src/components/shared/GradientTile.tsx) — the
+  // app's own screen-backdrop wash, reusable as a tile/card background, and a
+  // lighter cream-only alternative for a second tile sitting next to it.
+  backdropGradient: [backdropStart, backdropMid, backdropEnd] as [string, string, string],
+  creamGradient: ['#FFFFFF', '#FDF6F3'] as [string, string],
+
+  // Machine visualizations (timelines, charts, chips) — unchanged
   machine: {
     rigColors: ['#EA580C', '#F97316', '#FB923C', '#FDBA74'],
     craneColors: ['#0369A1', '#0284C7', '#38BDF8', '#7DD3FC'],
@@ -81,8 +102,6 @@ export const spacing = {
   xxxl: 48,
 } as const;
 
-// Reduced to match the flatter, tighter-corner mockups (~8px controls,
-// ~12px cards) instead of the previous rounder 10/16/22/28 scale.
 export const radius = {
   sm: 8,
   md: 12,
@@ -93,7 +112,7 @@ export const radius = {
 
 export const typography = {
   greeting: { fontSize: 15, fontWeight: '500' as const, letterSpacing: 0.2 },
-  h1: { fontSize: 30, fontWeight: '700' as const, letterSpacing: -0.4 },
+  h1: { fontSize: 30, fontWeight: '700' as const, letterSpacing: -0.5 },
   h2: { fontSize: 20, fontWeight: '600' as const, letterSpacing: -0.2 },
   pageTitle: { fontSize: 22, fontWeight: '700' as const, letterSpacing: -0.4 },
   label: { fontSize: 13, fontWeight: '500' as const, letterSpacing: 0.2 },
@@ -109,8 +128,8 @@ export const shadow = {
     shadowColor: colors.glassShadow,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 1,
-    shadowRadius: 24,
-    elevation: 6,
+    shadowRadius: 20,
+    elevation: 4,
   },
   soft: {
     shadowColor: '#000000',

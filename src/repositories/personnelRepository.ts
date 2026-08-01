@@ -1,7 +1,7 @@
 // src/repositories/personnelRepository.ts
 // CRUD helpers for piling_site_personnel in local SQLite.
 
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingSitePersonnel,
@@ -44,6 +44,15 @@ export async function getPersonnelBySite(siteId: string): Promise<PilingSitePers
     .where(eq(pilingSitePersonnel.siteId, siteId))
     .orderBy(pilingSitePersonnel.name)
     .all();
+}
+
+/**
+ * Hard-delete locally cached personnel the server has soft-deleted.
+ */
+export async function deletePersonnelByIds(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await initDb();
+  await db.delete(pilingSitePersonnel).where(inArray(pilingSitePersonnel.id, ids));
 }
 
 /**

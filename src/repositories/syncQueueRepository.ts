@@ -2,7 +2,7 @@
 // Durable offline outbox: tracks which checklists have local changes not yet
 // confirmed synced to the server. At most one row per checklistId.
 
-import { eq, inArray, or } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import { pilSyncQueue, type PilSyncQueueRow } from '@db/schema';
 import { generateId } from '@/utils/helpers';
@@ -57,11 +57,25 @@ export async function markSyncing(checklistIds: string[]): Promise<void> {
     .where(inArray(pilSyncQueue.checklistId, checklistIds));
 }
 
-/** Success — remove from the queue entirely. */
+/**
+ * Success — remove from the queue, but only rows still `'syncing'`. If a row
+ * was re-enqueued (back to `'pending'`) by a local write that landed after
+ * this batch was read but before the push resolved, it must survive so the
+ * new edit gets picked up by the next flush instead of being silently lost.
+ */
 export async function markSynced(checklistIds: string[]): Promise<void> {
   if (!checklistIds.length) return;
   const db = await initDb();
-  await db.delete(pilSyncQueue).where(inArray(pilSyncQueue.checklistId, checklistIds));
+  await db
+    .delete(pilSyncQueue)
+    .where(and(inArray(pilSyncQueue.checklistId, checklistIds), eq(pilSyncQueue.status, 'syncing')));
+}
+
+/** Checklist ids with any unsynced local change — a row only exists here while dirty. */
+export async function getDirtyChecklistIds(): Promise<string[]> {
+  const db = await initDb();
+  const rows = await db.select({ checklistId: pilSyncQueue.checklistId }).from(pilSyncQueue).all();
+  return rows.map((r) => r.checklistId);
 }
 
 /** Failure — stays in the queue, retried on the next flush. */

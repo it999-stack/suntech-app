@@ -1,26 +1,24 @@
 // src/screens/Home/PlanDetailScreen.tsx
 //
 // Read-only view of an existing plan, styled to match the preview step design.
-// Shows the plan window, supervisors, machine timeline, and per-pile accordions.
+// Shows the plan window, core team, machine timeline, and per-pile accordions.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RouteProp, useRoute } from '@react-navigation/native';
-import { Clock, Users, RefreshCw } from 'lucide-react-native';
-import GlassCard from '@components/shared/GlassCard';
-import Accordion from '@components/shared/Accordion';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { RefreshCw } from 'lucide-react-native';
+import { colors, spacing, typography } from '@theme/theme';
 import { HomeStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
 import { apiClient } from '@services/apiClient';
 import {
   getChecklistById,
   getChecklistPiles,
+  getChecklistPersonnel,
   hydrateChecklistFromServer,
 } from '@repositories/checklistRepository';
-import { formatTime } from '@utils/formatTime';
 import {
   getPlanStepsForChecklist,
   getActualStepsForChecklist,
@@ -34,8 +32,9 @@ import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import type { PilingDailyChecklist, PilingSitePersonnel, PilingShiftType, PilingChecklistPile, PilingMachine } from '@db/schema';
 import PilesAccordion from '@components/plan/generate/preview/PilesAccordion';
 import MachineTimelineAccordion from '@components/plan/generate/preview/MachineTimelineAccordion';
+import CoreTeamAccordion from '@components/plan/generate/preview/CoreTeamAccordion';
+import PlanWindowBar from '@components/plan/generate/preview/PlanWindowBar';
 import { fmtPlanTime as formatPlanTime, planEndTime } from '@/types/plan';
-import { formatMinutes, computeWorkingMinutes, computeElapsedMinutes } from '@components/plan/generate/preview/previewUtils';
 import { type MachineInfo } from '@/types/timeline';
 import type { PreviewPile } from '@app-types/previewTypes';
 
@@ -55,11 +54,14 @@ export default function PlanDetailScreen() {
   const [planSteps, setPlanSteps] = useState<PlanStepWithMeta[]>([]);
   const [actualSteps, setActualSteps] = useState<ActualStepWithMeta[]>([]);
   const [detailPiles, setDetailPiles] = useState<PreviewPile[]>([]);
-  const [supervisors, setSupervisors] = useState<PilingSitePersonnel[]>([]);
+  const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
   const [shifts, setShifts] = useState<PilingShiftType[]>([]);
   const [checklistPiles, setChecklistPiles] = useState<PilingChecklistPile[]>([]);
   const [rigs, setRigs] = useState<PilingMachine[]>([]);
   const [cranes, setCranes] = useState<PilingMachine[]>([]);
+  const [checklistPersonnel, setChecklistPersonnelRows] = useState<
+    Awaited<ReturnType<typeof getChecklistPersonnel>>
+  >([]);
 
   // Reads whatever is currently cached in local SQLite — used both on mount
   // and after a refresh has pulled fresh data down from the server. Plans
@@ -88,11 +90,12 @@ export default function PlanDetailScreen() {
     const rigs = await getMachinesByType(user.siteId!, 'RIG');
     const cranes = await getMachinesByType(user.siteId!, 'CRANE');
 
-    // Load supervisors
-    const supervisorIds: string[] = [];
-    if (cl?.supervisorId) supervisorIds.push(cl.supervisorId);
-    if (cl?.supervisorId2) supervisorIds.push(cl.supervisorId2);
-    const supervisorList = supervisorIds.length > 0 ? await getPersonnelByIds(supervisorIds) : [];
+    // Load every checklist-personnel role assignment (Leadership, Shift
+    // Incharge, and per-machine Engineer/Supervisor/Operator), resolving
+    // every referenced person in one batch for the merged Core Team card.
+    const personnelRows = cl ? await getChecklistPersonnel(cl.id) : [];
+    const personnelIds = [...new Set(personnelRows.map((r) => r.personnelId))];
+    const personnelList = personnelIds.length > 0 ? await getPersonnelByIds(personnelIds) : [];
 
     // Load shifts
     const shiftsList = await getAllShiftTypes();
@@ -100,7 +103,8 @@ export default function PlanDetailScreen() {
     setChecklist(cl ?? null);
     setPlanSteps(steps);
     setActualSteps(actuals);
-    setSupervisors(supervisorList);
+    setPersonnel(personnelList);
+    setChecklistPersonnelRows(personnelRows);
     setShifts(shiftsList);
     setChecklistPiles(cpList);
     setRigs(rigs);
@@ -119,6 +123,8 @@ export default function PlanDetailScreen() {
         depth: pile?.depth ?? 0,
         rigMachineNo: rigNo,
         craneMachineNo: craneNo,
+        rigId: cp.rigId,
+        craneId: cp.craneId,
       };
     });
     setDetailPiles(builtPiles);
@@ -156,20 +162,40 @@ export default function PlanDetailScreen() {
 
   // Compute derived values
   const endIso = checklist?.planStartTime ? planEndTime(checklist.planStartTime) : '';
-  const workingMinutes = useMemo(() => computeWorkingMinutes(planSteps), [planSteps]);
-  const elapsedMinutes = useMemo(() => computeElapsedMinutes(planSteps), [planSteps]);
-  const progressPct = elapsedMinutes > 0
-    ? Math.min(100, Math.round((workingMinutes / elapsedMinutes) * 100))
-    : 0;
 
-  // Supervisor display data
-  const supervisor1 = supervisors.find((s) => checklist && s.id === checklist.supervisorId);
-  const supervisor2 = supervisors.find((s) => checklist && s.id === checklist.supervisorId2);
-  
+  // ── Leadership detail (Project Manager / Planning Engineer) ─────────────
+  const leadershipDetail = useMemo(() => {
+    const pmId = checklistPersonnel.find((r) => r.role === 'PROJECT_MANAGER')?.personnelId;
+    const peId = checklistPersonnel.find((r) => r.role === 'PLANNING_ENGINEER')?.personnelId;
+    const pm = personnel.find((p) => p.id === pmId);
+    const pe = personnel.find((p) => p.id === peId);
+    return {
+      pmName: pm?.name ?? null,
+      pmDesignation: pm?.designation ?? null,
+      peName: pe?.name ?? null,
+      peDesignation: pe?.designation ?? null,
+    };
+  }, [checklistPersonnel, personnel]);
+
+  // ── Shift incharge detail ────────────────────────────────────────────────
   const shift1 = shifts[0];
   const shift2 = shifts[1];
-  const shift1Name = shift1?.name ?? 'Shift 1';
-  const shift2Name = shift2?.name ?? 'Shift 2';
+  const shiftInchargeDetail = useMemo(() => {
+    const s1 = shift1 ? `${shift1.name} (${shift1.startTime}–${shift1.endTime})` : 'Shift 1';
+    const s2 = shift2 ? `${shift2.name} (${shift2.startTime}–${shift2.endTime})` : 'Shift 2';
+    const si1Id = checklistPersonnel.find((r) => r.role === 'SHIFT_INCHARGE' && r.shiftSlot === 1)?.personnelId;
+    const si2Id = checklistPersonnel.find((r) => r.role === 'SHIFT_INCHARGE' && r.shiftSlot === 2)?.personnelId;
+    const si1 = personnel.find((p) => p.id === si1Id);
+    const si2 = personnel.find((p) => p.id === si2Id);
+    return {
+      shift1Label: s1,
+      shift1Name: si1?.name ?? null,
+      shift1Designation: si1?.designation ?? null,
+      shift2Label: s2,
+      shift2Name: si2?.name ?? null,
+      shift2Designation: si2?.designation ?? null,
+    };
+  }, [shift1, shift2, checklistPersonnel, personnel]);
 
   // Machine info for timeline — id must be the real machine UUID (matching
   // plan_steps.assignedMachineId), not the display machineNo, or
@@ -183,6 +209,23 @@ export default function PlanDetailScreen() {
     ];
   }, [checklistPiles, rigs, cranes]);
 
+  // ── Machine teams detail (Engineer / Supervisor / Operator per machine) ──
+  const machineTeams = useMemo(() => {
+    return machineInfos.map((m) => {
+      const engineerId = checklistPersonnel.find((r) => r.role === 'ENGINEER' && r.machineId === m.id)?.personnelId;
+      const supervisorId = checklistPersonnel.find((r) => r.role === 'SUPERVISOR' && r.machineId === m.id)?.personnelId;
+      const operatorId = checklistPersonnel.find((r) => r.role === 'MACHINE_OPERATOR' && r.machineId === m.id)?.personnelId;
+      return {
+        id: m.id,
+        machineNo: m.machineNo,
+        type: m.type,
+        engineerName: personnel.find((p) => p.id === engineerId)?.name ?? null,
+        supervisorName: personnel.find((p) => p.id === supervisorId)?.name ?? null,
+        operatorName: personnel.find((p) => p.id === operatorId)?.name ?? null,
+      };
+    });
+  }, [machineInfos, checklistPersonnel, personnel]);
+
   // Pile label map for timeline
   const pileLabelById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -191,26 +234,6 @@ export default function PlanDetailScreen() {
     });
     return map;
   }, [detailPiles]);
-
-  // Steps sorted by sequence
-  const sortedSteps = useMemo(() => {
-    return [...planSteps].sort((a, b) => (a.sequenceOrder ?? 0) - (b.sequenceOrder ?? 0));
-  }, [planSteps]);
-
-  // Supervisor summary
-  const supervisorSummary = [supervisor1?.name, supervisor2?.name]
-    .filter(Boolean)
-    .join(' · ') || 'None assigned';
-
-  // Selected step count
-  const selectedStepsCount = sortedSteps.length;
-
-  // "Last synced" reflects pilingDailyChecklists.updatedAt, which is only
-  // ever stamped by hydrateChecklistFromServer — i.e. the last time this
-  // screen's data was confirmed from the server, not just touched locally.
-  const lastSyncedLabel = checklist?.updatedAt
-    ? formatTime(new Date(checklist.updatedAt).toISOString())
-    : null;
 
   if (loading) {
     return (
@@ -228,19 +251,7 @@ export default function PlanDetailScreen() {
       <SafeAreaView style={styles.flex} edges={['top']}>
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
-            <View style={styles.flexShrink}>
-              <Text style={styles.pageTitle}>Plan Detail</Text>
-              {checklist?.date && (
-                <Text style={styles.dateText}>
-                  {new Date(checklist.date).toLocaleDateString('en-IN', {
-                    weekday: 'short',
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric',
-                  })}
-                </Text>
-              )}
-            </View>
+            <Text style={styles.pageTitle}>Plan Detail</Text>
             <Pressable
               onPress={handleRefresh}
               disabled={refreshing}
@@ -255,77 +266,24 @@ export default function PlanDetailScreen() {
               )}
             </Pressable>
           </View>
-          {(refreshError || lastSyncedLabel) && (
-            <Text style={[styles.syncText, refreshError && styles.syncTextError]}>
-              {refreshError ?? `Last synced at ${lastSyncedLabel}`}
-            </Text>
-          )}
+          {refreshError && <Text style={styles.syncTextError}>{refreshError}</Text>}
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* ── Main card ─────────────────────────────────────────────────────── */}
-          <GlassCard innerStyle={styles.mainPad}>
-            <View style={styles.mainHeaderRow}>
-              <Clock size={16} color={colors.accent} />
-              <Text style={styles.mainLabel}>Plan Window</Text>
-            </View>
-            <Text style={styles.mainWindowValue}>
-              {checklist?.planStartTime ? formatPlanTime(checklist.planStartTime) : '—'} → {endIso ? formatPlanTime(endIso) : '—'}
-            </Text>
+          <PlanWindowBar
+            startLabel={checklist?.planStartTime ? formatPlanTime(checklist.planStartTime) : '—'}
+            endLabel={endIso ? formatPlanTime(endIso) : '—'}
+            show
+          />
 
-            <View style={styles.statGrid}>
-              <View style={styles.statBox}>
-                <Text style={styles.statLabel}>Working time</Text>
-                <Text style={styles.statValue}>{formatMinutes(workingMinutes)}</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statLabel}>Elapsed (incl. breaks)</Text>
-                <Text style={styles.statValue}>{formatMinutes(elapsedMinutes)}</Text>
-              </View>
-            </View>
-
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
-            </View>
-
-            <View style={styles.mainFooterRow}>
-              <View>
-                <Text style={styles.footerLabel}>Piles in plan</Text>
-                <Text style={styles.footerValue}>{detailPiles.length}</Text>
-              </View>
-              <View style={styles.footerRight}>
-                <Text style={styles.footerLabel}>Total steps</Text>
-                <Text style={styles.footerValue}>{selectedStepsCount}</Text>
-              </View>
-            </View>
-          </GlassCard>
-
-          {/* ── Supervisors accordion ───────────────────────────────────────── */}
-          <Accordion
+          {/* ── Core Team (Leadership / Shift Incharge / Machine Teams) ──────── */}
+          <CoreTeamAccordion
+            leadership={leadershipDetail}
+            shiftIncharge={shiftInchargeDetail}
+            machineTeams={machineTeams}
             defaultOpen
-            header={
-              <View style={styles.headerRow}>
-                <Users size={18} color={colors.accent} />
-                <View style={styles.headerInfo}>
-                  <Text style={styles.headerTitle}>Supervisors</Text>
-                  <Text style={styles.headerSummary}>{supervisorSummary}</Text>
-                </View>
-              </View>
-            }
-          >
-            <SupervisorCard
-              shiftLabel={shift1Name}
-              name={supervisor1?.name ?? null}
-              designation={supervisor1?.designation ?? null}
-              tone="day"
-            />
-            <SupervisorCard
-              shiftLabel={shift2Name}
-              name={supervisor2?.name ?? null}
-              designation={supervisor2?.designation ?? null}
-              tone="night"
-            />
-          </Accordion>
+          />
 
           {/* ── Visual timeline ─────────────────────────────────────────────── */}
           {checklist?.planStartTime && endIso && planSteps.length > 0 && (
@@ -347,48 +305,6 @@ export default function PlanDetailScreen() {
   );
 }
 
-// ─── Supervisor card ────────────────────────────────────────────────────────
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return parts.slice(0, 2).map((p) => p[0]?.toUpperCase() ?? '').join('');
-}
-
-function SupervisorCard({
-  shiftLabel,
-  name,
-  designation,
-  tone,
-}: {
-  shiftLabel: string;
-  name: string | null;
-  designation: string | null;
-  tone: 'day' | 'night';
-}) {
-  const assigned = !!name;
-  return (
-    <View style={[styles.supCard, tone === 'night' && styles.supCardNight]}>
-      <View style={[styles.supAvatar, !assigned && styles.supAvatarEmpty]}>
-        <Text style={styles.supAvatarText}>{assigned ? initials(name!) : '—'}</Text>
-      </View>
-      <View style={styles.supInfo}>
-        <Text style={styles.supShiftLabel}>{shiftLabel}</Text>
-        <Text style={[styles.supName, !assigned && styles.supNameEmpty]}>
-          {assigned ? name : 'None assigned'}
-        </Text>
-        {assigned && designation ? (
-          <Text style={styles.supDesignation}>{designation}</Text>
-        ) : null}
-      </View>
-      <View style={[styles.supBadge, tone === 'night' ? styles.supBadgeNight : styles.supBadgeDay]}>
-        <Text style={[styles.supBadgeText, tone === 'night' ? styles.supBadgeTextNight : styles.supBadgeTextDay]}>
-          {tone === 'day' ? 'Day' : 'Night'}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -407,15 +323,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  flexShrink: { flexShrink: 1 },
   pageTitle: {
     ...typography.h1,
     color: colors.textPrimary,
-  },
-  dateText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
   },
   refreshBtn: {
     width: 36,
@@ -425,13 +335,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  syncText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
   syncTextError: {
+    ...typography.caption,
     color: colors.danger,
+    marginTop: spacing.xs,
   },
 
   scrollContent: {
@@ -439,153 +346,4 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxxl,
     gap: spacing.md,
   },
-
-  // Main card
-  mainPad: { padding: spacing.lg },
-  mainHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.xs,
-  },
-  mainLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  mainWindowValue: {
-    ...typography.cardTitle,
-    color: colors.textPrimary,
-    marginBottom: spacing.md,
-  },
-  statGrid: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: colors.glassFill,
-    borderRadius: radius.sm,
-    padding: spacing.md,
-  },
-  statLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginBottom: 2,
-  },
-  statValue: {
-    ...typography.h2,
-    color: colors.textPrimary,
-  },
-  progressTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.accentSoft,
-    overflow: 'hidden',
-    marginBottom: spacing.md,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.accent,
-    borderRadius: 3,
-  },
-  mainFooterRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(28,28,46,0.08)',
-    paddingTop: spacing.md,
-  },
-  footerRight: { alignItems: 'flex-end' },
-  footerLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  footerValue: {
-    ...typography.cardTitle,
-    color: colors.textPrimary,
-    marginTop: 2,
-  },
-
-  // Supervisors
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  headerInfo: { flex: 1 },
-  headerTitle: {
-    ...typography.cardTitle,
-    color: colors.textPrimary,
-  },
-  headerSummary: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  supCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: 'rgba(249,115,22,0.05)',
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(249,115,22,0.15)',
-  },
-  supCardNight: {
-    backgroundColor: 'rgba(79,70,229,0.05)',
-    borderColor: 'rgba(79,70,229,0.15)',
-  },
-  supAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  supAvatarEmpty: { backgroundColor: 'rgba(28,28,46,0.12)' },
-  supAvatarText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
-  },
-  supInfo: { flex: 1 },
-  supShiftLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    fontSize: 10,
-  },
-  supName: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginTop: 1,
-  },
-  supNameEmpty: { color: colors.textSecondary, fontStyle: 'italic', fontWeight: '400' },
-  supDesignation: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-  supBadge: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  supBadgeDay: { backgroundColor: 'rgba(249,115,22,0.15)' },
-  supBadgeNight: { backgroundColor: 'rgba(79,70,229,0.15)' },
-  supBadgeText: { ...typography.caption, fontWeight: '700', fontSize: 10 },
-  supBadgeTextDay: { color: '#c2410c' },
-  supBadgeTextNight: { color: '#4338ca' },
 });
-

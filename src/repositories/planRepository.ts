@@ -84,6 +84,11 @@ export type PlanStepWithMeta = PilePlanStep & {
   assignedMachineId: string | null;
   /** Machine number label (e.g. "R-01") — joined from piling_machines. */
   assignedMachineNo: string;
+  /** The step definition's own nominal track, distinct from `track` (the executing
+   * machine's type) once overridden. Only ever set on live wizard-preview rows
+   * (pilingPlannerService.ts) — undefined on persisted/synced rows, which have no
+   * separate override concept to preserve. */
+  businessTrack?: string;
 };
 
 export async function getPlanStepsForChecklist(
@@ -106,10 +111,15 @@ export async function getPlanStepsForChecklist(
         bufferMinutes: pilePlanSteps.bufferMinutes,
         assignedMachineId: pilePlanSteps.assignedMachineId,
         createdAt: pilePlanSteps.createdAt,
+        updatedAt: pilePlanSteps.updatedAt,
         stepName: pilingSteps.stepName,
         track: pilingSteps.track,
         sequenceOrder: pilingSteps.sequenceOrder,
         assignedMachineNo: pilingMachines.machineNo,
+        // Which type the CURRENTLY assigned machine actually is — the ground truth of
+        // what executed this step. Falls back to the step definition's own track when
+        // unassigned (legacy rows, or a step nobody has scheduled a machine for yet).
+        assignedMachineType: pilingMachines.type,
       })
       .from(pilePlanSteps)
       .leftJoin(pilingSteps, eq(pilePlanSteps.stepId, pilingSteps.id))
@@ -130,8 +140,9 @@ export async function getPlanStepsForChecklist(
         assignedMachineId: r.assignedMachineId ?? null,
         assignedMachineNo: r.assignedMachineNo ?? '',
         createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
         stepName: r.stepName ?? '',
-        track: r.track ?? '',
+        track: r.assignedMachineType ?? r.track ?? '',
         sequenceOrder: r.sequenceOrder ?? 0,
       });
     }
@@ -141,10 +152,16 @@ export async function getPlanStepsForChecklist(
 }
 
 /**
- * Reassign the machine for every step of `track` on this checklist-pile from
- * `fromSequenceOrder` onward (inclusive) — the "applies to this step onward"
- * scope of a machine swap. Steps before fromSequenceOrder (already done) are
- * never touched, preserving their historical assignedMachineId.
+ * Reassign the machine for every step CURRENTLY running on a machine of type `track`
+ * on this checklist-pile from `fromSequenceOrder` onward (inclusive) — the "applies to
+ * this step onward" scope of a machine swap. Steps before fromSequenceOrder (already
+ * done) are never touched, preserving their historical assignedMachineId.
+ *
+ * Filters by the CURRENTLY ASSIGNED machine's type, not the step definition's nominal
+ * track — a step overridden to run on the Rig (see stepTrackOverrides in the Preview
+ * step) has assignedMachineId pointing at a rig even though its step definition is
+ * nominally CRANE; filtering by the step definition would silently miss it during a
+ * Rig breakdown/replacement, leaving it pointed at the broken machine forever.
  */
 export async function reassignMachineFromStep(
   checklistPileId: string,
@@ -154,14 +171,19 @@ export async function reassignMachineFromStep(
 ): Promise<void> {
   const db = await initDb();
   const rows = await db
-    .select({ id: pilePlanSteps.id, sequenceOrder: pilingSteps.sequenceOrder, track: pilingSteps.track })
+    .select({
+      id: pilePlanSteps.id,
+      sequenceOrder: pilingSteps.sequenceOrder,
+      assignedMachineType: pilingMachines.type,
+    })
     .from(pilePlanSteps)
     .leftJoin(pilingSteps, eq(pilePlanSteps.stepId, pilingSteps.id))
+    .leftJoin(pilingMachines, eq(pilePlanSteps.assignedMachineId, pilingMachines.id))
     .where(eq(pilePlanSteps.checklistPileId, checklistPileId))
     .all();
 
   const targetIds = rows
-    .filter((r) => r.track === track && (r.sequenceOrder ?? 0) >= fromSequenceOrder)
+    .filter((r) => r.assignedMachineType === track && (r.sequenceOrder ?? 0) >= fromSequenceOrder)
     .map((r) => r.id);
 
   for (const id of targetIds) {
@@ -204,6 +226,10 @@ export async function upsertActualStep(
     .limit(1);
 
   if (existing.length > 0) {
+    // Deliberately does not touch serverUpdatedAt — that column is the
+    // last-known-server version for optimistic concurrency and must only
+    // ever be set by hydrateChecklistFromServer from a real server payload,
+    // never from a local edit's device clock.
     await db
       .update(pileActualSteps)
       .set({
@@ -264,6 +290,7 @@ export async function getActualStepsForChecklist(
         remarks: pileActualSteps.remarks,
         createdAt: pileActualSteps.createdAt,
         updatedAt: pileActualSteps.updatedAt,
+        serverUpdatedAt: pileActualSteps.serverUpdatedAt,
         stepName: pilingSteps.stepName,
         track: pilingSteps.track,
         sequenceOrder: pilingSteps.sequenceOrder,
@@ -284,6 +311,7 @@ export async function getActualStepsForChecklist(
         remarks: r.remarks,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
+        serverUpdatedAt: r.serverUpdatedAt,
         stepName: r.stepName ?? '',
         track: r.track ?? '',
         sequenceOrder: r.sequenceOrder ?? 0,
@@ -292,15 +320,4 @@ export async function getActualStepsForChecklist(
   }
 
   return results;
-}
-
-/**
- * Delete all actual steps for a given checklist (via checklist_pile_id).
- */
-export async function deleteActualStepsForChecklist(checklistId: string): Promise<void> {
-  const db = await initDb();
-  const cpIds = await getChecklistPileIds(checklistId);
-  for (const cpId of cpIds) {
-    await db.delete(pileActualSteps).where(eq(pileActualSteps.checklistPileId, cpId));
-  }
 }

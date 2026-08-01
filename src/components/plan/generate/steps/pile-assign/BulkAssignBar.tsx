@@ -49,7 +49,7 @@ export default function BulkAssignBar({
         onClose={onTogglePanel}
         title="Assign machines"
         subtitle={`${selectedCount} ${selectedCount === 1 ? 'pile' : 'piles'} selected`}
-        position="top"
+        position="center"
       >
         {defaulted && (
           <Text style={styles.hint}>Defaulted to your last combination — change if needed.</Text>
@@ -61,7 +61,6 @@ export default function BulkAssignBar({
           onPress={onApply}
           disabled={!rigId || !craneId}
         >
-          <Check size={14} color={colors.white} />
           <Text style={styles.applyButtonText}>Apply to {selectedCount}</Text>
         </Pressable>
       </AppModal>
@@ -79,7 +78,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: colors.glassFillStrong,
     borderWidth: 1,
-    borderColor: colors.glassBorder,
+    borderColor: colors.glassBorder
   },
   left: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   label: { ...typography.caption, color: colors.textPrimary },
@@ -107,5 +106,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   applyButtonDisabled: { opacity: 0.4 },
-  applyButtonText: { ...typography.caption, fontWeight: '700', color: colors.white },
+  applyButtonText: { ...typography.caption, borderRadius: radius.xl, paddingHorizontal: spacing.md, fontWeight: '700', color: colors.white },
 });

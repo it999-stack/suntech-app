@@ -19,13 +19,6 @@ export type NonWorkingWindow = {
   behavior: NonWorkingWindowBehavior;
 };
 
-export type DiaDepthTemplate = {
-  id: string;
-  dia: number;
-  depth: number;
-  stepCount: number;
-};
-
 /** Duration in minutes, correctly handling an overnight shift that wraps past midnight. */
 export function shiftDurationMinutes(shift: Shift): number {
   const raw = shift.endMinutes - shift.startMinutes;

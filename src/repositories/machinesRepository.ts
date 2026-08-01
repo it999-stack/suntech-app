@@ -1,7 +1,7 @@
 // src/repositories/machinesRepository.ts
 // CRUD helpers for piling_machines in local SQLite.
 
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingMachines,
@@ -50,6 +50,15 @@ export async function getMachinesBySite(siteId: string): Promise<PilingMachine[]
 export async function setMachineStatusLocal(machineId: string, status: string): Promise<void> {
   const db = await initDb();
   await db.update(pilingMachines).set({ status }).where(eq(pilingMachines.id, machineId));
+}
+
+/**
+ * Hard-delete locally cached machines the server has soft-deleted.
+ */
+export async function deleteMachinesByIds(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await initDb();
+  await db.delete(pilingMachines).where(inArray(pilingMachines.id, ids));
 }
 
 /**

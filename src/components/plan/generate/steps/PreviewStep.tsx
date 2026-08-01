@@ -5,20 +5,30 @@
 // and per-pile accordions.
 
 import { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Clock, Truck, Users, ListChecks, AlertTriangle } from 'lucide-react-native';
-import GlassCard from '@components/shared/GlassCard';
-import { colors, spacing, radius, typography } from '@/theme/theme';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { AlertTriangle } from 'lucide-react-native';
+import AppModal from '@components/shared/AppModal';
+import PersonnelPickerList from '@components/shared/PersonnelPickerList';
+import { colors, spacing, typography } from '@/theme/theme';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
+import {
+  matchesRoleDesignation,
+  matchesOperatorDesignation,
+  buildPairedMachinesBySupervisor,
+  getSupervisorCandidates,
+} from '@/utils/personnelRoles';
 
 import type { PlanDraft } from '@/types/plan';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { PreviewPile } from '@app-types/previewTypes';
-import { formatMinutes, computeWorkingMinutes, computeElapsedMinutes } from '../preview/previewUtils';
+import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import SummaryAccordion from '../preview/SummaryAccordion';
+import CoreTeamAccordion, { type RoleTarget } from '../preview/CoreTeamAccordion';
 import MachineTimelineAccordion from '../preview/MachineTimelineAccordion';
 import PilesAccordion from '../preview/PilesAccordion';
+import PlanWindowBar from '../preview/PlanWindowBar';
+import { type TrackChoice } from '../preview/TrackChoiceTiles';
 
 // Re-export for consumers
 export type { PreviewPile } from '@app-types/previewTypes';
@@ -45,109 +55,61 @@ export interface ShiftDetail {
   endTime: string;
 }
 
-export interface StepDetail {
-  id: string;
-  stepName: string;
-  track: string;
-  sequenceOrder: number;
-}
-
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface PreviewStepProps {
   draft: PlanDraft;
+  onUpdate: (patch: Partial<PlanDraft>) => void;
+  /** Not-yet-confirmed Rig/Crane tile selections, owned by GeneratePlanScreen so the
+   * "Confirm Reassignment" action can live in its fixed footer instead of here. Tapping
+   * a tile only ever calls onPendingTrackOverridesChange — never onUpdate() — so nothing
+   * recomputes until the parent's Confirm button commits it into `draft`. */
+  pendingTrackOverrides: Record<string, string[]>;
+  onPendingTrackOverridesChange: (
+    updater: Record<string, string[]> | ((prev: Record<string, string[]>) => Record<string, string[]>),
+  ) => void;
   planSteps: PlanStepWithMeta[];
+  /** True while the plan preview is (re)generating — shows a spinner in the Machine Timeline card. */
+  isLoading?: boolean;
+  /** Non-working windows actually applied per machine, from generatePlanPreview(). */
+  windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
   piles: PreviewPile[];
-  supervisor1Name: string | null;
-  supervisor2Name: string | null;
-  activeRigCount: number;
-  activeCraneCount: number;
-  totalStepsCount: number;
   warningPileCodes?: string[];
   onNavigateToStep: (step: Step) => void;
+  /** Opens the reorder overlay for a machine (pencil icon in the Machine Timeline). */
+  onEditMachine: (machineId: string) => void;
   /** Detailed data for the Machines accordion body. */
   activeRigs?: MachineDetail[];
   activeCranes?: MachineDetail[];
   /** Detailed data for the Supervisors accordion body. */
   personnel?: PersonnelDetail[];
   shifts?: ShiftDetail[];
-  /** Detailed data for the Steps accordion body. */
-  selectedSteps?: StepDetail[];
-}
-
-// ─── Supervisor card ────────────────────────────────────────────────────────
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return parts.slice(0, 2).map((p) => p[0]?.toUpperCase() ?? '').join('');
-}
-
-function SupervisorCard({
-  shiftLabel,
-  name,
-  designation,
-  tone,
-}: {
-  shiftLabel: string;
-  name: string | null;
-  designation: string | null;
-  tone: 'day' | 'night';
-}) {
-  const assigned = !!name;
-  return (
-    <View style={[styles.supCard, tone === 'night' && styles.supCardNight]}>
-      <View style={[styles.supAvatar, !assigned && styles.supAvatarEmpty]}>
-        <Text style={styles.supAvatarText}>{assigned ? initials(name!) : '—'}</Text>
-      </View>
-      <View style={styles.supInfo}>
-        <Text style={styles.supShiftLabel}>{shiftLabel}</Text>
-        <Text style={[styles.supName, !assigned && styles.supNameEmpty]}>
-          {assigned ? name : 'None assigned'}
-        </Text>
-        {assigned && designation ? (
-          <Text style={styles.supDesignation}>{designation}</Text>
-        ) : null}
-      </View>
-      <View style={[styles.supBadge, tone === 'night' ? styles.supBadgeNight : styles.supBadgeDay]}>
-        <Text style={[styles.supBadgeText, tone === 'night' ? styles.supBadgeTextNight : styles.supBadgeTextDay]}>
-          {tone === 'day' ? 'Day' : 'Night'}
-        </Text>
-      </View>
-    </View>
-  );
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function PreviewStep({
   draft,
+  onUpdate,
+  pendingTrackOverrides,
+  onPendingTrackOverridesChange,
   planSteps,
+  isLoading,
+  windowsByMachineId,
   piles,
-  supervisor1Name,
-  supervisor2Name,
-  activeRigCount,
-  activeCraneCount,
-  totalStepsCount,
   warningPileCodes = [],
   onNavigateToStep,
+  onEditMachine,
   activeRigs = [],
   activeCranes = [],
   personnel = [],
   shifts = [],
-  selectedSteps = [],
 }: PreviewStepProps) {
+  const [rolePickerTarget, setRolePickerTarget] = useState<RoleTarget | null>(null);
+
   const endIso = planEndTime(draft.planStartTime);
 
-  const workingMinutes = useMemo(() => computeWorkingMinutes(planSteps), [planSteps]);
-  const elapsedMinutes = useMemo(() => computeElapsedMinutes(planSteps), [planSteps]);
-  const progressPct = elapsedMinutes > 0
-    ? Math.min(100, Math.round((workingMinutes / elapsedMinutes) * 100))
-    : 0;
-
-  const selectedStepsCount = draft.selectedStepIds.length;
-  const supervisorSummary = [supervisor1Name, supervisor2Name]
-    .filter(Boolean)
-    .join(' · ') || 'None assigned';
+  const cp = draft.checklistPersonnel;
 
   // ── Machines detail ──────────────────────────────────────────────────────
   const pileLabelById = useMemo(() => {
@@ -158,83 +120,197 @@ export default function PreviewStep({
     return map;
   }, [piles]);
 
-  // ── Supervisors detail ───────────────────────────────────────────────────
-  const supervisorDetail = useMemo(() => {
+  // ── Leadership detail (Project Manager / Planning Engineer) ─────────────
+  const leadershipDetail = useMemo(() => {
+    const pm = personnel.find((p) => p.id === cp.projectManagerId);
+    const pe = personnel.find((p) => p.id === cp.planningEngineerId);
+    return { pmName: pm?.name ?? null, pmDesignation: pm?.designation ?? null, peName: pe?.name ?? null, peDesignation: pe?.designation ?? null };
+  }, [personnel, cp.projectManagerId, cp.planningEngineerId]);
+
+  // ── Shift incharge detail ────────────────────────────────────────────────
+  const shiftInchargeDetail = useMemo(() => {
     const shift1 = shifts[0];
     const shift2 = shifts[1];
     const s1 = shift1 ? `${shift1.name} (${shift1.startTime}–${shift1.endTime})` : 'Shift 1';
     const s2 = shift2 ? `${shift2.name} (${shift2.startTime}–${shift2.endTime})` : 'Shift 2';
-    const sup1 = personnel.find((p) => p.id === draft.supervisorId);
-    const sup2 = personnel.find((p) => p.id === draft.supervisorId2);
+    const si1 = personnel.find((p) => p.id === cp.shiftInchargeId);
+    const si2 = personnel.find((p) => p.id === cp.shiftInchargeId2);
     return {
       shift1Label: s1,
-      shift1Name: sup1?.name ?? null,
-      shift1Designation: sup1?.designation ?? null,
+      shift1Name: si1?.name ?? null,
+      shift1Designation: si1?.designation ?? null,
       shift2Label: s2,
-      shift2Name: sup2?.name ?? null,
-      shift2Designation: sup2?.designation ?? null,
+      shift2Name: si2?.name ?? null,
+      shift2Designation: si2?.designation ?? null,
     };
-  }, [shifts, personnel, draft.supervisorId, draft.supervisorId2]);
+  }, [shifts, personnel, cp.shiftInchargeId, cp.shiftInchargeId2]);
+
+  // ── Machine teams detail (Engineer / Supervisor / Operator per machine) ──
+  const machineTeams = useMemo(() => {
+    const all = [...activeRigs, ...activeCranes];
+    return all.map((m) => ({
+      id: m.id,
+      machineNo: m.machineNo,
+      type: m.type,
+      engineerName: personnel.find((p) => p.id === cp.engineerByMachineId[m.id])?.name ?? null,
+      supervisorName: personnel.find((p) => p.id === cp.supervisorByMachineId[m.id])?.name ?? null,
+      operatorName: personnel.find((p) => p.id === cp.operatorByMachineId[m.id])?.name ?? null,
+    }));
+  }, [activeRigs, activeCranes, personnel, cp.engineerByMachineId, cp.supervisorByMachineId, cp.operatorByMachineId]);
+
+  // ── Role-picker candidate lists (mirrors StartTimeStep/ShiftInchargeStep/
+  // TeamAssignStep/MachineSelectStep, triggered here from a row tap instead) ──
+  const pmCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('PROJECT_MANAGER', p.designation)), [personnel]);
+  const peCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('PLANNING_ENGINEER', p.designation)), [personnel]);
+  const shiftInchargeCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('SHIFT_INCHARGE', p.designation)), [personnel]);
+  const engineerCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('ENGINEER', p.designation)), [personnel]);
+  const supervisorCandidatesBase = useMemo(() => personnel.filter((p) => matchesRoleDesignation('SUPERVISOR', p.designation)), [personnel]);
+  const pairedMachineBySupervisor = useMemo(
+    () => buildPairedMachinesBySupervisor(cp.supervisorByMachineId, activeRigs, activeCranes),
+    [cp.supervisorByMachineId, activeRigs, activeCranes],
+  );
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.loadingText}>Calculating plan preview…</Text>
+      </View>
+    );
+  }
+
+  function updatePersonnel(patch: Partial<PlanDraft['checklistPersonnel']>) {
+    onUpdate({ checklistPersonnel: { ...cp, ...patch } });
+  }
+
+  // Tap handler for a CRANE-track step's Rig/Crane tiles — mutates only the pending
+  // state owned by GeneratePlanScreen, never onUpdate(), so nothing recomputes until
+  // its Confirm Reassignment action (in the fixed footer) commits it into `draft`.
+  function getTrackChoice(pile: PreviewPile, step: PlanStepWithMeta) {
+    // Deliberately does NOT fall back to step.track when not in the list: that field
+    // only updates on Confirm (the recompute), while taps only touch this pending
+    // list — falling back to it made reverting an already-Rig step back to Crane a
+    // dead end (removing it from the list still read the stale, unconfirmed
+    // step.track === 'RIG'). The list itself is already the full source of truth:
+    // edit-mode reopen reconstructs it from the persisted plan's real assignments
+    // (see GeneratePlanScreen's edit-seeding effect), so it's never missing a
+    // previously-overridden step in the first place.
+    const overridden = pendingTrackOverrides[pile.checklistPileId] ?? [];
+    const selected: TrackChoice = overridden.includes(step.stepId) ? 'RIG' : 'CRANE';
+    return {
+      selected,
+      onSelect: (track: TrackChoice) => {
+        onPendingTrackOverridesChange((prev) => {
+          const current = prev[pile.checklistPileId] ?? [];
+          const next =
+            track === 'RIG'
+              ? current.includes(step.stepId) ? current : [...current, step.stepId]
+              : current.filter((id: string) => id !== step.stepId);
+          return { ...prev, [pile.checklistPileId]: next };
+        });
+      },
+    };
+  }
+
+  function machineNoFor(machineId: string): string {
+    return machineTeams.find((m) => m.id === machineId)?.machineNo ?? '';
+  }
+
+  function getRolePickerConfig(target: RoleTarget) {
+    switch (target.role) {
+      case 'PROJECT_MANAGER':
+        return {
+          title: 'Project Manager',
+          personnel: pmCandidates,
+          selectedId: cp.projectManagerId,
+          allowNone: false,
+          onSelect: (id: string | null) => updatePersonnel({ projectManagerId: id }),
+        };
+      case 'PLANNING_ENGINEER':
+        return {
+          title: 'Planning Engineer',
+          personnel: peCandidates,
+          selectedId: cp.planningEngineerId,
+          allowNone: false,
+          onSelect: (id: string | null) => updatePersonnel({ planningEngineerId: id }),
+        };
+      case 'SHIFT_INCHARGE':
+        return {
+          title: target.slot === 1 ? 'Shift Incharge (Day)' : 'Shift Incharge (Night)',
+          personnel: shiftInchargeCandidates,
+          selectedId: target.slot === 1 ? cp.shiftInchargeId : cp.shiftInchargeId2,
+          allowNone: true,
+          onSelect: (id: string | null) =>
+            updatePersonnel(target.slot === 1 ? { shiftInchargeId: id } : { shiftInchargeId2: id }),
+        };
+      case 'ENGINEER':
+        return {
+          title: `Engineer — ${machineNoFor(target.machineId)}`,
+          personnel: engineerCandidates,
+          selectedId: cp.engineerByMachineId[target.machineId] ?? null,
+          allowNone: false,
+          onSelect: (id: string | null) => {
+            const engineerByMachineId = { ...cp.engineerByMachineId };
+            if (id) engineerByMachineId[target.machineId] = id;
+            else delete engineerByMachineId[target.machineId];
+            updatePersonnel({ engineerByMachineId });
+          },
+        };
+      case 'SUPERVISOR': {
+        const isRig = activeRigs.some((r) => r.id === target.machineId);
+        return {
+          title: `Supervisor — ${machineNoFor(target.machineId)}`,
+          personnel: getSupervisorCandidates(target.machineId, isRig, supervisorCandidatesBase, pairedMachineBySupervisor),
+          selectedId: cp.supervisorByMachineId[target.machineId] ?? null,
+          allowNone: true,
+          onSelect: (id: string | null) => {
+            const supervisorByMachineId = { ...cp.supervisorByMachineId };
+            if (id) supervisorByMachineId[target.machineId] = id;
+            else delete supervisorByMachineId[target.machineId];
+            updatePersonnel({ supervisorByMachineId });
+          },
+        };
+      }
+      case 'MACHINE_OPERATOR': {
+        const isRig = activeRigs.some((r) => r.id === target.machineId);
+        const candidates = personnel.filter((p) => {
+          if (!matchesOperatorDesignation(isRig ? 'RIG' : 'CRANE', p.designation)) return false;
+          const assignedElsewhere = Object.entries(cp.operatorByMachineId).some(
+            ([machineId, personnelId]) => machineId !== target.machineId && personnelId === p.id,
+          );
+          return !assignedElsewhere;
+        });
+        return {
+          title: `Operator — ${machineNoFor(target.machineId)}`,
+          personnel: candidates,
+          selectedId: cp.operatorByMachineId[target.machineId] ?? null,
+          allowNone: true,
+          onSelect: (id: string | null) => {
+            const operatorByMachineId = { ...cp.operatorByMachineId };
+            if (id) operatorByMachineId[target.machineId] = id;
+            else delete operatorByMachineId[target.machineId];
+            updatePersonnel({ operatorByMachineId });
+          },
+        };
+      }
+    }
+  }
+
+  const rolePickerConfig = rolePickerTarget ? getRolePickerConfig(rolePickerTarget) : null;
 
   return (
     <>
       {/* ── Main card ─────────────────────────────────────────────────────── */}
-      <GlassCard innerStyle={styles.mainPad}>
-        <View style={styles.mainHeaderRow}>
-          <Clock size={16} color={colors.accent} />
-          <Text style={styles.mainLabel}>Plan Window</Text>
-        </View>
-        <Text style={styles.mainWindowValue}>
-          {fmtPlanTime(draft.planStartTime)} → {fmtPlanTime(endIso)}
-        </Text>
+      <PlanWindowBar startLabel={fmtPlanTime(draft.planStartTime)} endLabel={fmtPlanTime(endIso)} />
 
-        <View style={styles.statGrid}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Working time</Text>
-            <Text style={styles.statValue}>{formatMinutes(workingMinutes)}</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Elapsed (incl. breaks)</Text>
-            <Text style={styles.statValue}>{formatMinutes(elapsedMinutes)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
-        </View>
-
-        <View style={styles.mainFooterRow}>
-          <View>
-            <Text style={styles.footerLabel}>Piles in plan</Text>
-            <Text style={styles.footerValue}>{piles.length}</Text>
-          </View>
-          <View style={styles.footerRight}>
-            <Text style={styles.footerLabel}>Total steps</Text>
-            <Text style={styles.footerValue}>{selectedStepsCount}</Text>
-          </View>
-        </View>
-      </GlassCard>
-
-      {/* ── Supervisors accordion ───────────────────────────────────────── */}
-      <SummaryAccordion
-        icon={<Users size={18} color={colors.accent} />}
-        title="Supervisors"
-        summary={supervisorSummary}
-        onEdit={() => onNavigateToStep('supervisors')}
-      >
-        <SupervisorCard
-          shiftLabel={supervisorDetail.shift1Label}
-          name={supervisorDetail.shift1Name}
-          designation={supervisorDetail.shift1Designation}
-          tone="day"
-        />
-        <SupervisorCard
-          shiftLabel={supervisorDetail.shift2Label}
-          name={supervisorDetail.shift2Name}
-          designation={supervisorDetail.shift2Designation}
-          tone="night"
-        />
-      </SummaryAccordion>
+      {/* ── Core Team (Leadership / Shift Incharge / Machine Teams) ──────── */}
+      <CoreTeamAccordion
+        leadership={leadershipDetail}
+        shiftIncharge={shiftInchargeDetail}
+        machineTeams={machineTeams}
+        defaultOpen
+        onPressRole={setRolePickerTarget}
+      />
 
       {/* ── Visual timeline ─────────────────────────────────────────────── */}
       <MachineTimelineAccordion
@@ -244,6 +320,8 @@ export default function PreviewStep({
         activeRigs={activeRigs}
         activeCranes={activeCranes}
         pileLabelById={pileLabelById}
+        onEditMachine={onEditMachine}
+        windowsByMachineId={windowsByMachineId}
       />
 
       {/* ── Duration warnings ───────────────────────────────────────────── */}
@@ -265,7 +343,27 @@ export default function PreviewStep({
       )}
 
       {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
-      <PilesAccordion piles={piles} planSteps={planSteps} />
+      <PilesAccordion piles={piles} planSteps={planSteps} getTrackChoice={getTrackChoice} />
+
+      {/* ── Core Team role picker ─────────────────────────────────────────── */}
+      <AppModal
+        visible={!!rolePickerTarget}
+        onClose={() => setRolePickerTarget(null)}
+        title={rolePickerConfig?.title}
+        position="center"
+      >
+        {rolePickerConfig ? (
+          <PersonnelPickerList
+            personnel={rolePickerConfig.personnel}
+            selectedId={rolePickerConfig.selectedId}
+            allowNone={rolePickerConfig.allowNone}
+            onSelect={(id) => {
+              rolePickerConfig.onSelect(id);
+              setRolePickerTarget(null);
+            }}
+          />
+        ) : null}
+      </AppModal>
     </>
   );
 }
@@ -273,256 +371,19 @@ export default function PreviewStep({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  mainPad: { padding: spacing.lg },
-  mainHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.xs,
-  },
-  mainLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  mainWindowValue: {
-    ...typography.cardTitle,
-    color: colors.textPrimary,
-    marginBottom: spacing.md,
-  },
-  statGrid: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: colors.glassFill,
-    borderRadius: radius.sm,
-    padding: spacing.md,
-  },
-  statLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginBottom: 2,
-  },
-  statValue: {
-    ...typography.h2,
-    color: colors.textPrimary,
-  },
-  progressTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.accentSoft,
-    overflow: 'hidden',
-    marginBottom: spacing.md,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.accent,
-    borderRadius: 3,
-  },
-  mainFooterRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(28,28,46,0.08)',
-    paddingTop: spacing.md,
-  },
-  footerRight: { alignItems: 'flex-end' },
-  footerLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  footerValue: {
-    ...typography.cardTitle,
-    color: colors.textPrimary,
-    marginTop: 2,
-  },
-
-  // Machines — chips
-  machineGroup: { marginBottom: spacing.sm },
-  chipWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginTop: 4,
-  },
-  machineChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderWidth: 1,
-  },
-  machineChipRig: {
-    backgroundColor: 'rgba(124,58,237,0.08)',
-    borderColor: 'rgba(124,58,237,0.25)',
-  },
-  machineChipCrane: {
-    backgroundColor: 'rgba(3,105,161,0.08)',
-    borderColor: 'rgba(3,105,161,0.25)',
-  },
-  machineChipDot: { width: 6, height: 6, borderRadius: 3 },
-  machineChipText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  dotRig: { backgroundColor: '#7c3aed' },
-  dotCrane: { backgroundColor: '#0369a1' },
-
-  // Supervisors — avatar cards
-  supCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: 'rgba(249,115,22,0.05)',
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(249,115,22,0.15)',
-  },
-  supCardNight: {
-    backgroundColor: 'rgba(79,70,229,0.05)',
-    borderColor: 'rgba(79,70,229,0.15)',
-  },
-  supAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.accent,
+  loadingContainer: {
+    minHeight: 600,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: spacing.md,
   },
-  supAvatarEmpty: { backgroundColor: 'rgba(28,28,46,0.12)' },
-  supAvatarText: {
+  loadingText: {
     ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
-  },
-  supInfo: { flex: 1 },
-  supShiftLabel: {
-    ...typography.caption,
-    fontWeight: '700',
     color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    fontSize: 10,
-  },
-  supName: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginTop: 1,
-  },
-  supNameEmpty: { color: colors.textSecondary, fontStyle: 'italic', fontWeight: '400' },
-  supDesignation: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-  supBadge: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  supBadgeDay: { backgroundColor: 'rgba(249,115,22,0.15)' },
-  supBadgeNight: { backgroundColor: 'rgba(79,70,229,0.15)' },
-  supBadgeText: { ...typography.caption, fontWeight: '700', fontSize: 10 },
-  supBadgeTextDay: { color: '#c2410c' },
-  supBadgeTextNight: { color: '#4338ca' },
-
-  // Steps — track groups with rail
-  trackGroup: { marginBottom: spacing.md },
-  trackGroupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.xs,
-  },
-  trackPill: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-  },
-  trackPillRig: { backgroundColor: 'rgba(124,58,237,0.12)' },
-  trackPillCrane: { backgroundColor: 'rgba(3,105,161,0.12)' },
-  trackPillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
-  trackPillTextRig: { color: '#7c3aed' },
-  trackPillTextCrane: { color: '#0369a1' },
-  trackGroupCount: { ...typography.caption, color: colors.textSecondary },
-  trackRail: {
-    borderLeftWidth: 2,
-    paddingLeft: spacing.sm,
-    gap: spacing.xs,
-  },
-  trackRailRig: { borderLeftColor: 'rgba(124,58,237,0.3)' },
-  trackRailCrane: { borderLeftColor: 'rgba(3,105,161,0.3)' },
-  railStepRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  railDot: { width: 6, height: 6, borderRadius: 3, marginLeft: -19 },
-  railStepName: {
-    ...typography.body,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    flex: 1,
-  },
-  railStepOrder: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-
-  // Accordion detail styles
-  detailSection: {
-    marginBottom: spacing.sm,
-  },
-  detailSectionTitle: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginBottom: 4,
   },
   detailLine: {
     ...typography.body,
     color: colors.textPrimary,
     marginBottom: 2,
-  },
-  detailEmpty: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-  },
-  stepDetailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-  },
-  stepTrackDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  stepDetailInfo: { flex: 1 },
-  stepDetailName: {
-    ...typography.body,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  stepDetailMeta: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 1,
   },
 });

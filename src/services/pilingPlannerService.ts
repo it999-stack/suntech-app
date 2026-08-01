@@ -30,6 +30,7 @@ import {
   pilingNonWorkingWindows,
   type NewPilePlanStep,
   type NonWorkingWindowBehavior,
+  type PilingStep,
 } from '@db/schema';
 import { getChecklistPiles } from '@repositories/checklistRepository';
 import { insertPlanSteps, deletePlanStepsForChecklist, type PlanStepWithMeta } from '@repositories/planRepository';
@@ -51,19 +52,23 @@ export interface PreviewPileInput {
   /** Optional third track's machine. Undefined until compressor assignment UI exists. */
   compressorId?: string;
   resumeWork?: { stepId: string; remainingMinutes: number; bufferMinutes?: number };
+  /** Step ids whose CRANE-track step should run on the Rig instead for this pile — a Rig can
+   * perform any CRANE step, never the reverse. One-off per plan generation, not persisted. */
+  stepTrackOverrides?: string[];
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
 type EffectiveWindow = {
   id: string;
+  label: string;
   behavior: NonWorkingWindowBehavior;
   start: Date;
   end: Date;
 };
 
 function resolveWindows(
-  raw: Array<{ id: string; behavior: string; startTime: string; endTime: string }>,
+  raw: Array<{ id: string; label: string; behavior: string; startTime: string; endTime: string }>,
   dayBase: Date,
 ): EffectiveWindow[] {
   const resolveDay = (base: Date) =>
@@ -75,7 +80,13 @@ function resolveWindows(
       const wEnd = new Date(base);
       wEnd.setHours(Math.floor(wEndMin / 60), wEndMin % 60, 0, 0);
       if (wEndMin <= wStartMin) wEnd.setDate(wEnd.getDate() + 1);
-      return { id: w.id, behavior: w.behavior as NonWorkingWindowBehavior, start: wStart, end: wEnd };
+      return {
+        id: w.id,
+        label: w.label,
+        behavior: w.behavior as NonWorkingWindowBehavior,
+        start: wStart,
+        end: wEnd,
+      };
     });
 
   const prevDay = new Date(dayBase);
@@ -166,6 +177,26 @@ function machineForTrack(pile: PreviewPileInput, track: string): string | undefi
   return field ? (pile[field] as string | undefined) : undefined;
 }
 
+/**
+ * The step definition's own track (`businessTrack`) and "which machine actually executes
+ * this step" (`executionTrack`/`assignedMachineId`) are different concepts that happen to
+ * coincide unless overridden. This is the ONLY place override logic — and the only caller
+ * of machineForTrack() — lives: everything past Pass 1 below reads the already-resolved
+ * assignedMachineId/executionTrack and never re-derives them.
+ */
+function resolveStepExecution(
+  pile: PreviewPileInput,
+  step: { id: string; track: string },
+): { businessTrack: string; executionTrack: string; assignedMachineId: string | undefined } {
+  const executionTrack =
+    step.track === 'CRANE' && pile.stepTrackOverrides?.includes(step.id) ? 'RIG' : step.track;
+  return {
+    businessTrack: step.track,
+    executionTrack,
+    assignedMachineId: machineForTrack(pile, executionTrack),
+  };
+}
+
 // ─── Shared result types ──────────────────────────────────────────────────────
 
 interface PreviewPlanStep
@@ -181,17 +212,34 @@ interface PreviewPlanStep
     > {
   // Always set by scheduleOneStep — never left undefined like the insert type allows.
   plannedEnd: string | null;
+  /** The step definition's own nominal track — distinct from `track` (the execution
+   * track, i.e. which machine actually ran it) once an override is in play. Lets the
+   * Preview UI keep offering the Rig/Crane choice tiles even after a step's `track`
+   * has flipped to 'RIG'. Not present on persisted/synced rows (see PlanStepWithMeta). */
+  businessTrack: string;
+}
+
+/** A non-working window resolved to its actual effective placement for one machine. */
+export interface EffectivePlanWindow {
+  id: string;
+  label: string;
+  start: string;
+  end: string;
 }
 
 export interface BuildPlanRowsResult {
   planRows: PreviewPlanStep[];
   warningPileIds: string[];
+  /** Non-working windows actually applied per machine, keyed by machineId. */
+  windowsByMachineId: Record<string, EffectivePlanWindow[]>;
 }
 
 // ─── Core scheduling engine ───────────────────────────────────────────────────
 
 function scheduleOneStep(
-  step: { id: string; stepName: string; track: string; sequenceOrder: number },
+  step: { id: string; stepName: string; sequenceOrder: number },
+  businessTrack: string,
+  executionTrack: string,
   machineId: string,
   startFrom: Date,
   dimId: string,
@@ -234,39 +282,42 @@ function scheduleOneStep(
     assignedMachineId: machineId,
     createdAt: now,
     stepName: step.stepName,
-    track: step.track,
+    track: executionTrack,
+    businessTrack,
     sequenceOrder: step.sequenceOrder,
   });
   return end;
 }
 
-async function buildPlanRowsForPiles(options: {
-  piles: PreviewPileInput[];
-  planStartTime: string;
-  siteId: string;
-  shiftTypeId?: string;
-  selectedStepIds?: string[];
-}): Promise<BuildPlanRowsResult> {
-  const { piles, planStartTime, siteId, shiftTypeId, selectedStepIds } = options;
+// ─── Reference-data fetches ───────────────────────────────────────────────────
+// Split out so a caller (e.g. the plan-generation wizard) can fetch these once
+// per session and pass them back in via buildPlanRowsForPiles's `referenceData`
+// option — piling_steps, duration templates, and non-working windows are 100%
+// static for the duration of a wizard session; nothing about them changes just
+// because the user picked a different Rig/Crane tile.
 
-  const db = await initDb();
+export interface PlanTemplateRow {
+  id: string;
+  stepId: string;
+  dimensionId: string;
+  durationMinutes: number;
+  bufferBeforeMinutes: number;
+}
 
-  // FIX: was missing `await` — db.select() returns a Promise on the async
-  // expo-sqlite driver, so `.filter()`/mapping below would have thrown.
-  const allSteps = await db
-    .select()
-    .from(pilingSteps)
-    .orderBy(pilingSteps.sequenceOrder)
-    .all();
+export interface PlanRawWindow {
+  id: string;
+  label: string;
+  behavior: string;
+  startTime: string;
+  endTime: string;
+}
 
-  const selectedStepSet = selectedStepIds?.length ? new Set(selectedStepIds) : null;
-  const pileSteps = selectedStepSet
-    ? allSteps.filter((s) => selectedStepSet.has(s.id))
-    : allSteps;
+type Db = Awaited<ReturnType<typeof initDb>>;
 
-  // FIX: piling_step_duration_templates has no site_id column — it's scoped to
-  // a site indirectly through dimensionId -> piling_dimensions.site_id.
-  const templateRows = await db
+// FIX: piling_step_duration_templates has no site_id column — it's scoped to
+// a site indirectly through dimensionId -> piling_dimensions.site_id.
+async function fetchTemplateRows(db: Db, siteId: string): Promise<PlanTemplateRow[]> {
+  return db
     .select({
       id: pilingStepDurationTemplates.id,
       stepId: pilingStepDurationTemplates.stepId,
@@ -278,31 +329,87 @@ async function buildPlanRowsForPiles(options: {
     .innerJoin(pilingDimensions, eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id))
     .where(eq(pilingDimensions.siteId, siteId))
     .all();
-  const templateMap = new Map(templateRows.map((t) => [`${t.dimensionId}|${t.stepId}`, t]));
+}
 
-  let rawWindows: Array<{ id: string; behavior: string; startTime: string; endTime: string }> = [];
+async function fetchRawWindows(db: Db, siteId: string, shiftTypeId?: string): Promise<PlanRawWindow[]> {
   if (shiftTypeId) {
-    rawWindows = await getNonWorkingWindowsByShift(shiftTypeId);
-  } else {
-    const shiftRows = await db
-      .select({ id: pilingShiftTypes.id })
-      .from(pilingShiftTypes)
-      .where(eq(pilingShiftTypes.siteId, siteId))
-      .all();
-    const shiftIds = shiftRows.map((s) => s.id);
-    if (shiftIds.length > 0) {
-      rawWindows = await db
-        .select({
-          id: pilingNonWorkingWindows.id,
-          behavior: pilingNonWorkingWindows.behavior,
-          startTime: pilingNonWorkingWindows.startTime,
-          endTime: pilingNonWorkingWindows.endTime,
-        })
-        .from(pilingNonWorkingWindows)
-        .where(inArray(pilingNonWorkingWindows.shiftTypeId, shiftIds))
-        .all();
-    }
+    return getNonWorkingWindowsByShift(shiftTypeId);
   }
+  const shiftRows = await db
+    .select({ id: pilingShiftTypes.id })
+    .from(pilingShiftTypes)
+    .where(eq(pilingShiftTypes.siteId, siteId))
+    .all();
+  const shiftIds = shiftRows.map((s) => s.id);
+  if (shiftIds.length === 0) return [];
+  return db
+    .select({
+      id: pilingNonWorkingWindows.id,
+      label: pilingNonWorkingWindows.label,
+      behavior: pilingNonWorkingWindows.behavior,
+      startTime: pilingNonWorkingWindows.startTime,
+      endTime: pilingNonWorkingWindows.endTime,
+    })
+    .from(pilingNonWorkingWindows)
+    .where(inArray(pilingNonWorkingWindows.shiftTypeId, shiftIds))
+    .all();
+}
+
+/** Fetches the two reference-data pieces that are cheap to cache for a whole
+ * wizard session (step definitions are already loaded separately by callers
+ * like GeneratePlanScreen, via getSteps() — no need to duplicate that here). */
+export async function fetchPlanReferenceData(options: {
+  siteId: string;
+  shiftTypeId?: string;
+}): Promise<{ templateRows: PlanTemplateRow[]; rawWindows: PlanRawWindow[] }> {
+  const db = await initDb();
+  const [templateRows, rawWindows] = await Promise.all([
+    fetchTemplateRows(db, options.siteId),
+    fetchRawWindows(db, options.siteId, options.shiftTypeId),
+  ]);
+  return { templateRows, rawWindows };
+}
+
+async function buildPlanRowsForPiles(options: {
+  piles: PreviewPileInput[];
+  planStartTime: string;
+  siteId: string;
+  shiftTypeId?: string;
+  selectedStepIds?: string[];
+  /** Pre-fetched, session-cached reference data — see fetchPlanReferenceData().
+   * Any field left out falls back to fetching it here, so existing callers
+   * that don't pass this at all keep working unchanged. */
+  referenceData?: {
+    allSteps?: PilingStep[];
+    templateRows?: PlanTemplateRow[];
+    rawWindows?: PlanRawWindow[];
+  };
+}): Promise<BuildPlanRowsResult> {
+  const { piles, planStartTime, siteId, shiftTypeId, selectedStepIds, referenceData } = options;
+
+  const db = await initDb();
+
+  // These three are mutually independent (none reads another's result), and
+  // 100% static for a whole wizard session — fetched in parallel, and skipped
+  // entirely for whichever pieces the caller already has cached.
+  const [allSteps, templateRows, rawWindows] = await Promise.all([
+    referenceData?.allSteps
+      ? Promise.resolve(referenceData.allSteps)
+      : db.select().from(pilingSteps).orderBy(pilingSteps.sequenceOrder).all(),
+    referenceData?.templateRows
+      ? Promise.resolve(referenceData.templateRows)
+      : fetchTemplateRows(db, siteId),
+    referenceData?.rawWindows
+      ? Promise.resolve(referenceData.rawWindows)
+      : fetchRawWindows(db, siteId, shiftTypeId),
+  ]);
+
+  const selectedStepSet = selectedStepIds?.length ? new Set(selectedStepIds) : null;
+  const pileSteps = selectedStepSet
+    ? allSteps.filter((s) => selectedStepSet.has(s.id))
+    : allSteps;
+
+  const templateMap = new Map(templateRows.map((t) => [`${t.dimensionId}|${t.stepId}`, t]));
 
   const planRows: PreviewPlanStep[] = [];
   const warningPileIds: string[] = [];
@@ -312,34 +419,23 @@ async function buildPlanRowsForPiles(options: {
   const dayBase = new Date(planStart);
   dayBase.setHours(0, 0, 0, 0);
 
-  // track -> machineId -> next-free timestamp. Generalizes the old rigPool/cranePool
-  // pair to however many tracks exist (today RIG/CRANE/COMPRESSOR) without hardcoding
-  // track names here — only machineForTrack() below knows the track->field mapping.
-  const tracksInUse = new Set(pileSteps.map((s) => s.track));
-  const trackPools = new Map<string, Map<string, Date>>();
-  for (const track of tracksInUse) trackPools.set(track, new Map());
-
-  // One window set per physical machine (not per track) — skipNonWorkingWindows
-  // mutates AFTER_CURRENT_STEP windows in place as steps get scheduled, and two
-  // different machines of the same track (e.g. Rig R-01 and Rig R-02) must not
-  // observe each other's mutations, or one machine's lunch break can get
-  // "consumed" and pushed out of the way by another machine's earlier step.
-  const machineWindows = new Map<string, EffectiveWindow[]>();
-  for (const pile of piles) {
-    for (const track of tracksInUse) {
-      const machineId = machineForTrack(pile, track);
-      if (!machineId) continue;
-      const pool = trackPools.get(track)!;
-      if (!pool.has(machineId)) pool.set(machineId, new Date(planStart));
-      if (!machineWindows.has(machineId)) machineWindows.set(machineId, resolveWindows(rawWindows, dayBase));
-    }
-  }
-
-  // ── Pass 1: resolve each pile's applicable/remaining steps up front ───────
+  // ── Pass 1: resolve each pile's applicable/remaining steps up front, all the way
+  // to a concrete assignedMachineId (never just a track name) — see
+  // resolveStepExecution() above. Everything past this point schedules machines,
+  // not tracks, and never re-derives an override.
   interface PileScheduleData {
     pile: PreviewPileInput;
     dimensionId: string;
-    remainingSteps: typeof pileSteps;
+    remainingSteps: ResolvedPileStep[];
+  }
+
+  interface ResolvedPileStep {
+    step: { id: string; stepName: string; sequenceOrder: number };
+    /** The step definition's nominal track — kept for traceability/logging only. */
+    businessTrack: string;
+    /** Which track actually executes this step — feeds the pushed row's `track`. */
+    executionTrack: string;
+    assignedMachineId: string;
   }
 
   const perPileData: PileScheduleData[] = [];
@@ -370,15 +466,51 @@ async function buildPlanRowsForPiles(options: {
     const resumeOrder = pile.resumeWork
       ? activeSteps.find((step) => step.id === pile.resumeWork!.stepId)?.sequenceOrder
       : undefined;
-    const remainingSteps = resumeOrder === undefined
+    const applicableSteps = resumeOrder === undefined
       ? activeSteps
       : activeSteps.filter((step) => step.sequenceOrder >= resumeOrder);
+
+    const remainingSteps: ResolvedPileStep[] = [];
+    for (const step of applicableSteps) {
+      const { businessTrack, executionTrack, assignedMachineId } = resolveStepExecution(pile, step);
+      if (!assignedMachineId) {
+        console.warn(
+          `[planner] Pile ${pile.pileIdCode} has no machine assigned for track ${executionTrack} ` +
+            `(step "${step.stepName}") — skipping this step.`,
+        );
+        warningPileIds.push(pile.checklistPileId);
+        continue;
+      }
+      remainingSteps.push({
+        step: { id: step.id, stepName: step.stepName, sequenceOrder: step.sequenceOrder },
+        businessTrack,
+        executionTrack,
+        assignedMachineId,
+      });
+    }
 
     perPileData.push({
       pile,
       dimensionId,
       remainingSteps,
     });
+  }
+
+  // machineId -> next-free timestamp — a single flat pool. Every resolved step
+  // already carries its own assignedMachineId, so there's no need to group by
+  // track anymore; seed it (and one non-working-window set per physical machine —
+  // skipNonWorkingWindows mutates AFTER_CURRENT_STEP windows in place, and two
+  // different machines must not observe each other's mutations) from whichever
+  // machines actually turned up across all piles' resolved steps.
+  const machinePools = new Map<string, Date>();
+  const machineWindows = new Map<string, EffectiveWindow[]>();
+  for (const { remainingSteps } of perPileData) {
+    for (const rs of remainingSteps) {
+      if (!machinePools.has(rs.assignedMachineId)) machinePools.set(rs.assignedMachineId, new Date(planStart));
+      if (!machineWindows.has(rs.assignedMachineId)) {
+        machineWindows.set(rs.assignedMachineId, resolveWindows(rawWindows, dayBase));
+      }
+    }
   }
 
   // ── Pass 2: greedily schedule whichever pile's next step can start soonest ─
@@ -396,10 +528,7 @@ async function buildPlanRowsForPiles(options: {
   const readyAt = (p: PileScheduleData): Date => {
     const next = p.remainingSteps[0];
     if (!next) return new Date(planStart);
-    const machineId = machineForTrack(p.pile, next.track);
-    if (!machineId) return new Date(planStart);
-    const pool = trackPools.get(next.track);
-    return pool?.get(machineId) ?? new Date(planStart);
+    return machinePools.get(next.assignedMachineId) ?? new Date(planStart);
   };
 
   while (unscheduled.length > 0) {
@@ -411,22 +540,13 @@ async function buildPlanRowsForPiles(options: {
     }
     const { pile, dimensionId, remainingSteps } = unscheduled.splice(bestIdx, 1)[0];
 
-    // Walk this pile's steps in sequence_order across all tracks in one pass —
+    // Walk this pile's steps in sequence_order across all machines in one pass —
     // no "finish RIG before starting CRANE" special case. Each step starts at
     // max(its own machine's free time, this pile's previous-step end).
     let pileCursor = new Date(planStart);
-    for (const step of remainingSteps) {
-      const machineId = machineForTrack(pile, step.track);
-      if (!machineId) {
-        console.warn(
-          `[planner] Pile ${pile.pileIdCode} has no machine assigned for track ${step.track} ` +
-            `(step "${step.stepName}") — skipping this step.`,
-        );
-        warningPileIds.push(pile.checklistPileId);
-        continue;
-      }
-      const pool = trackPools.get(step.track)!;
-      const poolFreeAt = pool.get(machineId) ?? new Date(planStart);
+    for (const resolvedStep of remainingSteps) {
+      const { step, businessTrack, executionTrack, assignedMachineId } = resolvedStep;
+      const poolFreeAt = machinePools.get(assignedMachineId) ?? new Date(planStart);
       const stepStart = maxDate(poolFreeAt, pileCursor);
 
       const minutesLeftInWindow = (planEnd.getTime() - stepStart.getTime()) / 60000;
@@ -438,11 +558,13 @@ async function buildPlanRowsForPiles(options: {
 
       const stepEnd = scheduleOneStep(
         step,
-        machineId,
+        businessTrack,
+        executionTrack,
+        assignedMachineId,
         stepStart,
         dimensionId,
         templateMap,
-        machineWindows.get(machineId)!,
+        machineWindows.get(assignedMachineId)!,
         pile.checklistPileId,
         now,
         planRows,
@@ -450,7 +572,7 @@ async function buildPlanRowsForPiles(options: {
         planEnd,
         pile.resumeWork,
       );
-      pool.set(machineId, stepEnd);
+      machinePools.set(assignedMachineId, stepEnd);
       pileCursor = stepEnd;
     }
   }
@@ -481,7 +603,19 @@ async function buildPlanRowsForPiles(options: {
     }
   }
 
-  return { planRows, warningPileIds };
+  const windowsByMachineId: Record<string, EffectivePlanWindow[]> = {};
+  for (const [machineId, windows] of machineWindows) {
+    windowsByMachineId[machineId] = windows
+      .map((w) => ({
+        id: w.id,
+        label: w.label,
+        start: toLocalIsoString(w.start),
+        end: toLocalIsoString(w.end),
+      }))
+      .sort((a, b) => a.start.localeCompare(b.start));
+  }
+
+  return { planRows, warningPileIds, windowsByMachineId };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -492,6 +626,12 @@ export interface GeneratePlanPreviewOptions {
   siteId: string;
   shiftTypeId?: string;
   selectedStepIds?: string[];
+  /** Pre-fetched, session-cached reference data — see fetchPlanReferenceData(). */
+  referenceData?: {
+    allSteps?: PilingStep[];
+    templateRows?: PlanTemplateRow[];
+    rawWindows?: PlanRawWindow[];
+  };
 }
 
 export async function generatePlanPreview(

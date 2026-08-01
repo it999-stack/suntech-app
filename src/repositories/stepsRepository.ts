@@ -59,6 +59,7 @@ export async function getTemplatesWithDimensions(
       durationMinutes: pilingStepDurationTemplates.durationMinutes,
       bufferBeforeMinutes: pilingStepDurationTemplates.bufferBeforeMinutes,
       syncedAt: pilingStepDurationTemplates.syncedAt,
+      updatedAt: pilingStepDurationTemplates.updatedAt,
       // dimension columns
       dimId: pilingDimensions.id,
       dimSiteId: pilingDimensions.siteId,
@@ -66,6 +67,8 @@ export async function getTemplatesWithDimensions(
       depth: pilingDimensions.depth,
       label: pilingDimensions.label,
       dimSyncedAt: pilingDimensions.syncedAt,
+      dimUpdatedAt: pilingDimensions.updatedAt,
+      dimDeletedAt: pilingDimensions.deletedAt,
     })
     .from(pilingStepDurationTemplates)
     .leftJoin(
@@ -82,6 +85,7 @@ export async function getTemplatesWithDimensions(
     durationMinutes: r.durationMinutes,
     bufferBeforeMinutes: r.bufferBeforeMinutes,
     syncedAt: r.syncedAt!,
+    updatedAt: r.updatedAt,
     dimension: r.dimId
       ? {
           id: r.dimId,
@@ -90,6 +94,64 @@ export async function getTemplatesWithDimensions(
           depth: r.depth!,
           label: r.label ?? null,
           syncedAt: r.dimSyncedAt!,
+          updatedAt: r.dimUpdatedAt,
+          deletedAt: r.dimDeletedAt,
+        }
+      : null,
+  }));
+}
+
+/**
+ * Returns duration templates for every step, dimension joined in, ordered by
+ * dia/depth. Used to show all steps' templates inline in one screen without a
+ * per-step drill-down.
+ */
+export async function getAllTemplatesWithDimensions(): Promise<TemplateWithDimension[]> {
+  const db = await initDb();
+
+  const rows = await db
+    .select({
+      id: pilingStepDurationTemplates.id,
+      stepId: pilingStepDurationTemplates.stepId,
+      dimensionId: pilingStepDurationTemplates.dimensionId,
+      durationMinutes: pilingStepDurationTemplates.durationMinutes,
+      bufferBeforeMinutes: pilingStepDurationTemplates.bufferBeforeMinutes,
+      syncedAt: pilingStepDurationTemplates.syncedAt,
+      updatedAt: pilingStepDurationTemplates.updatedAt,
+      dimId: pilingDimensions.id,
+      dimSiteId: pilingDimensions.siteId,
+      dia: pilingDimensions.dia,
+      depth: pilingDimensions.depth,
+      label: pilingDimensions.label,
+      dimSyncedAt: pilingDimensions.syncedAt,
+      dimUpdatedAt: pilingDimensions.updatedAt,
+      dimDeletedAt: pilingDimensions.deletedAt,
+    })
+    .from(pilingStepDurationTemplates)
+    .leftJoin(
+      pilingDimensions,
+      eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id),
+    )
+    .orderBy(pilingDimensions.dia, pilingDimensions.depth);
+
+  return rows.map((r) => ({
+    id: r.id,
+    stepId: r.stepId,
+    dimensionId: r.dimensionId,
+    durationMinutes: r.durationMinutes,
+    bufferBeforeMinutes: r.bufferBeforeMinutes,
+    syncedAt: r.syncedAt!,
+    updatedAt: r.updatedAt,
+    dimension: r.dimId
+      ? {
+          id: r.dimId,
+          siteId: r.dimSiteId!,
+          dia: r.dia!,
+          depth: r.depth!,
+          label: r.label ?? null,
+          syncedAt: r.dimSyncedAt!,
+          updatedAt: r.dimUpdatedAt,
+          deletedAt: r.dimDeletedAt,
         }
       : null,
   }));

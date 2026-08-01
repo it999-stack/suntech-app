@@ -7,7 +7,7 @@ import type { StepResult } from '@sync/bootstrap/syncResult';
 import { apiClient } from '@services/apiClient';
 
 import { saveAreas } from '@repositories/areasRepository';
-import { savePiles } from '@repositories/pilesRepository';
+import { savePiles, deletePilesByIds } from '@repositories/pilesRepository';
 
 import type {
   NewPilingArea,
@@ -28,7 +28,7 @@ export class SyncAreasStep implements ISyncStep {
       const areas: NewPilingArea[] = [];
       const piles: NewPilingPile[] = [];
 
-      for (const area of data as any[]) {
+      for (const area of data.areas as any[]) {
         // Skip the virtual "Unassigned" area if server sends id = null
         if (area.id) {
           areas.push({
@@ -59,6 +59,7 @@ export class SyncAreasStep implements ISyncStep {
 
       await saveAreas(areas);
       await savePiles(piles);
+      await deletePilesByIds((data.deleted_pile_ids as string[]) ?? []);
 
       return {
         step: this.name,

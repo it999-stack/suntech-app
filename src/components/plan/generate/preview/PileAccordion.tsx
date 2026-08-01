@@ -47,7 +47,13 @@ export default function PileAccordion({ pile, steps }: PileAccordionProps) {
           <Text style={styles.noSteps}>No plan steps generated for this pile.</Text>
         ) : (
           steps.map((s, idx) => (
-            <StepTimelineRow key={s.id} step={s} isLast={idx === steps.length - 1} />
+            <StepTimelineRow
+              key={s.id}
+              step={s}
+              isLast={idx === steps.length - 1}
+              rigMachineNo={pile.rigMachineNo}
+              craneMachineNo={pile.craneMachineNo}
+            />
           ))
         )}
       </View>

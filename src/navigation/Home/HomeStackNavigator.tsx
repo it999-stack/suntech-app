@@ -7,17 +7,19 @@ import PlanHistoryScreen from '@screens/Home/PlanHistoryScreen';
 import PlanDetailScreen from '@screens/Home/PlanDetailScreen';
 import FillActualsScreen from '@screens/Home/FillActualScreen';
 import GeneratePlanScreen from '@screens/Home/GeneratePlanScreen';
+import EditPlanScreen from '@screens/Home/EditPlanScreen';
 
 const Stack = createNativeStackNavigator<HomeStackParamList>();
 
 export default function HomeStackNavigator() {
   return (
-    <Stack.Navigator>
-      <Stack.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
-      <Stack.Screen name="PlanHistory" component={PlanHistoryScreen} options={{ title: 'Plan History' }} />
-      <Stack.Screen name="PlanDetail" component={PlanDetailScreen} options={{ title: 'Plan Detail' }} />
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="HomeScreen" component={HomeScreen} />
+      <Stack.Screen name="PlanHistory" component={PlanHistoryScreen} />
+      <Stack.Screen name="PlanDetail" component={PlanDetailScreen} />
       <Stack.Screen name="GeneratePlan" component={GeneratePlanScreen} />
       <Stack.Screen name="FillActuals" component={FillActualsScreen} />
+      <Stack.Screen name="EditPlan" component={EditPlanScreen} />
     </Stack.Navigator>
   );
 }

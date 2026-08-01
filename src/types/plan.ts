@@ -29,6 +29,31 @@ export type ResumeWork = {
 };
 
 /**
+ * Every named-role assignment for this checklist. Singleton roles are a
+ * plain nullable id; per-machine roles (Engineer/Supervisor/Operator) are
+ * keyed by machineId — a "group" (an Engineer covering several machines, or
+ * a Supervisor's 1 rig + 1 crane pairing) is never an explicit entity, it's
+ * just multiple map entries sharing the same personnel id. Mirrors the
+ * backend's one-row-per-(role, machine/shift-slot) shape (pil_checklist_personnel).
+ */
+export type ChecklistPersonnelAssignment = {
+  /** pilingSitePersonnel.id — 1 per checklist, frozen per plan (defaults from last-used). */
+  projectManagerId: string | null;
+  /** pilingSitePersonnel.id — 1 per checklist, frozen per plan (defaults from last-used). */
+  planningEngineerId: string | null;
+  /** pilingSitePersonnel.id — Shift 1 (day) incharge. */
+  shiftInchargeId: string | null;
+  /** pilingSitePersonnel.id — Shift 2 (night) incharge. */
+  shiftInchargeId2: string | null;
+  /** machineId -> personnelId. Rigs only — mandatory: every active rig needs one. */
+  engineerByMachineId: Record<string, string>;
+  /** machineId -> personnelId. Optional; a supervisor's rows must pair exactly 1 rig + 1 crane. */
+  supervisorByMachineId: Record<string, string>;
+  /** machineId -> personnelId. Mandatory: every active rig/crane needs one. */
+  operatorByMachineId: Record<string, string>;
+};
+
+/**
  * Transient wizard state — lives only in GeneratePlanScreen.
  * Seeded from existing checklist on edit mode.
  */
@@ -51,10 +76,10 @@ export type PlanDraft = {
   assignments: Record<string, PileAssignment>;
   /** Pending work keyed by physical pile id. */
   resumeWorkByPileId: Record<string, ResumeWork>;
-  /** pilingSitePersonnel.id — Shift 1 (day) supervisor. */
-  supervisorId: string | null;
-  /** pilingSitePersonnel.id — Shift 2 (night) supervisor. */
-  supervisorId2: string | null;
+  /** checklistPileId (pile.id in the draft) -> stepIds overridden to run on the Rig instead of Crane. One-off, not persisted beyond this plan generation. */
+  stepTrackOverrides: Record<string, string[]>;
+  /** All personnel role assignments for this checklist. */
+  checklistPersonnel: ChecklistPersonnelAssignment;
   /** pilingShiftTypes.id — the active shift for this plan. */
   shiftTypeId: string | null;
 };
@@ -117,8 +142,16 @@ export function defaultPlanDraft(today: string): PlanDraft {
     selectedStepIds: [],
     assignments: {},
     resumeWorkByPileId: {},
-    supervisorId: null,
-    supervisorId2: null,
+    stepTrackOverrides: {},
+    checklistPersonnel: {
+      projectManagerId: null,
+      planningEngineerId: null,
+      shiftInchargeId: null,
+      shiftInchargeId2: null,
+      engineerByMachineId: {},
+      supervisorByMachineId: {},
+      operatorByMachineId: {},
+    },
     shiftTypeId: null,
   };
 }

@@ -47,10 +47,12 @@ import type {
   PilingDailyChecklist,
   PilingChecklistPile,
 } from '@db/schema';
-import type { ResumeWork } from '@/types/plan';
+import type { ResumeWork, ChecklistPersonnelAssignment } from '@/types/plan';
+import { buildChecklistPersonnelPayload } from '@/utils/personnelRoles';
 import { generateId } from '@/utils/helpers';
 import { enqueueChecklistSync } from '@repositories/syncQueueRepository';
 import { triggerDebounced } from '@sync/SyncManager';
+import { onConflicts } from '@sync/delta/deltaPush';
 import { apiClient } from '@services/apiClient';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -65,6 +67,9 @@ export type PileAssignmentInput = {
   rigId: string;       // pilingMachines.id (type=RIG)
   craneId: string;     // pilingMachines.id (type=CRANE)
   resumeWork?: ResumeWork;
+  /** Step ids whose CRANE-track step should run on the Rig instead for this pile —
+   * one-off per plan generation, chosen in the Preview step. */
+  stepTrackOverrides?: string[];
 };
 
 export type GeneratePlanInput = {
@@ -76,10 +81,8 @@ export type GeneratePlanInput = {
   planStartTime: string;
   /** ISO timestamp — when the 24hr plan ends (planStartTime + 24 h). */
   planEndTime: string;
-  /** pilingSitePersonnel.id of the day/shift-1 supervisor on duty. */
-  supervisorId: string | null;
-  /** pilingSitePersonnel.id of the night/shift-2 supervisor on duty. */
-  supervisorId2: string | null;
+  /** All personnel role assignments for this checklist. */
+  checklistPersonnel: ChecklistPersonnelAssignment;
   /** pilingShiftTypes.id of the active shift for this plan. */
   shiftTypeId: string | null;
   /** Ordered list of piles + machine assignments. */
@@ -94,6 +97,26 @@ export type GeneratePlanInput = {
    * than overwritten (see plan_generation_service.py's is_edit handling).
    */
   isEdit?: boolean;
+};
+
+/** One pile entry submitted to a mid-day plan edit — no resumeWork field:
+ * unlike a full regenerate, the server derives same-day resume points itself
+ * from actual progress (see plan_generation_service.edit_checklist_plan_mid_day). */
+export type EditPlanPileInput = {
+  pileId: string;
+  rigId: string;
+  craneId: string;
+};
+
+/** What changed as a result of editPlanMidDay — shown to the user before/after
+ * they commit, per the mid-day-edit "show a summary" rule. */
+export type EditPlanSummary = {
+  pilesRemoved: string[];
+  pilesAdded: string[];
+  stepsRegeneratedCount: number;
+  /** Piles left entirely untouched because a step on them is currently running. */
+  pilesLockedSkipped: string[];
+  warningPiles: string[];
 };
 
 /** Input for logging a machine breakdown/replacement/resume event on a step. */
@@ -122,10 +145,23 @@ type PlanContextValue = {
   isLoading: boolean;
   isGenerating: boolean;
   error: string | null;
+  /** Set when a genuine sync conflict touched a row in the currently loaded checklist. */
+  conflictNotice: string | null;
+  /** Clear conflictNotice after showing it once. */
+  dismissConflictNotice: () => void;
   /** Load (or reload) the checklist for a given date + site. */
   loadChecklist: (siteId: string, date: string) => Promise<void>;
   /** Create the checklist + piles, then run the local planner. */
   generatePlan: (siteId: string, input: GeneratePlanInput) => Promise<void>;
+  /** Reorder/add/remove piles on an already-generated, possibly
+   * partially-worked checklist — never disturbs completed/running work, only
+   * reschedules what's left from now. Returns a summary of what changed. */
+  editPlanMidDay: (
+    siteId: string,
+    checklistId: string,
+    date: string,
+    piles: EditPlanPileInput[],
+  ) => Promise<EditPlanSummary>;
   setRemarks: (checklistPileId: string, stepId: string, remarks: string) => Promise<void>;
   /** Record an actual start or end time for a step. */
   setActualTime: (
@@ -165,6 +201,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflictNotice, setConflictNotice] = useState<string | null>(null);
 
   // Tracks the last (siteId, date) any screen asked us to load, so a
   // background sync completing can silently re-read local SQLite for
@@ -216,6 +253,25 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     });
   }, [loadChecklist]);
 
+  // Surfaces genuine sync conflicts (rare once optimistic-concurrency uses the
+  // server-echoed version — see serverUpdatedAt) instead of silently letting
+  // the next pull overwrite a local edit with no explanation. Only raises the
+  // notice when the conflicting row belongs to whatever's currently loaded.
+  useEffect(() => {
+    return onConflicts((conflicts) => {
+      const relevant = conflicts.some((c) =>
+        c.entity === 'actual_step'
+          ? actualSteps.some((a) => a.id === c.id)
+          : checklistPiles.some((cp) => cp.id === c.id),
+      );
+      if (relevant) {
+        setConflictNotice('Some entries were updated by another device and have been refreshed.');
+      }
+    });
+  }, [actualSteps, checklistPiles]);
+
+  const dismissConflictNotice = useCallback(() => setConflictNotice(null), []);
+
   // ── Generate plan ────────────────────────────────────────────────────────
 
   const generatePlan = useCallback(
@@ -233,8 +289,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           shift_type_id: input.shiftTypeId,
           plan_start_time: input.planStartTime,
           plan_end_time: input.planEndTime,
-          supervisor_id: input.supervisorId,
-          supervisor_id_2: input.supervisorId2,
+          checklist_personnel: buildChecklistPersonnelPayload(input.checklistPersonnel),
           piles: input.piles.map((p) => ({
             pile_id: p.pileId,
             rig_id: p.rigId,
@@ -246,6 +301,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
                   buffer_minutes: p.resumeWork.bufferMinutes ?? null,
                 }
               : null,
+            step_track_overrides: p.stepTrackOverrides ?? [],
           })),
           step_ids: input.stepIds,
           is_edit: input.isEdit ?? false,
@@ -259,6 +315,52 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         await loadChecklist(siteId, input.date);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to generate plan');
+        throw err;
+      } finally {
+        setIsGenerating(false);
+      }
+    },
+    [loadChecklist],
+  );
+
+  // ── Mid-day plan edit (reorder / add / remove piles on a live checklist) ──
+
+  const editPlanMidDay = useCallback(
+    async (
+      siteId: string,
+      checklistId: string,
+      date: string,
+      piles: EditPlanPileInput[],
+    ): Promise<EditPlanSummary> => {
+      setIsGenerating(true);
+      setError(null);
+      try {
+        // Same reasoning as generatePlan: the server is the sole owner of
+        // scheduling decisions, this requires connectivity, and the response
+        // is the full authoritative plan — local SQLite is only ever a cache.
+        const { data } = await apiClient.post(
+          `/piling/sites/${siteId}/checklists/${checklistId}/edit-plan`,
+          {
+            piles: piles.map((p) => ({
+              pile_id: p.pileId,
+              rig_id: p.rigId,
+              crane_id: p.craneId,
+            })),
+          },
+        );
+
+        await hydrateChecklistFromServer(data.checklist);
+        await loadChecklist(siteId, date);
+
+        return {
+          pilesRemoved: data.summary.piles_removed,
+          pilesAdded: data.summary.piles_added,
+          stepsRegeneratedCount: data.summary.steps_regenerated_count,
+          pilesLockedSkipped: data.summary.piles_locked_skipped,
+          warningPiles: data.summary.warning_piles,
+        };
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to edit plan');
         throw err;
       } finally {
         setIsGenerating(false);
@@ -414,8 +516,11 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       isGenerating,
       error,
+      conflictNotice,
+      dismissConflictNotice,
       loadChecklist,
       generatePlan,
+      editPlanMidDay,
       setActualTime,
       setRemarks,
       logMachineEvent,
@@ -429,8 +534,11 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       isGenerating,
       error,
+      conflictNotice,
+      dismissConflictNotice,
       loadChecklist,
       generatePlan,
+      editPlanMidDay,
       setActualTime,
       setRemarks,
       logMachineEvent,

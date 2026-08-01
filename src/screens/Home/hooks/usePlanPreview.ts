@@ -20,7 +20,7 @@ interface PreviewPileInput {
 }
 
 export function usePlanPreview(params: {
-  step: 'intro' | 'area' | 'start' | 'machines' | 'piles' | 'steps' | 'supervisors' | 'preview';
+  step: 'area' | 'start' | 'machines' | 'piles' | 'steps' | 'supervisors' | 'preview';
   draft: PlanDraft;
   areaPiles: EligiblePile[];
   siteId: string;

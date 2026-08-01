@@ -1,14 +1,16 @@
 // src/sync/steps/syncActivePlan.ts
 //
-// Pulls today's checklist (if the server has one) into local SQLite on every
-// bootstrap — login, reconnect, foreground, periodic (see stepRegistry.ts).
-// This is what makes a reinstalled/data-cleared device recover its
-// in-progress plan: the device never re-derives or regenerates anything, it
-// just rehydrates from the server, which is the sole owner of plan data
-// (see suntech-core/modules/piling/daily_checklists/plan_generation_service.py).
+// Pulls the working date's checklist (if the server has one) into local
+// SQLite on every bootstrap — login, reconnect, foreground, periodic (see
+// stepRegistry.ts). Normally the working date is just today; see
+// src/store/workingDateStore.ts for the (testing-only) override. This is
+// what makes a reinstalled/data-cleared device recover its in-progress plan:
+// the device never re-derives or regenerates anything, it just rehydrates
+// from the server, which is the sole owner of plan data (see
+// suntech-core/modules/piling/daily_checklists/plan_generation_service.py).
 //
-// A no-op (count 0, no error) when today has no plan yet — that's the normal
-// state before "Generate Plan" has been used, not a failure.
+// A no-op (count 0, no error) when the working date has no plan yet — that's
+// the normal state before "Generate Plan" has been used, not a failure.
 
 import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
 import type { SyncContext } from '@sync/bootstrap/syncContext';
@@ -16,13 +18,7 @@ import type { StepResult } from '@sync/bootstrap/syncResult';
 
 import { apiClient } from '@services/apiClient';
 import { hydrateChecklistFromServer } from '@repositories/checklistRepository';
-
-function toLocalDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+import { getWorkingDate } from '@store/workingDateStore';
 
 export class SyncActivePlanStep implements ISyncStep {
   readonly name = 'activePlan';
@@ -31,10 +27,10 @@ export class SyncActivePlanStep implements ISyncStep {
     const syncedAt = Date.now();
 
     try {
-      const today = toLocalDateStr(new Date());
+      const workingDate = getWorkingDate();
       const { data: state } = await apiClient.get<{ exists: boolean; checklist_id: string | null }>(
         `/piling/sites/${ctx.siteId}/plans/state`,
-        { params: { date: today } },
+        { params: { date: workingDate } },
       );
 
       if (!state.exists || !state.checklist_id) {

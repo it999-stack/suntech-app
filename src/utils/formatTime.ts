@@ -8,6 +8,7 @@
 //   3. Duration helpers            — format a span of time
 //   4. Date math utilities         — addMinutes, timeToMinutes (used by planner + UI)
 //   5. ISO serialization (writes)  — toLocalIsoString, for building the strings sent to the API
+//   6. Date-only strings + relative-day labels — toLocalDateStr, formatRelativeDayLabel, formatHeaderDate
 
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -248,4 +249,57 @@ export function toLocalIsoString(date: Date): string {
   const min = pad(date.getMinutes());
   const s = pad(date.getSeconds());
   return `${y}-${m}-${d}T${h}:${min}:${s}`;
+}
+
+// ─── 6. Date-only strings + relative-day labels ──────────────────────────────
+
+/**
+ * Serialize a Date's own local y/m/d components as "YYYY-MM-DD" — the
+ * date-only sibling of toLocalIsoString, for values (plan dates, working
+ * dates, calendar selections) that don't carry a time-of-day.
+ */
+export function toLocalDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Relative-day label for a date: "Today", the given neighboring day
+ * ("Tomorrow" or "Yesterday"), or a locale-formatted fallback otherwise.
+ * Accepts either a full ISO timestamp or a plain "YYYY-MM-DD" string.
+ */
+export function formatRelativeDayLabel(
+  input: string,
+  opts: {
+    neighbor: 'tomorrow' | 'yesterday';
+    locale?: string;
+    dateFormatOptions?: Intl.DateTimeFormatOptions;
+  },
+): string {
+  const { neighbor, locale, dateFormatOptions } = opts;
+  const d = new Date(input.length <= 10 ? `${input}T00:00:00` : input);
+  const dateStr = toLocalDateStr(d);
+  const today = toLocalDateStr(new Date());
+  const neighborDate = new Date();
+  neighborDate.setDate(neighborDate.getDate() + (neighbor === 'tomorrow' ? 1 : -1));
+  const neighborStr = toLocalDateStr(neighborDate);
+
+  if (dateStr === today) return 'Today';
+  if (dateStr === neighborStr) return neighbor === 'tomorrow' ? 'Tomorrow' : 'Yesterday';
+  return d.toLocaleDateString(locale, dateFormatOptions);
+}
+
+/**
+ * Full weekday + month + day header label for a "YYYY-MM-DD" date string,
+ * e.g. "Monday, July 27" (or with `includeYear`, "Monday, July 27, 2026").
+ */
+export function formatHeaderDate(dateStr: string, opts?: { includeYear?: boolean }): string {
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    ...(opts?.includeYear ? { year: 'numeric' as const } : {}),
+  });
 }

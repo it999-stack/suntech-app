@@ -12,8 +12,6 @@ export let db: ReturnType<typeof drizzle>;
 let _db: ReturnType<typeof drizzle> | null = null;
 
 // ─── DEV RESET FLAG ───────────────────────────────────────────────────────────
-// Set to true to drop and recreate all tables on every cold start.
-// Flip to false (or delete this block) before shipping to production.
 const DEV_RESET_DB = false;
 // ─────────────────────────────────────────────────────────────────────────────
 /**
@@ -25,15 +23,26 @@ export async function initDb() {
 
   const sqlite = await SQLite.openDatabaseAsync('suntech_local.db');
 
+  // WAL lets readers proceed without blocking on an in-progress writer, and
+  // busy_timeout makes a genuine writer-vs-writer collision wait/retry for
+  // up to 5s instead of throwing SQLITE_BUSY ("database is locked")
+  // immediately — the default busy_timeout is 0. Both apply to every future
+  // connection to this file, not just this session, but are cheap no-ops to
+  // re-set on an already-WAL database.
+  await sqlite.execAsync('PRAGMA journal_mode = WAL;');
+  await sqlite.execAsync('PRAGMA busy_timeout = 5000;');
+
   // ── DEV: nuke all tables so every cold start is a clean slate ─────────────
   if (DEV_RESET_DB) {
     await sqlite.execAsync(`
+      DROP TABLE IF EXISTS pil_sync_cursor;
       DROP TABLE IF EXISTS pil_sync_queue;
       DROP TABLE IF EXISTS pil_machine_events;
       DROP TABLE IF EXISTS pil_actual_steps;
       DROP TABLE IF EXISTS pil_plan_steps;
       DROP TABLE IF EXISTS pil_checklist_piles;
       DROP TABLE IF EXISTS pil_checklist_personnel;
+      DROP TABLE IF EXISTS pil_role_defaults;
       DROP TABLE IF EXISTS pil_daily_checklists;
       DROP TABLE IF EXISTS pil_step_duration_templates;
       DROP TABLE IF EXISTS pil_steps;
@@ -59,7 +68,8 @@ export async function initDb() {
       sort_order  INTEGER NOT NULL DEFAULT 0,
       is_active   INTEGER NOT NULL DEFAULT 1,
       created_at  INTEGER NOT NULL,
-      updated_at  INTEGER NOT NULL
+      updated_at  INTEGER NOT NULL,
+      deleted_at  INTEGER
     );
   `);
 
@@ -92,7 +102,9 @@ export async function initDb() {
       pile_id_code TEXT NOT NULL,
       area_location TEXT,
       notes        TEXT,
-      synced_at    INTEGER NOT NULL
+      synced_at    INTEGER NOT NULL,
+      updated_at   INTEGER,
+      deleted_at   INTEGER
     );
   `);
 
@@ -103,7 +115,9 @@ export async function initDb() {
       dia          INTEGER NOT NULL,
       depth        INTEGER NOT NULL,
       label        TEXT,
-      synced_at    INTEGER NOT NULL
+      synced_at    INTEGER NOT NULL,
+      updated_at   INTEGER,
+      deleted_at   INTEGER
     );
   `);
 
@@ -114,21 +128,25 @@ export async function initDb() {
       name       TEXT NOT NULL,
       start_time TEXT NOT NULL,
       end_time   TEXT NOT NULL,
-      synced_at  INTEGER NOT NULL
+      synced_at  INTEGER NOT NULL,
+      updated_at INTEGER,
+      deleted_at INTEGER
     );
   `);
 
-    await sqlite.execAsync(`
-      CREATE TABLE IF NOT EXISTS pil_non_working_windows (
-        id            TEXT PRIMARY KEY NOT NULL,
-        shift_type_id TEXT NOT NULL,
-        label         TEXT NOT NULL,
-        start_time    TEXT NOT NULL,
-        end_time      TEXT NOT NULL,
-        behavior      TEXT NOT NULL DEFAULT 'FIXED',
-        synced_at     INTEGER NOT NULL
-      );
-    `);
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_non_working_windows (
+      id            TEXT PRIMARY KEY NOT NULL,
+      shift_type_id TEXT NOT NULL,
+      label         TEXT NOT NULL,
+      start_time    TEXT NOT NULL,
+      end_time      TEXT NOT NULL,
+      behavior      TEXT NOT NULL DEFAULT 'FIXED',
+      synced_at     INTEGER NOT NULL,
+      updated_at    INTEGER,
+      deleted_at    INTEGER
+    );
+  `);
 
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_machines (
@@ -137,7 +155,9 @@ export async function initDb() {
       machine_no  TEXT NOT NULL,
       type        TEXT NOT NULL,
       status      TEXT NOT NULL,
-      synced_at   INTEGER NOT NULL
+      synced_at   INTEGER NOT NULL,
+      updated_at  INTEGER,
+      deleted_at  INTEGER
     );
   `);
 
@@ -151,7 +171,9 @@ export async function initDb() {
       email         TEXT,
       employee_code TEXT,
       is_active     INTEGER NOT NULL DEFAULT 1,
-      synced_at     INTEGER NOT NULL
+      synced_at     INTEGER NOT NULL,
+      updated_at    INTEGER,
+      deleted_at    INTEGER
     );
   `);
 
@@ -160,29 +182,15 @@ export async function initDb() {
       id             TEXT PRIMARY KEY NOT NULL,
       step_name      TEXT NOT NULL,
       sequence_order INTEGER NOT NULL,
-      track          TEXT NOT NULL
+      track          TEXT NOT NULL,
+      updated_at     INTEGER
     );
   `);
 
-  // Guarded: an existing install synced before sequence_order became unique on the
-  // server could locally have duplicate values, which would make this throw and
-  // crash every cold start. Dedupe and retry rather than leave the app unbootable —
-  // pil_steps is replaced wholesale on the next successful sync anyway.
-  try {
-    await sqlite.execAsync(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_pil_steps_sequence_order
-        ON pil_steps (sequence_order);
-    `);
-  } catch {
-    await sqlite.execAsync(`
-      DELETE FROM pil_steps
-      WHERE rowid NOT IN (SELECT MIN(rowid) FROM pil_steps GROUP BY sequence_order);
-    `);
-    await sqlite.execAsync(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_pil_steps_sequence_order
-        ON pil_steps (sequence_order);
-    `);
-  }
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pil_steps_sequence_order
+      ON pil_steps (sequence_order);
+  `);
 
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_step_duration_templates (
@@ -191,7 +199,8 @@ export async function initDb() {
       dimension_id          TEXT NOT NULL,
       duration_minutes      INTEGER NOT NULL,
       buffer_before_minutes INTEGER NOT NULL DEFAULT 0,
-      synced_at             INTEGER NOT NULL
+      synced_at             INTEGER NOT NULL,
+      updated_at            INTEGER
     );
   `);
 
@@ -205,12 +214,11 @@ export async function initDb() {
       shift_type_id   TEXT,
       plan_start_time TEXT,
       plan_end_time   TEXT,
-      supervisor_id   TEXT,
-      supervisor_id_2 TEXT,
       notes           TEXT,
       status          TEXT NOT NULL DEFAULT 'DRAFT',
       created_at      INTEGER NOT NULL,
-      updated_at      INTEGER NOT NULL
+      updated_at      INTEGER NOT NULL,
+      deleted_at      INTEGER
     );
   `);
 
@@ -223,13 +231,63 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS pil_checklist_personnel (
       id           TEXT PRIMARY KEY NOT NULL,
       checklist_id TEXT NOT NULL,
-      personnel_id TEXT NOT NULL
+      personnel_id TEXT NOT NULL,
+      role         TEXT,
+      machine_id   TEXT,
+      shift_slot   INTEGER,
+      updated_at   INTEGER
     );
   `);
 
+  // A person can legitimately have multiple rows on one checklist (e.g. an
+  // ENGINEER row per machine in their group), so uniqueness is enforced per
+  // role-shape rather than a single (checklist_id, personnel_id) pair —
+  // mirrors the server's three role-shaped partial unique indexes.
   await sqlite.execAsync(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_personnel_unique
-      ON pil_checklist_personnel (checklist_id, personnel_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_personnel_singleton
+      ON pil_checklist_personnel (checklist_id, role)
+      WHERE role IN ('PROJECT_MANAGER','PLANNING_ENGINEER');
+  `);
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_personnel_shift
+      ON pil_checklist_personnel (checklist_id, role, shift_slot)
+      WHERE role = 'SHIFT_INCHARGE';
+  `);
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_personnel_machine
+      ON pil_checklist_personnel (checklist_id, role, machine_id)
+      WHERE machine_id IS NOT NULL;
+  `);
+
+  // Site-scoped "last used" personnel per role — server is the sole writer
+  // (see roleDefaultsRepository.replaceRoleDefaultsForSite), read once at
+  // draft-init time to pre-fill a new plan's role pickers.
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_role_defaults (
+      id            TEXT PRIMARY KEY NOT NULL,
+      site_id       TEXT NOT NULL,
+      role          TEXT NOT NULL,
+      machine_id    TEXT,
+      shift_slot    INTEGER,
+      personnel_id  TEXT NOT NULL,
+      synced_at     INTEGER NOT NULL,
+      updated_at    INTEGER
+    );
+  `);
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_role_defaults_singleton
+      ON pil_role_defaults (site_id, role)
+      WHERE role IN ('PROJECT_MANAGER','PLANNING_ENGINEER');
+  `);
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_role_defaults_shift
+      ON pil_role_defaults (site_id, role, shift_slot)
+      WHERE role = 'SHIFT_INCHARGE';
+  `);
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_role_defaults_machine
+      ON pil_role_defaults (site_id, role, machine_id)
+      WHERE machine_id IS NOT NULL;
   `);
 
   await sqlite.execAsync(`
@@ -241,7 +299,10 @@ export async function initDb() {
       rig_id       TEXT NOT NULL,
       crane_id     TEXT NOT NULL,
       status       TEXT NOT NULL DEFAULT 'NOT_STARTED',
-      created_at   INTEGER NOT NULL
+      created_at   INTEGER NOT NULL,
+      updated_at   INTEGER,
+      server_updated_at TEXT,
+      deleted_at   INTEGER
     );
   `);
 
@@ -249,39 +310,6 @@ export async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_piles_unique
       ON pil_checklist_piles (checklist_id, pile_id);
   `);
-
-  // Guarded: devices that already have pil_plan_steps on disk have
-  // `planned_end TEXT NOT NULL` baked in from before continuing steps existed.
-  // SQLite has no ALTER COLUMN DROP NOT NULL, so rebuild-and-copy into a
-  // nullable table. A migration hiccup here must not brick cold start.
-  try {
-    const columns = await sqlite.getAllAsync<{ name: string; notnull: number }>(
-      `PRAGMA table_info('pil_plan_steps');`
-    );
-    const plannedEndCol = columns.find((c) => c.name === 'planned_end');
-    if (plannedEndCol && plannedEndCol.notnull === 1) {
-      await sqlite.execAsync(`
-        CREATE TABLE pil_plan_steps_new (
-          id                   TEXT PRIMARY KEY NOT NULL,
-          checklist_pile_id    TEXT NOT NULL,
-          step_id              TEXT NOT NULL,
-          planned_start        TEXT NOT NULL,
-          planned_end          TEXT,
-          duration_minutes     INTEGER,
-          buffer_minutes       INTEGER,
-          assigned_machine_id  TEXT,
-          created_at           INTEGER NOT NULL
-        );
-        INSERT INTO pil_plan_steps_new SELECT * FROM pil_plan_steps;
-        DROP TABLE pil_plan_steps;
-        ALTER TABLE pil_plan_steps_new RENAME TO pil_plan_steps;
-      `);
-    }
-  } catch {
-    // Leave the existing table as-is; the CREATE TABLE IF NOT EXISTS below
-    // is a no-op in that case, and worst case plannedEnd stays NOT NULL on
-    // this device until a future successful migration.
-  }
 
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_plan_steps (
@@ -293,7 +321,8 @@ export async function initDb() {
       duration_minutes     INTEGER,
       buffer_minutes       INTEGER,
       assigned_machine_id  TEXT,
-      created_at           INTEGER NOT NULL
+      created_at           INTEGER NOT NULL,
+      updated_at           INTEGER
     );
   `);
 
@@ -311,32 +340,15 @@ export async function initDb() {
       actual_end         TEXT,
       remarks            TEXT,
       created_at         INTEGER NOT NULL,
-      updated_at         INTEGER NOT NULL
+      updated_at         INTEGER NOT NULL,
+      server_updated_at  TEXT
     );
   `);
 
-  // Guarded: a device carrying pre-existing duplicate (checklist_pile_id,
-  // step_id) rows from before this index existed would otherwise throw here
-  // and never get the index created, leaving every later upsertActualStep()
-  // failing with "ON CONFLICT clause does not match ..." forever. Dedupe
-  // (keep one row per pair) and retry, matching the pil_steps pattern above.
-  try {
-    await sqlite.execAsync(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_actual_steps_unique
-        ON pil_actual_steps (checklist_pile_id, step_id);
-    `);
-  } catch {
-    await sqlite.execAsync(`
-      DELETE FROM pil_actual_steps
-      WHERE rowid NOT IN (
-        SELECT MIN(rowid) FROM pil_actual_steps GROUP BY checklist_pile_id, step_id
-      );
-    `);
-    await sqlite.execAsync(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_actual_steps_unique
-        ON pil_actual_steps (checklist_pile_id, step_id);
-    `);
-  }
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_actual_steps_unique
+      ON pil_actual_steps (checklist_pile_id, step_id);
+  `);
 
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_machine_events (
@@ -350,7 +362,8 @@ export async function initDb() {
       replacement_id TEXT,
       notes          TEXT,
       occurred_at    TEXT NOT NULL,
-      created_at     INTEGER NOT NULL
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER
     );
   `);
 
@@ -374,6 +387,15 @@ export async function initDb() {
   await sqlite.execAsync(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_queue_checklist_unique
       ON pil_sync_queue (checklist_id);
+  `);
+
+  // Phase 3 delta-sync cursor
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_sync_cursor (
+      site_id      TEXT PRIMARY KEY NOT NULL,
+      cursor_value TEXT,
+      updated_at   INTEGER
+    );
   `);
 
   _db = drizzle(sqlite, { schema });

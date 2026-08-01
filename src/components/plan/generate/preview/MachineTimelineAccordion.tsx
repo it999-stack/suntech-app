@@ -18,6 +18,7 @@ import { buildMachineStops } from '@/utils/timeline';
 import { type MachineInfo, type TimelineSourceItem, type TimelineStop } from '@/types/timeline';
 import { colors, spacing, typography } from '@/theme/theme';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
+import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import { isContinuingStep } from '@utils/helpers';
 
 export type { MachineInfo };
@@ -36,6 +37,10 @@ interface MachineTimelineAccordionProps {
    * field name for a pile's code on `PreviewPile`.
    */
   pileLabelById: Record<string, string>;
+  /** Non-working windows actually applied per machine, from generatePlanPreview(). */
+  windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
+  /** Shows a pencil icon next to the machine label when provided, e.g. to open a reorder overlay. */
+  onEditMachine?: (machineId: string) => void;
 }
 
 export default function MachineTimelineAccordion({
@@ -45,6 +50,8 @@ export default function MachineTimelineAccordion({
   activeRigs,
   activeCranes,
   pileLabelById,
+  windowsByMachineId,
+  onEditMachine,
 }: MachineTimelineAccordionProps) {
   const machines = useMemo<MachineInfo[]>(() => [...activeRigs, ...activeCranes], [activeRigs, activeCranes]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | undefined>(machines[0]?.id);
@@ -59,9 +66,13 @@ export default function MachineTimelineAccordion({
           // A continuing step has no committed end — fill the bar to the
           // window boundary instead of letting it vanish from the timeline.
           end: isContinuingStep(s) ? windowEnd.toISOString() : s.plannedEnd,
-          groupKey: s.checklistPileId ?? s.id,
+          // Includes stepId so different steps on the same pile never merge into
+          // one block — only a genuinely-repeated same-step row (e.g. split by a
+          // break) merges, per buildMachineStops' small-gap absorption.
+          groupKey: `${s.checklistPileId ?? s.id}|${s.stepId}`,
           groupLabel: s.checklistPileId ? pileLabelById[s.checklistPileId] ?? 'Unassigned pile' : 'Unassigned pile',
           detailLabel: s.stepName,
+          bufferMinutes: s.bufferMinutes ?? 0,
         })),
     [steps, pileLabelById],
   );
@@ -74,10 +85,11 @@ export default function MachineTimelineAccordion({
         machineId: m.id,
         windowStart,
         windowEnd,
+        nonWorkingWindows: windowsByMachineId?.[m.id],
       });
     });
     return map;
-  }, [machines, sourceItems, windowStart, windowEnd]);
+  }, [machines, sourceItems, windowStart, windowEnd, windowsByMachineId]);
 
   if (machines.length === 0) return null;
 
@@ -102,6 +114,7 @@ export default function MachineTimelineAccordion({
         stopsByMachineId={stopsByMachineId}
         selectedMachineId={selectedMachineId}
         onSelectMachine={setSelectedMachineId}
+        onEditMachine={onEditMachine}
       />
     </Accordion>
   );

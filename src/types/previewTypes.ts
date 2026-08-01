@@ -11,4 +11,6 @@ export interface PreviewPile {
   depth: number;
   rigMachineNo: string;
   craneMachineNo: string;
+  rigId: string;
+  craneId: string;
 }

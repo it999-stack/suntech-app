@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { RootStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
+import { useWorkingDateStore } from '@store/workingDateStore';
 import { getLastSyncTime } from '@repositories/pilesRepository';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MainTabNavigator from '@navigation/MainTabNavigator';
@@ -56,6 +57,7 @@ export default function RootNavigator() {
 
   useEffect(() => {
     bootstrap();
+    void useWorkingDateStore.getState().hydrate();
   }, [bootstrap]);
 
   const siteId = user?.siteId ?? null;

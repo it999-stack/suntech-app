@@ -34,6 +34,7 @@ export default function AreaSelectStep({ draft, onUpdate, areas }: AreaSelectSte
       selectedPileIds: [],
       assignments: {},
       resumeWorkByPileId: {},
+      stepTrackOverrides: {},
     });
   }
 

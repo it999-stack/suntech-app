@@ -2,7 +2,7 @@
 
 import { Platform } from 'react-native';
 
-const LOCAL_IP = '192.168.0.107';
+const LOCAL_IP = '192.168.0.105';
 
 function resolveBaseUrl() {
   if (__DEV__) {

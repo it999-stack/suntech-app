@@ -12,12 +12,13 @@ export type HomeStackParamList = {
   PlanHistory: undefined;
   PlanDetail: { checklistId: string };
   GeneratePlan: { date?: string; edit?: boolean } | undefined;
-  FillActuals: undefined;
+  FillActuals: { date?: string } | undefined;
+  EditPlan: { date?: string } | undefined;
 };
 
 // Piles stack
 export type PilesStackParamList = {
-  PilesScreen: { initialView?: 'today' | 'all'; initialFilter?: string } | undefined;
+  PilesScreen: undefined;
 };
 
 // Site top tabs — the swipeable tab strip rendered inside SiteScreen.
@@ -26,15 +27,13 @@ export type SiteTopTabParamList = {
   Machines: undefined;
   Personnel: undefined;
   Shifts: undefined;
-  Templates: undefined;
   Steps: undefined;
 };
 
-// Site stack (Site tabs → ShiftWindows / StepDetail as full-screen pushes)
+// Site stack (Site tabs → ShiftWindows as a full-screen push)
 export type SiteStackParamList = {
   SiteTabs: undefined;
   ShiftWindows: { shiftId: string };
-  StepDetail: { stepId: string; stepName?: string };
 };
 
 // Profile stack — site settings moved to the Site tab, nothing left here

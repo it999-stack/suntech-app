@@ -9,7 +9,9 @@ import { SyncDimensionsStep } from '@sync/steps/syncDimensions';
 import { SyncShiftsStep } from '@sync/steps/syncShifts';
 import { SyncMachinesStep } from '@sync/steps/syncMachines';
 import { SyncPersonnelStep } from '@sync/steps/syncPersonnel';
+import { SyncRoleDefaultsStep } from '@sync/steps/syncRoleDefaults';
 import { SyncStepsStep } from '@sync/steps/syncSteps';
+import { SyncChecklistHistoryStep } from '@sync/steps/syncChecklistHistory';
 import { SyncAppPlanStep } from '../steps/syncAppPlan';
 import { SyncActivePlanStep } from '../steps/syncActivePlan';
 
@@ -20,7 +22,13 @@ export const BOOTSTRAP_STEPS: ISyncStep[] = [
   new SyncShiftsStep(),
   new SyncMachinesStep(),
   new SyncPersonnelStep(),
+  new SyncRoleDefaultsStep(),
   new SyncStepsStep(),
+
+  // Pull the site's full checklist/actuals history — recovers everything a
+  // reinstalled/data-cleared device is missing beyond today. Runs before the
+  // push/today's-pull pair below so it never clobbers what those write.
+  new SyncChecklistHistoryStep(),
 
   // Push local dirty checklists (actuals) to the server first — must run
   // before SyncActivePlanStep below, or that pull's wholesale replace of

@@ -8,8 +8,8 @@ const Stack = createNativeStackNavigator<PilesStackParamList>();
 
 export default function PilesStackNavigator() {
   return (
-    <Stack.Navigator>
-      <Stack.Screen name="PilesScreen" component={PilesScreen} options={{ title: 'Piles' }} />
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="PilesScreen" component={PilesScreen} />
     </Stack.Navigator>
   );
 }

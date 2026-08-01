@@ -78,7 +78,7 @@ export default function PersonnelScreen() {
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
       style={styles.flex}
     >
-      <SafeAreaView style={styles.flex} edges={['top']}>
+      <SafeAreaView style={styles.flex} edges={[]}>
         <View style={styles.headerArea}>
           <Text style={styles.pageTitle}>Working Personnel</Text>
           <Text style={styles.pageSubtitle}>

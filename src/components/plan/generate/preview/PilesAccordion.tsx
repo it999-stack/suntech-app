@@ -10,7 +10,8 @@ import { Layers } from 'lucide-react-native';
 import Accordion from '@components/shared/Accordion';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import StepTimelineRow from './StepTimelineRow';
-import { computeTotalDuration } from './previewUtils';
+import type { TrackChoice } from './TrackChoiceTiles';
+import { computeTotalDuration, computeMachineOccupancyMinutes } from './previewUtils';
 import type { PlanStepWithMeta, ActualStepWithMeta } from '@repositories/planRepository';
 import type { PreviewPile } from '@app-types/previewTypes';
 import { colors, spacing, typography } from '@/theme/theme';
@@ -21,9 +22,15 @@ interface PilesAccordionProps {
   planSteps: PlanStepWithMeta[];
   /** Recorded actual steps, if this plan has any progress logged (PlanDetailScreen). */
   actualSteps?: ActualStepWithMeta[];
+  /** When provided, CRANE-track steps become tappable Rig/Crane choice tiles — Preview-only,
+   * omitted on read-only screens (e.g. PlanDetailScreen) so those stay non-interactive. */
+  getTrackChoice?: (
+    pile: PreviewPile,
+    step: PlanStepWithMeta,
+  ) => { selected: TrackChoice; onSelect: (track: TrackChoice) => void };
 }
 
-export default function PilesAccordion({ piles, planSteps, actualSteps = [] }: PilesAccordionProps) {
+export default function PilesAccordion({ piles, planSteps, actualSteps = [], getTrackChoice }: PilesAccordionProps) {
   const [selectedPileId, setSelectedPileId] = React.useState<string | undefined>(piles[0]?.id);
 
   if (piles.length === 0) {
@@ -59,6 +66,10 @@ export default function PilesAccordion({ piles, planSteps, actualSteps = [] }: P
             .filter((s) => s.checklistPileId === pile.checklistPileId)
             .sort((a, b) => new Date(a.plannedStart).getTime() - new Date(b.plannedStart).getTime());
           const totalDuration = formatDurationMinutes(computeTotalDuration(steps));
+          // Occupancy is derived from the CONFIRMED schedule (planSteps) only — a pending,
+          // not-yet-confirmed tile selection never affects this, same as the step times below.
+          const rigOccupancy = formatDurationMinutes(computeMachineOccupancyMinutes(steps, pile.rigId));
+          const craneOccupancy = formatDurationMinutes(computeMachineOccupancyMinutes(steps, pile.craneId));
           const actualByStepId = new Map(
             actualSteps
               .filter((a) => a.checklistPileId === pile.checklistPileId)
@@ -77,7 +88,7 @@ export default function PilesAccordion({ piles, planSteps, actualSteps = [] }: P
                 <View style={styles.pileHeaderRight}>
                   <Text style={styles.pileDuration}>{totalDuration}</Text>
                   <Text style={styles.pileMachines}>
-                    Rig {pile.rigMachineNo} · Crane {pile.craneMachineNo}
+                    Rig {rigOccupancy} · Crane {craneOccupancy}
                   </Text>
                 </View>
               </View>
@@ -92,6 +103,19 @@ export default function PilesAccordion({ piles, planSteps, actualSteps = [] }: P
                       step={s}
                       isLast={idx === steps.length - 1}
                       isCompleted={!!actualByStepId.get(s.stepId)?.actualEnd}
+                      rigMachineNo={pile.rigMachineNo}
+                      craneMachineNo={pile.craneMachineNo}
+                      trackChoice={
+                        // Eligibility is the step's nominal (business) track, not the
+                        // currently-displayed one — once overridden, `s.track` reads
+                        // as 'RIG', but the tiles must stay offered so it can be
+                        // toggled back. Falls back to `s.track` where businessTrack
+                        // isn't populated (persisted rows never set it, and never
+                        // pass getTrackChoice anyway).
+                        getTrackChoice && (s.businessTrack ?? s.track) === 'CRANE'
+                          ? getTrackChoice(pile, s)
+                          : undefined
+                      }
                     />
                   ))
                 )}
