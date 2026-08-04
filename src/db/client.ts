@@ -12,7 +12,7 @@ export let db: ReturnType<typeof drizzle>;
 let _db: ReturnType<typeof drizzle> | null = null;
 
 // ─── DEV RESET FLAG ───────────────────────────────────────────────────────────
-const DEV_RESET_DB = false;
+const DEV_RESET_DB = true;
 // ─────────────────────────────────────────────────────────────────────────────
 /**
  * Opens (or creates) the local SQLite database and runs the schema
@@ -253,9 +253,15 @@ export async function initDb() {
       ON pil_checklist_personnel (checklist_id, role, shift_slot)
       WHERE role = 'SHIFT_INCHARGE';
   `);
+  // ENGINEER/SUPERVISOR/MACHINE_OPERATOR are now per-shift too, so shift_slot
+  // joins the key — a machine can have a different person per role per
+  // shift. CREATE INDEX IF NOT EXISTS is a no-op on devices where the old
+  // (checklist_id, role, machine_id) index already exists under this name,
+  // so the old definition must be dropped explicitly before recreating it.
+  await sqlite.execAsync(`DROP INDEX IF EXISTS idx_checklist_personnel_machine;`);
   await sqlite.execAsync(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_personnel_machine
-      ON pil_checklist_personnel (checklist_id, role, machine_id)
+      ON pil_checklist_personnel (checklist_id, role, machine_id, shift_slot)
       WHERE machine_id IS NOT NULL;
   `);
 
@@ -284,9 +290,12 @@ export async function initDb() {
       ON pil_role_defaults (site_id, role, shift_slot)
       WHERE role = 'SHIFT_INCHARGE';
   `);
+  // Same shift_slot-joins-the-key change as idx_checklist_personnel_machine
+  // above, and same reason for the explicit drop first.
+  await sqlite.execAsync(`DROP INDEX IF EXISTS idx_role_defaults_machine;`);
   await sqlite.execAsync(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_role_defaults_machine
-      ON pil_role_defaults (site_id, role, machine_id)
+      ON pil_role_defaults (site_id, role, machine_id, shift_slot)
       WHERE machine_id IS NOT NULL;
   `);
 

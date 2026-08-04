@@ -25,7 +25,7 @@ import AppModal from '@components/shared/AppModal';
 import { SegmentedToggle, type SegmentOption } from '@components/shared/SegmentedToggle';
 import TimerSelectMenu from '@components/shared/TimerSelectMenu';
 import AppCalendar from '@components/shared/AppCalendar';
-import MachineSelect from '@components/plan/generate/steps/pile-assign/MachineSelect';
+import MachineSelect, { type MachineSelectKind } from '@components/plan/generate/steps/pile-assign/MachineSelect';
 import type { SimpleMachine } from '@components/plan/generate/steps/pile-assign/types';
 import type { LogMachineEventInput } from '@state/PlanContext';
 import type { PilMachineEvent } from '@db/schema';
@@ -81,6 +81,12 @@ function trackLabel(track: Track): string {
   if (track === 'RIG') return 'Rig';
   if (track === 'CRANE') return 'Crane';
   return 'Compressor';
+}
+
+function trackToMachineSelectKind(track: Track): MachineSelectKind {
+  if (track === 'RIG') return 'rig';
+  if (track === 'CRANE') return 'crane';
+  return 'compressor';
 }
 
 function eventTypeLabel(t: string): string {
@@ -338,6 +344,7 @@ export default function StepActionsModal({
       {eventType === 'REPLACED' && (
         <MachineSelect
           label="Replacement"
+          kind={trackToMachineSelectKind(track)}
           options={replacementOptions}
           valueId={replacementId}
           onSelect={setReplacementId}
@@ -347,6 +354,7 @@ export default function StepActionsModal({
       {eventType === 'RESUMED' && (
         <MachineSelect
           label={`${trackLabel(track)} to resume`}
+          kind={trackToMachineSelectKind(track)}
           options={resumeOptions}
           valueId={resumeMachineId}
           onSelect={setResumeMachineId}

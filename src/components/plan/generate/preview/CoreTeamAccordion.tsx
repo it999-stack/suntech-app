@@ -13,7 +13,7 @@ import SummaryAccordion from './SummaryAccordion';
 import Avatar from '@components/shared/Avatar';
 import Divider from '@components/shared/Divider';
 import { colors, spacing, radius, typography } from '@/theme/theme';
-import { getMachineColor, buildTypeIndexById } from '@/utils/helpers';
+import { getMachineColor, buildTypeIndexById, hexToRgba } from '@/utils/helpers';
 
 export interface LeadershipDetail {
   pmName: string | null;
@@ -35,15 +35,18 @@ export interface MachineTeamDetail {
   id: string;
   machineNo: string;
   type: 'RIG' | 'CRANE' | 'COMPRESSOR';
-  engineerName: string | null;
-  supervisorName: string | null;
-  operatorName: string | null;
+  engineerName1: string | null;
+  engineerName2: string | null;
+  supervisorName1: string | null;
+  supervisorName2: string | null;
+  operatorName1: string | null;
+  operatorName2: string | null;
 }
 
 export type RoleTarget =
   | { role: 'PROJECT_MANAGER' | 'PLANNING_ENGINEER' }
   | { role: 'SHIFT_INCHARGE'; slot: 1 | 2 }
-  | { role: 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR'; machineId: string };
+  | { role: 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR'; machineId: string; slot: 1 | 2 };
 
 interface CoreTeamAccordionProps {
   leadership: LeadershipDetail;
@@ -102,21 +105,37 @@ function TeamPersonRow({
 function MachineRoleAvatar({
   label,
   name,
-  highlight = false,
+  avatarColor,
+  shiftLabel,
   onPress,
 }: {
   label: string;
   name: string | null;
-  highlight?: boolean;
+  avatarColor?: string;
+  shiftLabel?: string;
   onPress?: () => void;
 }) {
   const assigned = !!name;
+
   return (
     <Pressable style={styles.roleSlot} onPress={onPress} disabled={!onPress}>
-      <Avatar name={name} size={36} variant={highlight ? 'filled' : 'outline'} />
-      <Text style={[styles.roleSlotName, !assigned && styles.roleSlotNameEmpty]} numberOfLines={1}>
+      {shiftLabel ? <Text style={styles.shiftSubHeader}>{shiftLabel}</Text> : null}
+      <Avatar
+        name={name}
+        size={36}
+        variant={avatarColor ? 'filled' : 'outline'}
+        backgroundColor={avatarColor && hexToRgba(avatarColor, 0.12)}
+        borderColor={avatarColor}
+        textColor={avatarColor}
+      />
+
+      <Text
+        style={[styles.roleSlotName, !assigned && styles.roleSlotNameEmpty]}
+        numberOfLines={1}
+      >
         {assigned ? name : 'Not assigned'}
       </Text>
+
       <Text style={styles.roleSlotLabel}>{label}</Text>
     </Pressable>
   );
@@ -189,40 +208,67 @@ export default function CoreTeamAccordion({
       {machineTeams.length === 0 ? (
         <Text style={styles.emptyText}>No active machines.</Text>
       ) : (
-        machineTeams.map((m) => (
-          <View key={m.id} style={styles.machineBlock}>
-            <View style={styles.machineHeader}>
+        machineTeams.map((m) => {
+          const avatarColor = getMachineColor(m, typeIndexById[m.id] ?? 0);
+          return (
+            <View key={m.id} style={styles.machineBlock}>
+              <View style={styles.machineHeader}>
+                {m.type === 'RIG' ? (
+                  <Drill size={14} color={avatarColor} />
+                ) : (
+                  <Forklift size={14} color={avatarColor} />
+                )}
+                <Text style={styles.machineTitle}>{m.machineNo}</Text>
+              </View>
+
               {m.type === 'RIG' ? (
-                <Drill size={14} color={colors.accent} />
+                ([1, 2] as const).map((slot) => (
+                  <View key={slot}>
+                    <Text style={styles.shiftSubHeader}>{slot === 1 ? 'Day' : 'Night'}</Text>
+                    <View style={styles.machineRolesRow}>
+                      <MachineRoleAvatar
+                        label="Engineer"
+                        name={slot === 1 ? m.engineerName1 : m.engineerName2}
+                        avatarColor={avatarColor}
+                        onPress={onPressRole ? () => onPressRole({ role: 'ENGINEER', machineId: m.id, slot }) : undefined}
+                      />
+                      <MachineRoleAvatar
+                        label="Supervisor"
+                        name={slot === 1 ? m.supervisorName1 : m.supervisorName2}
+                        avatarColor={avatarColor}
+                        onPress={onPressRole ? () => onPressRole({ role: 'SUPERVISOR', machineId: m.id, slot }) : undefined}
+                      />
+                      <MachineRoleAvatar
+                        label="Operator"
+                        name={slot === 1 ? m.operatorName1 : m.operatorName2}
+                        avatarColor={avatarColor}
+                        onPress={onPressRole ? () => onPressRole({ role: 'MACHINE_OPERATOR', machineId: m.id, slot }) : undefined}
+                      />
+                    </View>
+                  </View>
+                ))
               ) : (
-                <Forklift size={14} color={getMachineColor(m, typeIndexById[m.id] ?? 0)} />
+                <View style={styles.machineRolesRow}>
+                  <MachineRoleAvatar
+                    label="Operator"
+                    shiftLabel="Day"
+                    name={m.operatorName1}
+                    avatarColor={avatarColor}
+                    onPress={onPressRole ? () => onPressRole({ role: 'MACHINE_OPERATOR', machineId: m.id, slot: 1 }) : undefined}
+                  />
+                  <MachineRoleAvatar
+                    label="Operator"
+                    shiftLabel="Night"
+                    name={m.operatorName2}
+                    avatarColor={avatarColor}
+                    onPress={onPressRole ? () => onPressRole({ role: 'MACHINE_OPERATOR', machineId: m.id, slot: 2 }) : undefined}
+                  />
+                </View>
               )}
-              <Text style={styles.machineTitle}>{m.machineNo}</Text>
             </View>
-            <View style={styles.machineRolesRow}>
-              {m.type === 'RIG' ? (
-                <MachineRoleAvatar
-                  label="Engineer"
-                  name={m.engineerName}
-                  highlight
-                  onPress={onPressRole ? () => onPressRole({ role: 'ENGINEER', machineId: m.id }) : undefined}
-                />
-              ) : (
-                <View style={styles.roleSlot} />
-              )}
-              <MachineRoleAvatar
-                label="Supervisor"
-                name={m.supervisorName}
-                onPress={onPressRole ? () => onPressRole({ role: 'SUPERVISOR', machineId: m.id }) : undefined}
-              />
-              <MachineRoleAvatar
-                label="Operator"
-                name={m.operatorName}
-                onPress={onPressRole ? () => onPressRole({ role: 'MACHINE_OPERATOR', machineId: m.id }) : undefined}
-              />
-            </View>
-          </View>
-        ))
+          )
+        }
+        )
       )}
     </SummaryAccordion>
   );
@@ -290,6 +336,12 @@ const styles = StyleSheet.create({
 
   // Machine Teams
   machineBlock: { marginBottom: spacing.md },
+  shiftSubHeader: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
   machineHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -303,6 +355,7 @@ const styles = StyleSheet.create({
   },
   machineRolesRow: {
     flexDirection: 'row',
+    marginBottom: spacing.sm,
   },
   roleSlot: {
     flex: 1,

@@ -56,7 +56,6 @@ export default function PileListToolbar({
           />
         ) : areas.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-            <Pill label={`All (${allCount})`} active={activeAreaId === 'all'} onPress={() => onAreaChange('all')} />
             {areas.map((area) => (
               <Pill
                 key={area.id}

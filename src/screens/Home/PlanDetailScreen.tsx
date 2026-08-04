@@ -209,21 +209,23 @@ export default function PlanDetailScreen() {
     ];
   }, [checklistPiles, rigs, cranes]);
 
-  // ── Machine teams detail (Engineer / Supervisor / Operator per machine) ──
+  // ── Machine teams detail (Engineer / Supervisor / Operator per machine, per shift) ──
   const machineTeams = useMemo(() => {
-    return machineInfos.map((m) => {
-      const engineerId = checklistPersonnel.find((r) => r.role === 'ENGINEER' && r.machineId === m.id)?.personnelId;
-      const supervisorId = checklistPersonnel.find((r) => r.role === 'SUPERVISOR' && r.machineId === m.id)?.personnelId;
-      const operatorId = checklistPersonnel.find((r) => r.role === 'MACHINE_OPERATOR' && r.machineId === m.id)?.personnelId;
-      return {
-        id: m.id,
-        machineNo: m.machineNo,
-        type: m.type,
-        engineerName: personnel.find((p) => p.id === engineerId)?.name ?? null,
-        supervisorName: personnel.find((p) => p.id === supervisorId)?.name ?? null,
-        operatorName: personnel.find((p) => p.id === operatorId)?.name ?? null,
-      };
-    });
+    const idFor = (role: string, machineId: string, slot: 1 | 2) =>
+      checklistPersonnel.find((r) => r.role === role && r.machineId === machineId && r.shiftSlot === slot)?.personnelId;
+    const nameFor = (role: string, machineId: string, slot: 1 | 2) =>
+      personnel.find((p) => p.id === idFor(role, machineId, slot))?.name ?? null;
+    return machineInfos.map((m) => ({
+      id: m.id,
+      machineNo: m.machineNo,
+      type: m.type,
+      engineerName1: nameFor('ENGINEER', m.id, 1),
+      engineerName2: nameFor('ENGINEER', m.id, 2),
+      supervisorName1: nameFor('SUPERVISOR', m.id, 1),
+      supervisorName2: nameFor('SUPERVISOR', m.id, 2),
+      operatorName1: nameFor('MACHINE_OPERATOR', m.id, 1),
+      operatorName2: nameFor('MACHINE_OPERATOR', m.id, 2),
+    }));
   }, [machineInfos, checklistPersonnel, personnel]);
 
   // Pile label map for timeline

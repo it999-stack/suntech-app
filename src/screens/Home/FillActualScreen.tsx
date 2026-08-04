@@ -91,9 +91,9 @@ export default function FillActualsScreen() {
   // ── Surface genuine sync conflicts instead of silently overwriting ──────
   useEffect(() => {
     if (!conflictNotice) return;
-    Alert.alert('Updated elsewhere', conflictNotice, [
-      { text: 'OK', onPress: dismissConflictNotice },
-    ]);
+    // Alert.alert('Updated elsewhere', conflictNotice, [
+    //   { text: 'OK', onPress: dismissConflictNotice },
+    // ]);
   }, [conflictNotice, dismissConflictNotice]);
 
   // ── Local machine + pile name lookups ───────────────────────────────────
@@ -643,6 +643,17 @@ function PileStepsModalAdapter({
                   // first step (no previous step to anchor to).
                   defaultMinutes={(idx > 0 ? steps[idx - 1].actualEnd : undefined) ?? step.plannedStart}
                   onConfirm={(mins) => onSetActualTime(step.stepId, 'actualStart', mins)}
+                  remarks={step.remarks}
+                  onAddRemarks={() =>
+                    setActionsFor({
+                      stepId: step.stepId,
+                      stepName: step.stepName,
+                      track: step.track,
+                      remarks: step.remarks,
+                      initialTab: 'remarks',
+                      allowMachineEvents: true,
+                    })
+                  }
                   minMinutes={idx > 0 ? steps[idx - 1].actualEnd : undefined}
                   minMinutesLabel="the previous step's end time"
                 />
@@ -675,6 +686,17 @@ function PileStepsModalAdapter({
                         : nowMinutes()
                     }
                     onConfirm={(mins) => onSetActualTime(step.stepId, 'actualEnd', mins)}
+                    remarks={step.remarks}
+                    onAddRemarks={() =>
+                      setActionsFor({
+                        stepId: step.stepId,
+                        stepName: step.stepName,
+                        track: step.track,
+                        remarks: step.remarks,
+                        initialTab: 'remarks',
+                        allowMachineEvents: true,
+                      })
+                    }
                     minMinutes={step.actualStart}
                     minMinutesLabel="this step's start time"
                   />

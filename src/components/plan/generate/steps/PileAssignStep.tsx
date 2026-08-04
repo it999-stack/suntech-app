@@ -1,19 +1,22 @@
 // src/components/plan/generate/steps/PileAssignStep.tsx
 //
-// Step 4 — pile selection + per-pile rig/crane assignment.
+// Step 4 — pile selection + per-pile rig/crane assignment. Owns its own
+// bottom bar: shows the wizard's "Continue" button by default, and swaps
+// it for the bulk assign/unassign bar whenever piles are checkbox-selected
+// (GeneratePlanScreen skips its shared footer for this step so this bar
+// lands in the exact same screen position).
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
-import { spacing } from '@theme/theme';
+import { View, Text, Pressable, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import type { PlanDraft } from '@/types/plan';
 import IndexTable from '@components/shared/IndexTable';
 
 import PileListToolbar, { type AreaFilterOption } from './pile-assign/PileListToolbar';
 import BulkAssignBar from './pile-assign/BulkAssignBar';
-import PileDetailSheet from './pile-assign/PileDetailSheet';
 import ResumeTimeConfirmModal from './pile-assign/ResumeTimeConfirmModal';
 import { useResumeConfirmQueue } from './pile-assign/useResumeConfirmQueue';
-import { buildColumns, buildRowActions } from './pile-assign/pileTableColumns';
+import { buildColumns } from './pile-assign/pileTableColumns';
 import type { EligiblePile, MachineKind, PileFilter, SimpleMachine } from './pile-assign/types';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -27,6 +30,8 @@ interface PileAssignStepProps {
   areas?: AreaFilterOption[];
   activeRigs?: SimpleMachine[];
   activeCranes?: SimpleMachine[];
+  onContinue: () => void;
+  continueDisabled: boolean;
 }
 
 function mostCommonPair(assignments: PlanDraft['assignments']): { rig: string; crane: string } | null {
@@ -44,16 +49,16 @@ function mostCommonPair(assignments: PlanDraft['assignments']): { rig: string; c
 
 export default function PileAssignStep({
   draft, onUpdate, piles = [], areas = [], activeRigs = [], activeCranes = [],
+  onContinue, continueDisabled,
 }: PileAssignStepProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<PileFilter>('all');
-  const [activeAreaId, setActiveAreaId] = useState('all');
+  const [activeAreaId, setActiveAreaId] = useState(() => areas[0]?.id ?? '');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkRigId, setBulkRigId] = useState<string | null>(null);
   const [bulkCraneId, setBulkCraneId] = useState<string | null>(null);
   const [bulkDefaulted, setBulkDefaulted] = useState(false);
-  const [detailPile, setDetailPile] = useState<EligiblePile | null>(null);
   const [lastUsedPair, setLastUsedPair] = useState(() => mostCommonPair(draft.assignments));
 
   function machineLabel(kind: MachineKind, machineId: string): string {
@@ -102,13 +107,11 @@ export default function PileAssignStep({
     return counts;
   }, [piles]);
 
-  const areaNameById = useMemo(() => new Map(areas.map((a) => [a.id, a.name])), [areas]);
-
   const visiblePiles = useMemo(() => {
     const q = search.trim().toLowerCase();
     return piles
       .filter((p) => {
-        if (activeAreaId !== 'all' && p.areaId !== activeAreaId) return false;
+        if (p.areaId !== activeAreaId) return false;
         if (q && !p.code.toLowerCase().includes(q)) return false;
         if (filter === 'pending') return !isPileFullyAssigned(p.id);
         if (filter === 'assigned') return isPileFullyAssigned(p.id);
@@ -124,6 +127,11 @@ export default function PileAssignStep({
 
   const pendingCount = piles.filter((p) => !isPileFullyAssigned(p.id)).length;
   const allVisibleSelected = visiblePiles.length > 0 && visiblePiles.every((p) => selectedIds.has(p.id));
+  const anySelectedAssigned = useMemo(
+    () => [...selectedIds].some((id) => isPileFullyAssigned(id)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedIds, draft.assignments],
+  );
 
   function toggleRow(pileId: string): void {
     setSelectedIds((prev) => {
@@ -166,32 +174,25 @@ export default function PileAssignStep({
     commitAssignment(bulkRigId, bulkCraneId, pileIds);
   }
 
-  function assignSingleFromMenu(pileId: string): void {
-    setSelectedIds(new Set([pileId]));
-    openBulkPanel();
-  }
-  function unassignRow(pileId: string): void {
+  function unassignSelected(): void {
+    const pileIds = [...selectedIds];
+    if (pileIds.length === 0) return;
+    const newAssignments = { ...draft.assignments };
+    pileIds.forEach((id) => { newAssignments[id] = { rig: '', crane: '' }; });
     onUpdate({
-      assignments: { ...draft.assignments, [pileId]: { rig: '', crane: '' } },
-      selectedPileIds: draft.selectedPileIds.filter((id) => id !== pileId),
+      assignments: newAssignments,
+      selectedPileIds: draft.selectedPileIds.filter((id) => !pileIds.includes(id)),
     });
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSelectedIds(new Set());
+    setBulkOpen(false);
   }
 
   const columns = useMemo(
-    () => buildColumns({ assignments: draft.assignments, machineLabel, activeAreaId, areaNameById }),
+    () => buildColumns({ assignments: draft.assignments, machineLabel }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [draft.assignments, activeRigs, activeCranes, activeAreaId, areaNameById],
+    [draft.assignments, activeRigs, activeCranes],
   );
-  const rowActions = buildRowActions({
-    isPileFullyAssigned,
-    onAssign: assignSingleFromMenu,
-    onViewDetails: setDetailPile,
-    onUnassign: unassignRow,
-  });
-
-  const detailAsgn = detailPile ? draft.assignments[detailPile.id] : undefined;
-  const detailRigLabel = detailAsgn?.rig ? machineLabel('rig', detailAsgn.rig) : null;
-  const detailCraneLabel = detailAsgn?.crane ? machineLabel('crane', detailAsgn.crane) : null;
 
   const confirmPile = piles.find((p) => p.id === resumeConfirm.confirmQueue[0]);
   const confirmResumeWork = confirmPile ? draft.resumeWorkByPileId[confirmPile.id] : undefined;
@@ -214,8 +215,21 @@ export default function PileAssignStep({
         />
       </View>
 
-      {selectedIds.size > 0 && (
-        <View style={styles.toolbarSection}>
+      <View style={styles.listSection}>
+        <IndexTable
+          data={visiblePiles}
+          columns={columns}
+          selectable
+          selectedIds={selectedIds}
+          onToggleRow={toggleRow}
+          onToggleAll={toggleSelectAllVisible}
+          allSelected={allVisibleSelected}
+          emptyText={piles.length === 0 ? 'No piles found for this site.' : 'No piles match this view.'}
+        />
+      </View>
+
+      <View style={styles.footer}>
+        {selectedIds.size > 0 ? (
           <BulkAssignBar
             selectedCount={selectedIds.size}
             onClear={clearSelection}
@@ -229,34 +243,19 @@ export default function PileAssignStep({
             onSelectCrane={(id) => { setBulkCraneId(id); setBulkDefaulted(false); }}
             defaulted={bulkDefaulted}
             onApply={applyBulkAssign}
+            onUnassign={unassignSelected}
+            unassignDisabled={!anySelectedAssigned}
           />
-        </View>
-      )}
-
-      <View style={styles.listSection}>
-        <IndexTable
-          data={visiblePiles}
-          columns={columns}
-          selectable
-          selectedIds={selectedIds}
-          onToggleRow={toggleRow}
-          onToggleAll={toggleSelectAllVisible}
-          allSelected={allVisibleSelected}
-          rowActions={rowActions}
-          emptyText={piles.length === 0 ? 'No piles found for this site.' : 'No piles match this view.'}
-        />
+        ) : (
+          <Pressable
+            disabled={continueDisabled}
+            onPress={onContinue}
+            style={[styles.continueBtn, continueDisabled && styles.continueBtnDisabled]}
+          >
+            <Text style={styles.continueText}>Continue</Text>
+          </Pressable>
+        )}
       </View>
-
-      <PileDetailSheet
-        visible={!!detailPile}
-        onClose={() => setDetailPile(null)}
-        code={detailPile?.code ?? ''}
-        spec={detailPile ? `Ø${detailPile.dia}mm · ${detailPile.depth}m` : ''}
-        rigLabel={detailRigLabel}
-        craneLabel={detailCraneLabel}
-        onAssign={() => { const id = detailPile!.id; setDetailPile(null); assignSingleFromMenu(id); }}
-        onUnassign={detailRigLabel ? () => { const id = detailPile!.id; setDetailPile(null); unassignRow(id); } : undefined}
-      />
 
       {confirmPile && confirmResumeWork && (
         <ResumeTimeConfirmModal
@@ -275,4 +274,21 @@ const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0 },
   toolbarSection: { marginBottom: spacing.sm },
   listSection: { flex: 1, minHeight: 0 },
+  footer: {
+    marginHorizontal: -spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.white,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(28,28,46,0.08)',
+  },
+  continueBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    ...shadow.soft,
+  },
+  continueBtnDisabled: { opacity: 0.4 },
+  continueText: { ...typography.body, fontWeight: '700', color: colors.white },
 });

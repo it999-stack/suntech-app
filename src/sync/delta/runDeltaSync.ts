@@ -15,6 +15,25 @@ export type DeltaSyncResult = {
   error?: string;
 };
 
+type DeltaSyncListener = () => void;
+const listeners = new Set<DeltaSyncListener>();
+
+/**
+ * Subscribe to be notified after every successful delta sync (automatic —
+ * reconnect/foreground/periodic via SyncManager — and manual, via
+ * useSyncStore's steady-state branch). Local caches derived from synced
+ * data (e.g. SiteSettingsContext) should reload here rather than relying on
+ * whichever screen happened to trigger the sync.
+ */
+export function onDeltaSyncComplete(listener: DeltaSyncListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function notifyListeners(): void {
+  listeners.forEach((listener) => listener());
+}
+
 /**
  * No-ops (returns `{ ran: false }`) if no cursor has been established yet —
  * that's bootstrap's job, not this function's. Push errors don't block the
@@ -30,6 +49,7 @@ export async function runDeltaSync(siteId: string): Promise<DeltaSyncResult> {
   try {
     const pull = await deltaPull(siteId, cursor);
     await setCursor(siteId, pull.serverTime);
+    notifyListeners();
     return { ran: true, push, pull };
   } catch (err) {
     return {

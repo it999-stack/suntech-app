@@ -145,6 +145,19 @@ export function formatDurationMinutes(totalMinutes: number): string {
 }
 
 /**
+ * Format a total number of minutes as spelled-out "X hr(s) Y minute(s)".
+ * e.g. 90 → "1 hr 30 minutes", 150 → "2 hrs 30 minutes", 120 → "2 hrs", 45 → "45 minutes"
+ */
+export function formatDurationLong(totalMinutes: number): string {
+  if (totalMinutes <= 0) return '0 minutes';
+  const h = Math.floor(totalMinutes / 60);
+  const m = Math.round(totalMinutes % 60);
+  const hPart = h > 0 ? `${h} hr${h !== 1 ? 's' : ''}` : '';
+  const mPart = m > 0 ? `${m} minute${m !== 1 ? 's' : ''}` : '';
+  return hPart && mPart ? `${hPart} ${mPart}` : hPart || mPart;
+}
+
+/**
  * Duration between two ISO timestamps, formatted as "1h 30m", "45m", etc.
  * Uses wall-clock diff — for working-time display use formatDurationMinutes
  * with the stored durationMinutes field instead.

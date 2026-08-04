@@ -29,28 +29,37 @@ export type ResumeWork = {
 };
 
 /**
- * Every named-role assignment for this checklist. Singleton roles are a
- * plain nullable id; per-machine roles (Engineer/Supervisor/Operator) are
- * keyed by machineId — a "group" (an Engineer covering several machines, or
- * a Supervisor's 1 rig + 1 crane pairing) is never an explicit entity, it's
- * just multiple map entries sharing the same personnel id. Mirrors the
- * backend's one-row-per-(role, machine/shift-slot) shape (pil_checklist_personnel).
+ * Every named-role assignment for one shift (Shift Incharge, Engineer,
+ * Supervisor, Machine Operator) — mirrors the backend's one-row-per-(role,
+ * machine, shift_slot) shape (pil_checklist_personnel). Per-machine roles are
+ * keyed by machineId — a "group" (an Engineer or Supervisor covering several
+ * rigs) is never an explicit entity, it's just multiple map entries sharing
+ * the same personnel id.
+ */
+export type ShiftTeamAssignment = {
+  /** pilingSitePersonnel.id — this shift's incharge. Optional. */
+  shiftInchargeId: string | null;
+  /** machineId -> personnelId. Rigs only — mandatory: every active rig needs one this shift. */
+  engineerByMachineId: Record<string, string>;
+  /** machineId -> personnelId. Rigs only — mandatory: every active rig needs one this shift. No pairing/cap — one supervisor may cover many rigs. */
+  supervisorByMachineId: Record<string, string>;
+  /** machineId -> personnelId. Rigs + cranes — mandatory: every active machine needs one this shift. */
+  operatorByMachineId: Record<string, string>;
+};
+
+/**
+ * Every named-role assignment for this checklist. Leadership (Project
+ * Manager, Planning Engineer) is a whole-plan singleton; every other role is
+ * assigned per shift (see ShiftTeamAssignment) — Shift 1 (day) and Shift 2
+ * (night).
  */
 export type ChecklistPersonnelAssignment = {
   /** pilingSitePersonnel.id — 1 per checklist, frozen per plan (defaults from last-used). */
   projectManagerId: string | null;
   /** pilingSitePersonnel.id — 1 per checklist, frozen per plan (defaults from last-used). */
   planningEngineerId: string | null;
-  /** pilingSitePersonnel.id — Shift 1 (day) incharge. */
-  shiftInchargeId: string | null;
-  /** pilingSitePersonnel.id — Shift 2 (night) incharge. */
-  shiftInchargeId2: string | null;
-  /** machineId -> personnelId. Rigs only — mandatory: every active rig needs one. */
-  engineerByMachineId: Record<string, string>;
-  /** machineId -> personnelId. Optional; a supervisor's rows must pair exactly 1 rig + 1 crane. */
-  supervisorByMachineId: Record<string, string>;
-  /** machineId -> personnelId. Mandatory: every active rig/crane needs one. */
-  operatorByMachineId: Record<string, string>;
+  shift1: ShiftTeamAssignment;
+  shift2: ShiftTeamAssignment;
 };
 
 /**
@@ -146,11 +155,8 @@ export function defaultPlanDraft(today: string): PlanDraft {
     checklistPersonnel: {
       projectManagerId: null,
       planningEngineerId: null,
-      shiftInchargeId: null,
-      shiftInchargeId2: null,
-      engineerByMachineId: {},
-      supervisorByMachineId: {},
-      operatorByMachineId: {},
+      shift1: { shiftInchargeId: null, engineerByMachineId: {}, supervisorByMachineId: {}, operatorByMachineId: {} },
+      shift2: { shiftInchargeId: null, engineerByMachineId: {}, supervisorByMachineId: {}, operatorByMachineId: {} },
     },
     shiftTypeId: null,
   };

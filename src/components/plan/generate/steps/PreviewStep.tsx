@@ -13,12 +13,12 @@ import { colors, spacing, typography } from '@/theme/theme';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import {
   matchesRoleDesignation,
-  matchesOperatorDesignation,
-  buildPairedMachinesBySupervisor,
-  getSupervisorCandidates,
+  getOperatorMachineCandidates,
+  getMachineRoleDisabledIds,
+  getShiftInchargeDisabledIds,
 } from '@/utils/personnelRoles';
 
-import type { PlanDraft } from '@/types/plan';
+import type { PlanDraft, ShiftTeamAssignment } from '@/types/plan';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { PreviewPile } from '@app-types/previewTypes';
@@ -69,7 +69,10 @@ interface PreviewStepProps {
     updater: Record<string, string[]> | ((prev: Record<string, string[]>) => Record<string, string[]>),
   ) => void;
   planSteps: PlanStepWithMeta[];
-  /** True while the plan preview is (re)generating — shows a spinner in the Machine Timeline card. */
+  /** True while the plan preview is (re)generating. Only shows the full-screen spinner on the
+   * very first load (no planSteps yet) — a recompute triggered later (e.g. by a track
+   * reassignment) never blanks the screen; the footer's Save Changes/Generate Plan button is
+   * the only place that shows a pending recompute. */
   isLoading?: boolean;
   /** Non-working windows actually applied per machine, from generatePlanPreview(). */
   windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
@@ -133,8 +136,8 @@ export default function PreviewStep({
     const shift2 = shifts[1];
     const s1 = shift1 ? `${shift1.name} (${shift1.startTime}–${shift1.endTime})` : 'Shift 1';
     const s2 = shift2 ? `${shift2.name} (${shift2.startTime}–${shift2.endTime})` : 'Shift 2';
-    const si1 = personnel.find((p) => p.id === cp.shiftInchargeId);
-    const si2 = personnel.find((p) => p.id === cp.shiftInchargeId2);
+    const si1 = personnel.find((p) => p.id === cp.shift1.shiftInchargeId);
+    const si2 = personnel.find((p) => p.id === cp.shift2.shiftInchargeId);
     return {
       shift1Label: s1,
       shift1Name: si1?.name ?? null,
@@ -143,34 +146,49 @@ export default function PreviewStep({
       shift2Name: si2?.name ?? null,
       shift2Designation: si2?.designation ?? null,
     };
-  }, [shifts, personnel, cp.shiftInchargeId, cp.shiftInchargeId2]);
+  }, [shifts, personnel, cp.shift1.shiftInchargeId, cp.shift2.shiftInchargeId]);
 
-  // ── Machine teams detail (Engineer / Supervisor / Operator per machine) ──
+  // ── Machine teams detail (Engineer / Supervisor / Operator per machine, per shift) ──
   const machineTeams = useMemo(() => {
     const all = [...activeRigs, ...activeCranes];
     return all.map((m) => ({
       id: m.id,
       machineNo: m.machineNo,
       type: m.type,
-      engineerName: personnel.find((p) => p.id === cp.engineerByMachineId[m.id])?.name ?? null,
-      supervisorName: personnel.find((p) => p.id === cp.supervisorByMachineId[m.id])?.name ?? null,
-      operatorName: personnel.find((p) => p.id === cp.operatorByMachineId[m.id])?.name ?? null,
+      engineerName1: personnel.find((p) => p.id === cp.shift1.engineerByMachineId[m.id])?.name ?? null,
+      engineerName2: personnel.find((p) => p.id === cp.shift2.engineerByMachineId[m.id])?.name ?? null,
+      supervisorName1: personnel.find((p) => p.id === cp.shift1.supervisorByMachineId[m.id])?.name ?? null,
+      supervisorName2: personnel.find((p) => p.id === cp.shift2.supervisorByMachineId[m.id])?.name ?? null,
+      operatorName1: personnel.find((p) => p.id === cp.shift1.operatorByMachineId[m.id])?.name ?? null,
+      operatorName2: personnel.find((p) => p.id === cp.shift2.operatorByMachineId[m.id])?.name ?? null,
     }));
-  }, [activeRigs, activeCranes, personnel, cp.engineerByMachineId, cp.supervisorByMachineId, cp.operatorByMachineId]);
+  }, [activeRigs, activeCranes, personnel, cp.shift1, cp.shift2]);
 
-  // ── Role-picker candidate lists (mirrors StartTimeStep/ShiftInchargeStep/
-  // TeamAssignStep/MachineSelectStep, triggered here from a row tap instead) ──
+  // ── Role-picker candidate lists (mirrors StartTimeStep/TeamAssignStep/
+  // MachineSelectStep, triggered here from a row tap instead) ──
   const pmCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('PROJECT_MANAGER', p.designation)), [personnel]);
   const peCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('PLANNING_ENGINEER', p.designation)), [personnel]);
   const shiftInchargeCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('SHIFT_INCHARGE', p.designation)), [personnel]);
   const engineerCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('ENGINEER', p.designation)), [personnel]);
-  const supervisorCandidatesBase = useMemo(() => personnel.filter((p) => matchesRoleDesignation('SUPERVISOR', p.designation)), [personnel]);
-  const pairedMachineBySupervisor = useMemo(
-    () => buildPairedMachinesBySupervisor(cp.supervisorByMachineId, activeRigs, activeCranes),
-    [cp.supervisorByMachineId, activeRigs, activeCranes],
-  );
+  const supervisorCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('SUPERVISOR', p.designation)), [personnel]);
 
-  if (isLoading) {
+  function teamForSlot(slot: 1 | 2): ShiftTeamAssignment {
+    return slot === 1 ? cp.shift1 : cp.shift2;
+  }
+  // The OTHER shift's team — used to disable (not hide) anyone already assigned to the same
+  // role there, since nobody can work both shifts.
+  function otherTeamForSlot(slot: 1 | 2): ShiftTeamAssignment {
+    return slot === 1 ? cp.shift2 : cp.shift1;
+  }
+  function updateTeamForSlot(slot: 1 | 2, patch: Partial<ShiftTeamAssignment>) {
+    const key = slot === 1 ? 'shift1' : 'shift2';
+    updatePersonnel({ [key]: { ...teamForSlot(slot), ...patch } });
+  }
+
+  // Only the very first load (nothing generated yet) gets the full-screen spinner — a
+  // recompute triggered later (e.g. tapping a Rig/Crane tile) never blanks this screen;
+  // the footer's Save Changes/Generate Plan button is the only place that shows it's pending.
+  if (isLoading && planSteps.length === 0) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.accent} />
@@ -238,58 +256,72 @@ export default function PreviewStep({
         return {
           title: target.slot === 1 ? 'Shift Incharge (Day)' : 'Shift Incharge (Night)',
           personnel: shiftInchargeCandidates,
-          selectedId: target.slot === 1 ? cp.shiftInchargeId : cp.shiftInchargeId2,
+          selectedId: teamForSlot(target.slot).shiftInchargeId,
           allowNone: true,
-          onSelect: (id: string | null) =>
-            updatePersonnel(target.slot === 1 ? { shiftInchargeId: id } : { shiftInchargeId2: id }),
+          disabledIds: getShiftInchargeDisabledIds(otherTeamForSlot(target.slot).shiftInchargeId),
+          onSelect: (id: string | null) => updateTeamForSlot(target.slot, { shiftInchargeId: id }),
         };
-      case 'ENGINEER':
+      case 'ENGINEER': {
+        const team = teamForSlot(target.slot);
         return {
-          title: `Engineer — ${machineNoFor(target.machineId)}`,
+          title: `Engineer — ${machineNoFor(target.machineId)} (${target.slot === 1 ? 'Day' : 'Night'})`,
           personnel: engineerCandidates,
-          selectedId: cp.engineerByMachineId[target.machineId] ?? null,
+          selectedId: team.engineerByMachineId[target.machineId] ?? null,
           allowNone: false,
+          disabledIds: getMachineRoleDisabledIds(
+            target.machineId,
+            team.engineerByMachineId,
+            otherTeamForSlot(target.slot).engineerByMachineId,
+            { excludeSameShiftOtherMachines: false },
+          ),
           onSelect: (id: string | null) => {
-            const engineerByMachineId = { ...cp.engineerByMachineId };
+            const engineerByMachineId = { ...team.engineerByMachineId };
             if (id) engineerByMachineId[target.machineId] = id;
             else delete engineerByMachineId[target.machineId];
-            updatePersonnel({ engineerByMachineId });
+            updateTeamForSlot(target.slot, { engineerByMachineId });
           },
         };
+      }
       case 'SUPERVISOR': {
-        const isRig = activeRigs.some((r) => r.id === target.machineId);
+        const team = teamForSlot(target.slot);
         return {
-          title: `Supervisor — ${machineNoFor(target.machineId)}`,
-          personnel: getSupervisorCandidates(target.machineId, isRig, supervisorCandidatesBase, pairedMachineBySupervisor),
-          selectedId: cp.supervisorByMachineId[target.machineId] ?? null,
+          title: `Supervisor — ${machineNoFor(target.machineId)} (${target.slot === 1 ? 'Day' : 'Night'})`,
+          personnel: supervisorCandidates,
+          selectedId: team.supervisorByMachineId[target.machineId] ?? null,
           allowNone: true,
+          disabledIds: getMachineRoleDisabledIds(
+            target.machineId,
+            team.supervisorByMachineId,
+            otherTeamForSlot(target.slot).supervisorByMachineId,
+            { excludeSameShiftOtherMachines: false },
+          ),
           onSelect: (id: string | null) => {
-            const supervisorByMachineId = { ...cp.supervisorByMachineId };
+            const supervisorByMachineId = { ...team.supervisorByMachineId };
             if (id) supervisorByMachineId[target.machineId] = id;
             else delete supervisorByMachineId[target.machineId];
-            updatePersonnel({ supervisorByMachineId });
+            updateTeamForSlot(target.slot, { supervisorByMachineId });
           },
         };
       }
       case 'MACHINE_OPERATOR': {
+        const team = teamForSlot(target.slot);
         const isRig = activeRigs.some((r) => r.id === target.machineId);
-        const candidates = personnel.filter((p) => {
-          if (!matchesOperatorDesignation(isRig ? 'RIG' : 'CRANE', p.designation)) return false;
-          const assignedElsewhere = Object.entries(cp.operatorByMachineId).some(
-            ([machineId, personnelId]) => machineId !== target.machineId && personnelId === p.id,
-          );
-          return !assignedElsewhere;
-        });
         return {
-          title: `Operator — ${machineNoFor(target.machineId)}`,
-          personnel: candidates,
-          selectedId: cp.operatorByMachineId[target.machineId] ?? null,
+          title: `Operator — ${machineNoFor(target.machineId)} (${target.slot === 1 ? 'Day' : 'Night'})`,
+          personnel: getOperatorMachineCandidates(isRig ? 'RIG' : 'CRANE', personnel),
+          selectedId: team.operatorByMachineId[target.machineId] ?? null,
           allowNone: true,
+          disabledIds: getMachineRoleDisabledIds(
+            target.machineId,
+            team.operatorByMachineId,
+            otherTeamForSlot(target.slot).operatorByMachineId,
+            { excludeSameShiftOtherMachines: true },
+          ),
           onSelect: (id: string | null) => {
-            const operatorByMachineId = { ...cp.operatorByMachineId };
+            const operatorByMachineId = { ...team.operatorByMachineId };
             if (id) operatorByMachineId[target.machineId] = id;
             else delete operatorByMachineId[target.machineId];
-            updatePersonnel({ operatorByMachineId });
+            updateTeamForSlot(target.slot, { operatorByMachineId });
           },
         };
       }
@@ -343,7 +375,12 @@ export default function PreviewStep({
       )}
 
       {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
-      <PilesAccordion piles={piles} planSteps={planSteps} getTrackChoice={getTrackChoice} />
+      <PilesAccordion
+        piles={piles}
+        planSteps={planSteps}
+        getTrackChoice={getTrackChoice}
+        windowsByMachineId={windowsByMachineId}
+      />
 
       {/* ── Core Team role picker ─────────────────────────────────────────── */}
       <AppModal
@@ -357,6 +394,7 @@ export default function PreviewStep({
             personnel={rolePickerConfig.personnel}
             selectedId={rolePickerConfig.selectedId}
             allowNone={rolePickerConfig.allowNone}
+            disabledIds={'disabledIds' in rolePickerConfig ? rolePickerConfig.disabledIds : undefined}
             onSelect={(id) => {
               rolePickerConfig.onSelect(id);
               setRolePickerTarget(null);

@@ -3,6 +3,7 @@
 // Pure helpers used by the preview step.
 
 import type { PlanStepWithMeta } from '@repositories/planRepository';
+import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import { stepNaturalEndMs } from '@utils/stepTiming';
 
 // formatMinutes (duration) lives in utils/formatTime — re-export for local consumers.
@@ -97,16 +98,47 @@ export function computeMachineOccupancyMinutes(steps: PlanStepWithMeta[], machin
     .reduce((sum, s) => sum + (s.durationMinutes ?? 0) + (s.bufferMinutes ?? 0), 0);
 }
 
-/** Count of (pile, step) entries that differ between two step-track-override maps — used
- * both to gate a Confirm action and to show "N reassigned" without a full deep-equal helper. */
-export function countOverrideDiff(a: Record<string, string[]>, b: Record<string, string[]>): number {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  let count = 0;
-  for (const key of keys) {
-    const av = new Set(a[key] ?? []);
-    const bv = new Set(b[key] ?? []);
-    for (const id of av) if (!bv.has(id)) count++;
-    for (const id of bv) if (!av.has(id)) count++;
+export interface PileStepBreak {
+  /** Insert this break row immediately before the step at this index in the (already sorted)
+   * steps array passed to computePileStepBreaks. */
+  beforeIndex: number;
+  label: string;
+  start: string;
+  end: string;
+}
+
+/**
+ * Real, configured non-working windows (lunch/tea breaks etc.) that fall between two
+ * consecutive steps of one pile — NOT plain per-step setup/buffer time, which stays invisible
+ * exactly as before. Compares against `next.plannedStart` rather than its buffer-adjusted work
+ * start: a step's own `plannedStart` already reflects any window its own assigned machine was
+ * sitting inside (see skipNonWorkingWindows in pilingPlannerService.ts), so checking
+ * `windowsByMachineId[next.assignedMachineId]` against the gap up to `plannedStart` finds
+ * exactly the windows that delayed it — buffer time added after that point is a separate,
+ * deliberately-unlabeled gap.
+ */
+export function computePileStepBreaks(
+  steps: PlanStepWithMeta[],
+  windowsByMachineId: Record<string, EffectivePlanWindow[]>,
+): PileStepBreak[] {
+  const breaks: PileStepBreak[] = [];
+  for (let i = 1; i < steps.length; i++) {
+    const prev = steps[i - 1];
+    const next = steps[i];
+    if (!prev.plannedEnd || !next.plannedStart || !next.assignedMachineId) continue;
+
+    const gapStart = new Date(prev.plannedEnd).getTime();
+    const gapEnd = new Date(next.plannedStart).getTime();
+    if (gapEnd <= gapStart) continue;
+
+    const windows = windowsByMachineId[next.assignedMachineId] ?? [];
+    for (const w of windows) {
+      const windowStart = new Date(w.start).getTime();
+      const windowEnd = new Date(w.end).getTime();
+      if (windowStart < gapEnd && windowEnd > gapStart) {
+        breaks.push({ beforeIndex: i, label: w.label, start: w.start, end: w.end });
+      }
+    }
   }
-  return count;
+  return breaks;
 }

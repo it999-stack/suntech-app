@@ -20,15 +20,21 @@ function PersonnelRow({
   label,
   sublabel,
   active,
+  disabled,
   onPress,
 }: {
   label: string;
   sublabel?: string;
   active: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   return (
-    <Pressable style={[styles.personRow, active && styles.personRowActive]} onPress={onPress}>
+    <Pressable
+      style={[styles.personRow, active && styles.personRowActive, disabled && styles.personRowDisabled]}
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+    >
       <View style={styles.personIcon}>
         <User size={16} color={active ? colors.accent : colors.textSecondary} />
       </View>
@@ -49,6 +55,9 @@ interface PersonnelPickerListProps {
   /** Shown when `personnel` is empty. */
   emptyLabel?: string;
   maxHeight?: number;
+  /** Person ids to show in the list but greyed out and unpressable — e.g. already assigned to
+   * this same role in another shift. */
+  disabledIds?: Set<string>;
 }
 
 export default function PersonnelPickerList({
@@ -58,6 +67,7 @@ export default function PersonnelPickerList({
   allowNone = true,
   emptyLabel = 'No matching personnel synced for this site.',
   maxHeight = LIST_MAX_HEIGHT,
+  disabledIds,
 }: PersonnelPickerListProps) {
   if (!personnel.length) {
     return <Text style={styles.emptyText}>{emptyLabel}</Text>;
@@ -82,6 +92,7 @@ export default function PersonnelPickerList({
             label={item.name}
             sublabel={item.designation}
             active={selectedId === item.id}
+            disabled={disabledIds?.has(item.id)}
             onPress={() => onSelect(item.id)}
           />
           {idx < personnel.length - 1 ? <View style={{ height: spacing.xs }} /> : null}
@@ -114,6 +125,9 @@ const styles = StyleSheet.create({
   personRowActive: {
     borderColor: colors.accent,
     backgroundColor: colors.accentSoft,
+  },
+  personRowDisabled: {
+    opacity: 0.4,
   },
   personIcon: { width: 24, alignItems: 'center' },
   personInfo: { flex: 1 },

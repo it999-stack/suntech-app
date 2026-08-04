@@ -6,16 +6,30 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Layers } from 'lucide-react-native';
+import { Layers, Coffee } from 'lucide-react-native';
 import Accordion from '@components/shared/Accordion';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import StepTimelineRow from './StepTimelineRow';
 import type { TrackChoice } from './TrackChoiceTiles';
-import { computeTotalDuration, computeMachineOccupancyMinutes } from './previewUtils';
+import { computeTotalDuration, computeMachineOccupancyMinutes, computePileStepBreaks } from './previewUtils';
 import type { PlanStepWithMeta, ActualStepWithMeta } from '@repositories/planRepository';
 import type { PreviewPile } from '@app-types/previewTypes';
-import { colors, spacing, typography } from '@/theme/theme';
-import { formatDurationMinutes } from '@/utils/formatTime';
+import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
+import { colors, spacing, typography, radius } from '@/theme/theme';
+import { formatDurationMinutes, formatTime } from '@/utils/formatTime';
+
+/** A real, configured non-working window (lunch/tea break etc.) shown between the two steps
+ * it falls between — visually distinct from a StepTimelineRow so it doesn't read as a step. */
+function PileBreakRow({ label, start, end }: { label: string; start: string; end: string }) {
+  return (
+    <View style={styles.breakRow}>
+      <Coffee size={14} color={colors.machines.break} />
+      <Text style={styles.breakText}>
+        {label} · {formatTime(start)} – {formatTime(end)}
+      </Text>
+    </View>
+  );
+}
 
 interface PilesAccordionProps {
   piles: PreviewPile[];
@@ -28,9 +42,18 @@ interface PilesAccordionProps {
     pile: PreviewPile,
     step: PlanStepWithMeta,
   ) => { selected: TrackChoice; onSelect: (track: TrackChoice) => void };
+  /** Non-working windows actually applied per machine, from generatePlanPreview() — used to
+   * show a break row between two steps when a real configured window falls between them. */
+  windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
 }
 
-export default function PilesAccordion({ piles, planSteps, actualSteps = [], getTrackChoice }: PilesAccordionProps) {
+export default function PilesAccordion({
+  piles,
+  planSteps,
+  actualSteps = [],
+  getTrackChoice,
+  windowsByMachineId,
+}: PilesAccordionProps) {
   const [selectedPileId, setSelectedPileId] = React.useState<string | undefined>(piles[0]?.id);
 
   if (piles.length === 0) {
@@ -75,6 +98,12 @@ export default function PilesAccordion({ piles, planSteps, actualSteps = [], get
               .filter((a) => a.checklistPileId === pile.checklistPileId)
               .map((a) => [a.stepId, a]),
           );
+          const breaksByIndex = new Map<number, ReturnType<typeof computePileStepBreaks>>();
+          for (const b of computePileStepBreaks(steps, windowsByMachineId ?? {})) {
+            const list = breaksByIndex.get(b.beforeIndex);
+            if (list) list.push(b);
+            else breaksByIndex.set(b.beforeIndex, [b]);
+          }
 
           return (
             <View>
@@ -98,25 +127,29 @@ export default function PilesAccordion({ piles, planSteps, actualSteps = [], get
                   <Text style={styles.noSteps}>No plan steps generated for this pile.</Text>
                 ) : (
                   steps.map((s, idx) => (
-                    <StepTimelineRow
-                      key={s.id}
-                      step={s}
-                      isLast={idx === steps.length - 1}
-                      isCompleted={!!actualByStepId.get(s.stepId)?.actualEnd}
-                      rigMachineNo={pile.rigMachineNo}
-                      craneMachineNo={pile.craneMachineNo}
-                      trackChoice={
-                        // Eligibility is the step's nominal (business) track, not the
-                        // currently-displayed one — once overridden, `s.track` reads
-                        // as 'RIG', but the tiles must stay offered so it can be
-                        // toggled back. Falls back to `s.track` where businessTrack
-                        // isn't populated (persisted rows never set it, and never
-                        // pass getTrackChoice anyway).
-                        getTrackChoice && (s.businessTrack ?? s.track) === 'CRANE'
-                          ? getTrackChoice(pile, s)
-                          : undefined
-                      }
-                    />
+                    <React.Fragment key={s.id}>
+                      {breaksByIndex.get(idx)?.map((b, i) => (
+                        <PileBreakRow key={`break-${idx}-${i}`} label={b.label} start={b.start} end={b.end} />
+                      ))}
+                      <StepTimelineRow
+                        step={s}
+                        isLast={idx === steps.length - 1}
+                        isCompleted={!!actualByStepId.get(s.stepId)?.actualEnd}
+                        rigMachineNo={pile.rigMachineNo}
+                        craneMachineNo={pile.craneMachineNo}
+                        trackChoice={
+                          // Eligibility is the step's nominal (business) track, not the
+                          // currently-displayed one — once overridden, `s.track` reads
+                          // as 'RIG', but the tiles must stay offered so it can be
+                          // toggled back. Falls back to `s.track` where businessTrack
+                          // isn't populated (persisted rows never set it, and never
+                          // pass getTrackChoice anyway).
+                          getTrackChoice && (s.businessTrack ?? s.track) === 'CRANE'
+                            ? getTrackChoice(pile, s)
+                            : undefined
+                        }
+                      />
+                    </React.Fragment>
                   ))
                 )}
               </View>
@@ -163,6 +196,24 @@ const styles = StyleSheet.create({
   stepsContainer: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  breakRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    marginVertical: spacing.xs,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(251,191,36,0.4)',
+    backgroundColor: 'rgba(251,191,36,0.08)',
+  },
+  breakText: {
+    ...typography.caption,
+    fontWeight: '600',
+    color: colors.machines.break,
   },
   noSteps: {
     ...typography.caption,

@@ -2,9 +2,7 @@
 
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
-import { MessageSquareText } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/TimerSelectMenu';
-import RemarksModal from '@components/plan/actual/RemarksModal';
 import { formatMinutes12, isAtOrAfterOvernightWrap } from '@utils/formatTime';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
@@ -18,17 +16,12 @@ interface Props {
   onConfirm: (minutes: number) => void | Promise<void>;
   /** Existing remark text for this step, if any. */
   remarks?: string;
-  /** Called when the user saves a remark from the icon-triggered modal. */
-  onSaveRemarks?: (text: string) => void | Promise<void>;
+  /** Opens the step-actions sheet directly on its Remarks tab. */
+  onAddRemarks?: () => void;
   /** Earliest minutes-since-midnight this time may be set to (inclusive). Omit for no lower bound. */
   minMinutes?: number;
   /** Describes what minMinutes represents, used in the rejection message (e.g. "the previous step's end time"). */
   minMinutesLabel?: string;
-}
-
-function nowAsMinutes(): number {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
 }
 
 export default function StepTimeControl({
@@ -37,13 +30,12 @@ export default function StepTimeControl({
   defaultMinutes,
   onConfirm,
   remarks,
-  onSaveRemarks,
+  onAddRemarks,
   minMinutes,
   minMinutesLabel,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
-  const [remarksOpen, setRemarksOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const verb = mode === 'start' ? 'Start' : 'Finish';
@@ -94,34 +86,25 @@ export default function StepTimeControl({
         <View style={styles.wrap}>
           <View style={styles.actionRow}>
             <Pressable
-              style={[styles.actionBtn, styles.nowBtn, saving && styles.actionBtnDisabled]}
-              disabled={saving}
-              onPress={() => confirm(nowAsMinutes())}
-            >
-              <Text style={styles.nowBtnText}>{verb} Now</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.actionBtn, styles.pickBtn, saving && styles.actionBtnDisabled]}
+              style={[styles.actionBtn, styles.primaryBtn, saving && styles.actionBtnDisabled]}
               disabled={saving}
               onPress={() => {
                 setDraftMinutes(defaultMinutes);
                 setPickerOpen(true);
               }}
             >
-              <Text style={styles.pickBtnText}>Pick a time</Text>
+              <Text style={styles.primaryBtnText}>Pick a time</Text>
             </Pressable>
 
-            {onSaveRemarks && (
+            {onAddRemarks && (
               <Pressable
-                style={styles.remarksBtn}
-                onPress={() => setRemarksOpen(true)}
-                hitSlop={8}
+                style={[styles.actionBtn, styles.secondaryBtn, saving && styles.actionBtnDisabled]}
+                disabled={saving}
+                onPress={onAddRemarks}
               >
-                <MessageSquareText
-                  size={18}
-                  color={hasRemarks ? colors.accent : colors.textSecondary}
-                />
-                {hasRemarks && <View style={styles.remarksDot} />}
+                <Text style={styles.secondaryBtnText}>
+                  {hasRemarks ? 'Edit remarks' : 'Add remarks'}
+                </Text>
               </Pressable>
             )}
           </View>
@@ -140,16 +123,6 @@ export default function StepTimeControl({
           }}
           initialDate={(() => { const d = new Date(); d.setHours(Math.floor(defaultMinutes / 60), defaultMinutes % 60, 0, 0); return d; })()}
         />
-
-      {onSaveRemarks && (
-        <RemarksModal
-          visible={remarksOpen}
-          stepName={stepName}
-          initialValue={remarks}
-          onClose={() => setRemarksOpen(false)}
-          onSave={onSaveRemarks}
-        />
-      )}
     </>
   );
 }
@@ -168,25 +141,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   actionBtnDisabled: { opacity: 0.5 },
-  nowBtn: { backgroundColor: colors.accent },
-  nowBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
-  pickBtn: { backgroundColor: 'rgba(28,28,46,0.06)' },
-  pickBtnText: { ...typography.body, fontWeight: '700', color: colors.textSecondary },
-  remarksBtn: {
-    width: 40,
-    height: 40,
+  primaryBtn: { backgroundColor: colors.accent },
+  secondaryBtn: { 
+    backgroundColor: colors.glassFill, 
+    borderColor: colors.border,
+    borderWidth: 1,
     borderRadius: radius.pill,
-    backgroundColor: 'rgba(28,28,46,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  remarksDot: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.accent,
-  },
+    padding: spacing.md, },
+  primaryBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
+  secondaryBtnText: { ...typography.body, fontWeight: '700', color: colors.accent },
 });

@@ -4,19 +4,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Drill, Wind, Forklift } from 'lucide-react-native';
 
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import GlassCard from '@components/shared/GlassCard';
 import { getSteps, getAllTemplatesWithDimensions } from '@repositories/stepsRepository';
 import type { TemplateWithDimension } from '@repositories/stepsRepository';
 import type { PilingStep } from '@/db/schema';
-
-const TRACK_META = {
-  RIG: { label: 'RIG', icon: Drill, color: colors.machines.rig.color, soft: colors.machines.rig.soft },
-  CRANE: { label: 'CRANE', icon: Forklift, color: colors.machines.crane.color, soft: colors.machines.crane.soft },
-  COMPRESSOR: { label: 'COMPRESSOR', icon: Wind, color: colors.machines.compressor.color, soft: colors.machines.compressor.soft },
-} as const;
+import { TRACK_META } from '@/utils/trackMeta';
+import { formatDurationLong } from '@/utils/formatTime';
 
 function StepCard({ step, templates }: { step: PilingStep; templates: TemplateWithDimension[] }) {
   const meta = TRACK_META[step.track as keyof typeof TRACK_META] ?? TRACK_META.RIG;
@@ -50,7 +45,7 @@ function StepCard({ step, templates }: { step: PilingStep; templates: TemplateWi
                 {t.dimension ? `Ø${t.dimension.dia}mm × ${t.dimension.depth}m` : '—'}
               </Text>
               <Text style={styles.templateTime}>
-                {t.durationMinutes} min
+                {formatDurationLong(t.durationMinutes)}
                 {t.bufferBeforeMinutes > 0 && ` (+${t.bufferBeforeMinutes} buffer)`}
               </Text>
             </View>

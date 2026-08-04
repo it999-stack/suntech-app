@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Check, X, Wrench } from 'lucide-react-native';
+import { Check, X, SquareCheckBig, Eraser } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import MachineSelect from './MachineSelect';
@@ -21,12 +21,14 @@ interface BulkAssignBarProps {
   onSelectCrane: (id: string) => void;
   defaulted: boolean;
   onApply: () => void;
+  onUnassign: () => void;
+  unassignDisabled: boolean;
 }
 
 export default function BulkAssignBar({
   selectedCount, onClear, panelOpen, onTogglePanel,
   rigs, cranes, rigId, craneId, onSelectRig, onSelectCrane,
-  defaulted, onApply,
+  defaulted, onApply, onUnassign, unassignDisabled,
 }: BulkAssignBarProps) {
   return (
     <View style={styles.row}>
@@ -36,10 +38,18 @@ export default function BulkAssignBar({
 
       <View style={styles.right}>
         <Pressable style={styles.clearBtn} onPress={onClear} hitSlop={spacing.sm}>
-          <X size={15} color={colors.textSecondary} />
+          <X size={17} color={colors.textSecondary} />
+        </Pressable>
+        <Pressable
+          style={[styles.unassignButton, unassignDisabled && styles.unassignButtonDisabled]}
+          onPress={onUnassign}
+          disabled={unassignDisabled}
+        >
+          <Eraser size={17} color={colors.white} />
+          <Text style={styles.unassignButtonText}>Unassign</Text>
         </Pressable>
         <Pressable style={styles.assignButton} onPress={onTogglePanel}>
-          <Wrench size={14} color={colors.white} />
+          <SquareCheckBig size={17} color={colors.white} />
           <Text style={styles.assignButtonText}>Assign</Text>
         </Pressable>
       </View>
@@ -54,8 +64,8 @@ export default function BulkAssignBar({
         {defaulted && (
           <Text style={styles.hint}>Defaulted to your last combination — change if needed.</Text>
         )}
-        <MachineSelect label="Rig" options={rigs} valueId={rigId} onSelect={onSelectRig} />
-        <MachineSelect label="Crane" options={cranes} valueId={craneId} onSelect={onSelectCrane} />
+        <MachineSelect label="Rig" kind="rig" options={rigs} valueId={rigId} onSelect={onSelectRig} />
+        <MachineSelect label="Crane" kind="crane" options={cranes} valueId={craneId} onSelect={onSelectCrane} />
         <Pressable
           style={[styles.applyButton, (!rigId || !craneId) && styles.applyButtonDisabled]}
           onPress={onApply}
@@ -73,18 +83,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.glassFillStrong,
-    borderWidth: 1,
-    borderColor: colors.glassBorder
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
   left: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   label: { ...typography.caption, color: colors.textPrimary },
   right: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   clearBtn: {
-    padding: spacing.xs,
+    padding: spacing.sm,
     borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
@@ -94,17 +100,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     backgroundColor: colors.accent,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm + 2,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
   assignButtonText: { ...typography.caption, fontWeight: '700', color: colors.white },
+  unassignButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.danger,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  unassignButtonDisabled: { opacity: 0.4 },
+  unassignButtonText: { ...typography.caption, fontWeight: '700', color: colors.white },
   hint: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md },
   applyButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: colors.accent, borderRadius: radius.sm, paddingVertical: spacing.sm + 2,
+    backgroundColor: colors.accent, borderRadius: radius.lg, paddingVertical: spacing.md,
     marginTop: spacing.sm,
   },
   applyButtonDisabled: { opacity: 0.4 },
-  applyButtonText: { ...typography.caption, borderRadius: radius.xl, paddingHorizontal: spacing.md, fontWeight: '700', color: colors.white },
+  applyButtonText: { ...typography.buttonLabel, borderRadius: radius.xl, paddingHorizontal: spacing.md, fontWeight: '700', color: colors.white },
 });

@@ -11,7 +11,6 @@ export type Step =
   | 'team'
   | 'piles'
   | 'steps'
-  | 'shiftIncharge'
   | 'preview';
 
 export const STEP_ORDER: Step[] = [
@@ -21,7 +20,6 @@ export const STEP_ORDER: Step[] = [
   'team',
   'piles',
   'steps',
-  'shiftIncharge',
   'preview',
 ];
 
@@ -32,7 +30,6 @@ export const STEP_LABEL: Record<Step, string> = {
   team: 'Team',
   piles: 'Piles & Assign',
   steps: 'Steps',
-  shiftIncharge: 'Shift Incharge',
   preview: 'Preview',
 };
 

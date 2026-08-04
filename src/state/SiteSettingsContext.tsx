@@ -8,6 +8,8 @@ import { Shift, NonWorkingWindow } from '@app-types/siteSettings';
 import type { NonWorkingWindowBehavior } from '@db/schema';
 import { getAllShiftsWithWindows, type ShiftWithWindows } from '@repositories/shiftsRepository';
 import { useAuthStore } from '@store/authStore';
+import { onDeltaSyncComplete } from '@sync/delta/runDeltaSync';
+import { onBootstrapCompleted } from '@sync/bootstrap/bootstrapSync';
 
 /** Convert "HH:MM" string to minutes-since-midnight. */
 function timeToMinutes(t: string): number {
@@ -76,6 +78,27 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
     if (user?.siteId) {
       reloadFromDb(user.siteId);
     }
+  }, [user?.siteId]);
+
+  // Reload after every delta sync (automatic — reconnect/foreground/periodic
+  // — or manual) so screens reading this context never show stale data just
+  // because they weren't the ones that triggered the sync.
+  useEffect(() => {
+    return onDeltaSyncComplete(() => {
+      if (user?.siteId) {
+        reloadFromDb(user.siteId);
+      }
+    });
+  }, [user?.siteId]);
+
+  // Same, for the first-ever sync (bootstrap) — delta sync never runs until
+  // a cursor exists, so this is the only completion signal before that.
+  useEffect(() => {
+    return onBootstrapCompleted(() => {
+      if (user?.siteId) {
+        reloadFromDb(user.siteId);
+      }
+    });
   }, [user?.siteId]);
 
   // ─── Read-only context ────────────────────────────────────────────────────

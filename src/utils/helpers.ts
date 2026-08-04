@@ -45,6 +45,16 @@ export function getMachineColor(machine: MachineLike, indexWithinType: number): 
   return palette[indexWithinType % palette.length];
 }
 
+/** Converts a `#rrggbb` hex color to an `rgba(...)` string at the given opacity. */
+export function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace('#', '');
+  const value = parseInt(clean, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 /** Maps each machine's id to its position among machines of the same type, in list order. */
 export function buildTypeIndexById<T extends MachineLike>(machines: T[]): Record<string, number> {
   const counters: Record<string, number> = {};

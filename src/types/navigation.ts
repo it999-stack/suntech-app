@@ -30,12 +30,6 @@ export type SiteTopTabParamList = {
   Steps: undefined;
 };
 
-// Site stack (Site tabs → ShiftWindows as a full-screen push)
-export type SiteStackParamList = {
-  SiteTabs: undefined;
-  ShiftWindows: { shiftId: string };
-};
-
 // Profile stack — site settings moved to the Site tab, nothing left here
 // beyond the profile screen itself.
 export type ProfileStackParamList = {
@@ -46,7 +40,7 @@ export type ProfileStackParamList = {
 export type MainTabParamList = {
   HomeTab: NavigatorScreenParams<HomeStackParamList>;
   PilesTab: NavigatorScreenParams<PilesStackParamList>;
-  SiteTab: NavigatorScreenParams<SiteStackParamList>;
+  SiteTab: undefined;
   ProfileTab: NavigatorScreenParams<ProfileStackParamList>;
 };
 

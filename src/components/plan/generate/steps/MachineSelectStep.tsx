@@ -1,21 +1,17 @@
 // src/components/plan/generate/steps/MachineSelectStep.tsx
 //
-// Step 3 — all synced rigs + cranes are listed. A machine becomes part of
-// today's active plan the moment an operator is assigned to it (mandatory,
-// enforced by GeneratePlanScreen's canContinue gate for this step) — there
-// is no separate on/off switch. Picking "None / Skip" in the operator
-// picker un-assigns and deactivates the machine again.
+// Step 3 — all synced rigs + cranes are listed. Tapping a row toggles it
+// in/out of today's active plan (activeRigIds/activeCraneIds) — a plain
+// on/off switch, nothing else. Personnel (engineer/supervisor/operator) are
+// assigned per-shift in the Team step; deactivating a machine here clears
+// its role rows from both shifts so a re-activated machine starts clean.
 
-import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, Text, Pressable, Switch, StyleSheet } from 'react-native';
 import { Drill, Forklift } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
-import AppModal from '@components/shared/AppModal';
-import AssigneeChip from '@components/shared/AssigneeChip';
-import PersonnelPickerList, { type SimplePersonnel } from '@components/shared/PersonnelPickerList';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { PlanDraft } from '@/types/plan';
-import { matchesOperatorDesignation } from '@/utils/personnelRoles';
 import { getMachineColor } from '@/utils/helpers';
 
 export interface SimpleMachine {
@@ -29,99 +25,70 @@ interface MachineSelectStepProps {
   onUpdate: (patch: Partial<PlanDraft>) => void;
   rigs: SimpleMachine[];
   cranes: SimpleMachine[];
-  personnel: SimplePersonnel[];
 }
 
 function MachineRow({
   machine,
-  assigned,
+  active,
   iconColor,
   icon,
-  operatorName,
-  onPress,
+  onToggle,
 }: {
   machine: SimpleMachine;
-  assigned: boolean;
+  active: boolean;
   iconColor: string;
   icon: React.ReactNode;
-  operatorName: string | null;
-  onPress: () => void;
+  onToggle: () => void;
 }) {
   return (
-    <Pressable style={styles.machineRow} onPress={onPress}>
-      <View style={[styles.machineIcon, { backgroundColor: assigned ? `${iconColor}1F` : 'rgba(28,28,46,0.06)' }]}>
+    <Pressable style={styles.machineRow} onPress={onToggle}>
+      <View style={[styles.machineIcon, { backgroundColor: active ? `${iconColor}1F` : 'rgba(28,28,46,0.06)' }]}>
         {icon}
       </View>
-      <Text style={[styles.machineName, assigned && styles.machineNameActive]} numberOfLines={1}>
+      <Text style={[styles.machineName, active && styles.machineNameActive]} numberOfLines={1}>
         {machine.machineNo}
       </Text>
-      <AssigneeChip name={assigned ? operatorName : null} onPress={onPress} />
+      <Switch
+        value={active}
+        onValueChange={onToggle}
+        trackColor={{ true: colors.accent }}
+        thumbColor={active ? colors.white : undefined}
+      />
     </Pressable>
   );
 }
 
-export default function MachineSelectStep({
-  draft,
-  onUpdate,
-  rigs,
-  cranes,
-  personnel,
-}: MachineSelectStepProps) {
-  const [operatorPickerFor, setOperatorPickerFor] = useState<{ id: string; type: 'RIG' | 'CRANE' } | null>(
-    null,
-  );
-
+export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: MachineSelectStepProps) {
   function clearMachineRoles(id: string) {
-    const { [id]: _op, ...operatorByMachineId } = draft.checklistPersonnel.operatorByMachineId;
-    const { [id]: _eng, ...engineerByMachineId } = draft.checklistPersonnel.engineerByMachineId;
-    const { [id]: _sup, ...supervisorByMachineId } = draft.checklistPersonnel.supervisorByMachineId;
+    function stripFromTeam(team: PlanDraft['checklistPersonnel']['shift1']) {
+      const { [id]: _op, ...operatorByMachineId } = team.operatorByMachineId;
+      const { [id]: _eng, ...engineerByMachineId } = team.engineerByMachineId;
+      const { [id]: _sup, ...supervisorByMachineId } = team.supervisorByMachineId;
+      return { ...team, operatorByMachineId, engineerByMachineId, supervisorByMachineId };
+    }
     onUpdate({
       checklistPersonnel: {
         ...draft.checklistPersonnel,
-        operatorByMachineId,
-        engineerByMachineId,
-        supervisorByMachineId,
+        shift1: stripFromTeam(draft.checklistPersonnel.shift1),
+        shift2: stripFromTeam(draft.checklistPersonnel.shift2),
       },
     });
   }
 
-  function setOperator(id: string, type: 'RIG' | 'CRANE', personnelId: string | null) {
-    if (personnelId) {
-      const operatorByMachineId = { ...draft.checklistPersonnel.operatorByMachineId, [id]: personnelId };
-      const patch: Partial<PlanDraft> = {
-        checklistPersonnel: { ...draft.checklistPersonnel, operatorByMachineId },
-      };
-      if (type === 'RIG' && !draft.activeRigIds.includes(id)) {
-        patch.activeRigIds = [...draft.activeRigIds, id];
-      } else if (type === 'CRANE' && !draft.activeCraneIds.includes(id)) {
-        patch.activeCraneIds = [...draft.activeCraneIds, id];
-      }
-      onUpdate(patch);
-    } else {
+  function toggleMachine(id: string, type: 'RIG' | 'CRANE') {
+    const isRig = type === 'RIG';
+    const activeIds = isRig ? draft.activeRigIds : draft.activeCraneIds;
+    const key = isRig ? 'activeRigIds' : 'activeCraneIds';
+    if (activeIds.includes(id)) {
       clearMachineRoles(id);
-      if (type === 'RIG') {
-        onUpdate({ activeRigIds: draft.activeRigIds.filter((x) => x !== id) });
-      } else {
-        onUpdate({ activeCraneIds: draft.activeCraneIds.filter((x) => x !== id) });
-      }
+      onUpdate({ [key]: activeIds.filter((x) => x !== id) });
+    } else {
+      onUpdate({ [key]: [...activeIds, id] });
     }
   }
 
-  // An operator runs one machine at a time — exclude anyone already assigned
-  // as operator elsewhere, but still let them show up (and stay selected)
-  // for the machine they're currently assigned to.
-  const operatorCandidates = operatorPickerFor
-    ? personnel.filter((p) => {
-        if (!matchesOperatorDesignation(operatorPickerFor.type, p.designation)) return false;
-        const assignedToAnotherMachine = Object.entries(draft.checklistPersonnel.operatorByMachineId).some(
-          ([machineId, personnelId]) => machineId !== operatorPickerFor.id && personnelId === p.id,
-        );
-        return !assignedToAnotherMachine;
-      })
-    : [];
-
-  const rigsAssignedCount = rigs.filter((r) => !!draft.checklistPersonnel.operatorByMachineId[r.id]).length;
-  const cranesAssignedCount = cranes.filter((c) => !!draft.checklistPersonnel.operatorByMachineId[c.id]).length;
+  const rigsActiveCount = rigs.filter((r) => draft.activeRigIds.includes(r.id)).length;
+  const cranesActiveCount = cranes.filter((c) => draft.activeCraneIds.includes(c.id)).length;
 
   return (
     <>
@@ -130,26 +97,21 @@ export default function MachineSelectStep({
         <View style={styles.groupHeader}>
           <Drill size={16} color={colors.accent} />
           <Text style={styles.groupLabel}>Rigs</Text>
-          <Text style={styles.groupCount}>{rigsAssignedCount} assigned</Text>
+          <Text style={styles.groupCount}>{rigsActiveCount} active</Text>
         </View>
         {rigs.length === 0 ? (
           <Text style={styles.emptyText}>No rigs synced yet.</Text>
         ) : (
-          rigs.map((r) => {
-            const operatorId = draft.checklistPersonnel.operatorByMachineId[r.id];
-            const assigned = !!operatorId;
-            return (
-              <MachineRow
-                key={r.id}
-                machine={r}
-                assigned={assigned}
-                iconColor={colors.accent}
-                icon={<Drill size={16} color={assigned ? colors.accent : colors.textSecondary} />}
-                operatorName={personnel.find((p) => p.id === operatorId)?.name ?? null}
-                onPress={() => setOperatorPickerFor({ id: r.id, type: 'RIG' })}
-              />
-            );
-          })
+          rigs.map((r) => (
+            <MachineRow
+              key={r.id}
+              machine={r}
+              active={draft.activeRigIds.includes(r.id)}
+              iconColor={colors.accent}
+              icon={<Drill size={16} color={draft.activeRigIds.includes(r.id) ? colors.accent : colors.textSecondary} />}
+              onToggle={() => toggleMachine(r.id, 'RIG')}
+            />
+          ))
         )}
       </GlassCard>
 
@@ -158,47 +120,27 @@ export default function MachineSelectStep({
         <View style={styles.groupHeader}>
           <Forklift size={16} color={colors.machine.craneColors[0]} />
           <Text style={styles.groupLabel}>Cranes</Text>
-          <Text style={styles.groupCount}>{cranesAssignedCount} assigned</Text>
+          <Text style={styles.groupCount}>{cranesActiveCount} active</Text>
         </View>
         {cranes.length === 0 ? (
           <Text style={styles.emptyText}>No cranes synced yet.</Text>
         ) : (
           cranes.map((c, idx) => {
-            const operatorId = draft.checklistPersonnel.operatorByMachineId[c.id];
-            const assigned = !!operatorId;
+            const active = draft.activeCraneIds.includes(c.id);
             const craneColor = getMachineColor({ id: c.id, type: 'CRANE' }, idx);
             return (
               <MachineRow
                 key={c.id}
                 machine={c}
-                assigned={assigned}
+                active={active}
                 iconColor={craneColor}
-                icon={<Forklift size={16} color={assigned ? craneColor : colors.textSecondary} />}
-                operatorName={personnel.find((p) => p.id === operatorId)?.name ?? null}
-                onPress={() => setOperatorPickerFor({ id: c.id, type: 'CRANE' })}
+                icon={<Forklift size={16} color={active ? craneColor : colors.textSecondary} />}
+                onToggle={() => toggleMachine(c.id, 'CRANE')}
               />
             );
           })
         )}
       </GlassCard>
-
-      <AppModal
-        visible={!!operatorPickerFor}
-        onClose={() => setOperatorPickerFor(null)}
-        title="Assign Operator"
-        position="center"
-      >
-        <PersonnelPickerList
-          personnel={operatorCandidates}
-          selectedId={operatorPickerFor ? draft.checklistPersonnel.operatorByMachineId[operatorPickerFor.id] ?? null : null}
-          onSelect={(id) => {
-            if (operatorPickerFor) setOperator(operatorPickerFor.id, operatorPickerFor.type, id);
-            setOperatorPickerFor(null);
-          }}
-          allowNone
-          emptyLabel="No matching machine operators synced for this site."
-        />
-      </AppModal>
     </>
   );
 }
@@ -245,7 +187,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     fontWeight: '500',
     color: colors.textSecondary,
-    width: 48,
+    flex: 1,
   },
   machineNameActive: {
     fontWeight: '700',

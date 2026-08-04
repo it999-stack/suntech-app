@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "suntech-app",
-    "slug": "suntech-app",
+    "name": "suntech",
+    "slug": "suntech",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

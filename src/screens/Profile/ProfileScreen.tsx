@@ -15,7 +15,6 @@ import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
-import { useSiteSettings } from '@state/SiteSettingsContext';
 import { usePilesAreasStore } from '@store/pilesAreasStore';
 import { getPendingCount } from '@repositories/syncQueueRepository';
 import { onQueueChanged } from '@sync/SyncManager';
@@ -75,7 +74,6 @@ function formatSyncTime(ts: number | null): string {
 export default function ProfileScreen() {
   const { user, logout } = useAuthStore();
   const { isSyncing, lastSyncedAt, pilesCount, error: syncError, loadLastSyncTime, sync } = useSyncStore();
-  const { reloadFromDb } = useSiteSettings();
 
   const displayName = user?.name ?? 'Unknown';
   const displayEmail = user?.email ?? '';
@@ -111,7 +109,6 @@ export default function ProfileScreen() {
     }
     try {
       await sync(user.siteId);
-      await reloadFromDb(user.siteId);
       // Refresh piles after sync completes so the UI reflects new data
       await usePilesAreasStore.getState().reload();
     } catch {

@@ -199,7 +199,7 @@ function resolveStepExecution(
 
 // ─── Shared result types ──────────────────────────────────────────────────────
 
-interface PreviewPlanStep
+export interface PreviewPlanStep
   extends Omit<NewPilePlanStep, 'durationMinutes' | 'bufferMinutes' | 'assignedMachineId' | 'plannedEnd'>,
     Pick<
       PlanStepWithMeta,
@@ -232,6 +232,38 @@ export interface BuildPlanRowsResult {
   warningPileIds: string[];
   /** Non-working windows actually applied per machine, keyed by machineId. */
   windowsByMachineId: Record<string, EffectivePlanWindow[]>;
+  /** Feed this back in as the next call's `scheduleCache` option — see PlanScheduleCache. */
+  scheduleCache: PlanScheduleCache;
+}
+
+/**
+ * Lets a caller that repeatedly recomputes the same plan (e.g. the Preview step, on every
+ * Rig/Crane track-override toggle) skip rescheduling piles that couldn't possibly have
+ * changed. Piles are partitioned into machine-sharing "components" (see
+ * partitionIntoComponents()) — each component's schedule is provably independent of every
+ * other's, so when only a track override changed, only the component(s) containing an
+ * affected pile need to actually re-run Pass 2; every other component's rows are reused as-is.
+ *
+ * `fingerprint` covers every scheduling input EXCEPT stepTrackOverrides (plan start time,
+ * site/shift, selected steps, and each pile's id/dimension/machine-assignment/resumeWork in
+ * order). A mismatch means component membership itself may have changed (pile added/removed,
+ * rig/crane reassigned, resumeWork changed, reorder, etc.) — in that case the whole cache is
+ * discarded and every component is rescheduled from scratch, same as if no cache were passed
+ * at all. This is intentionally an all-or-nothing gate: it is never partially trusted.
+ */
+export interface PlanScheduleCache {
+  fingerprint: string;
+  componentResults: Record<
+    string,
+    {
+      /** Fingerprint of just this component's piles' stepTrackOverrides — a mismatch means
+       * this specific component needs rescheduling even though the overall fingerprint matched. */
+      overridesFingerprint: string;
+      rows: PreviewPlanStep[];
+      warningPileIds: string[];
+      windowsByMachineId: Record<string, EffectivePlanWindow[]>;
+    }
+  >;
 }
 
 // ─── Core scheduling engine ───────────────────────────────────────────────────
@@ -287,6 +319,88 @@ function scheduleOneStep(
     sequenceOrder: step.sequenceOrder,
   });
   return end;
+}
+
+// ─── Machine-sharing components (for PlanScheduleCache) ───────────────────────
+// Piles that never share a rig/crane/compressor with each other are provably independent
+// under this scheduler: Pass 2 only ever compares readyAt values sourced from a pile's own
+// assigned machines, so their relative processing order — and hence their computed times —
+// can never affect one another. Grouping piles this way lets a repeated recompute (e.g. one
+// track-override toggle) skip rescheduling every component except the one(s) actually touched.
+
+class UnionFind {
+  private parent = new Map<string, string>();
+
+  find(x: string): string {
+    if (!this.parent.has(x)) this.parent.set(x, x);
+    let root = x;
+    while (this.parent.get(root) !== root) root = this.parent.get(root)!;
+    let cur = x;
+    while (this.parent.get(cur) !== root) {
+      const next = this.parent.get(cur)!;
+      this.parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  }
+
+  union(a: string, b: string) {
+    const ra = this.find(a);
+    const rb = this.find(b);
+    if (ra !== rb) this.parent.set(ra, rb);
+  }
+}
+
+/** Deterministic for a given `piles` array (same order, same machine assignments) — the same
+ * group of piles always resolves to the same component id, which is all a same-call cache
+ * lookup needs (component ids are never persisted or compared across different fingerprints). */
+function partitionIntoComponents(piles: PreviewPileInput[]): Map<string, string> {
+  const uf = new UnionFind();
+  for (const pile of piles) {
+    const pileNode = `p:${pile.checklistPileId}`;
+    for (const machineId of [pile.rigId, pile.craneId, pile.compressorId]) {
+      if (!machineId) continue;
+      uf.union(pileNode, `m:${machineId}`);
+    }
+  }
+  const componentIdByPileId = new Map<string, string>();
+  for (const pile of piles) {
+    componentIdByPileId.set(pile.checklistPileId, uf.find(`p:${pile.checklistPileId}`));
+  }
+  return componentIdByPileId;
+}
+
+/** Everything that affects scheduling EXCEPT stepTrackOverrides — see PlanScheduleCache. */
+function computeFingerprint(
+  piles: PreviewPileInput[],
+  planStartTime: string,
+  siteId: string,
+  shiftTypeId: string | undefined,
+  selectedStepIds: string[] | undefined,
+): string {
+  return JSON.stringify({
+    planStartTime,
+    siteId,
+    shiftTypeId: shiftTypeId ?? null,
+    selectedStepIds: selectedStepIds ?? null,
+    piles: piles.map((p) => ({
+      checklistPileId: p.checklistPileId,
+      pileId: p.pileId,
+      dimensionId: p.dimensionId,
+      rigId: p.rigId,
+      craneId: p.craneId,
+      compressorId: p.compressorId ?? null,
+      resumeWork: p.resumeWork ?? null,
+    })),
+  });
+}
+
+/** Just one component's piles' stepTrackOverrides — order-independent (sorted) since taps can
+ * append/remove ids in any order without changing what's actually being scheduled. */
+function computeOverridesFingerprint(piles: PreviewPileInput[]): string {
+  return JSON.stringify(
+    piles.map((p) => [p.checklistPileId, [...(p.stepTrackOverrides ?? [])].sort()]),
+  );
 }
 
 // ─── Reference-data fetches ───────────────────────────────────────────────────
@@ -370,54 +484,29 @@ export async function fetchPlanReferenceData(options: {
   return { templateRows, rawWindows };
 }
 
-async function buildPlanRowsForPiles(options: {
-  piles: PreviewPileInput[];
-  planStartTime: string;
-  siteId: string;
-  shiftTypeId?: string;
-  selectedStepIds?: string[];
-  /** Pre-fetched, session-cached reference data — see fetchPlanReferenceData().
-   * Any field left out falls back to fetching it here, so existing callers
-   * that don't pass this at all keep working unchanged. */
-  referenceData?: {
-    allSteps?: PilingStep[];
-    templateRows?: PlanTemplateRow[];
-    rawWindows?: PlanRawWindow[];
-  };
-}): Promise<BuildPlanRowsResult> {
-  const { piles, planStartTime, siteId, shiftTypeId, selectedStepIds, referenceData } = options;
-
-  const db = await initDb();
-
-  // These three are mutually independent (none reads another's result), and
-  // 100% static for a whole wizard session — fetched in parallel, and skipped
-  // entirely for whichever pieces the caller already has cached.
-  const [allSteps, templateRows, rawWindows] = await Promise.all([
-    referenceData?.allSteps
-      ? Promise.resolve(referenceData.allSteps)
-      : db.select().from(pilingSteps).orderBy(pilingSteps.sequenceOrder).all(),
-    referenceData?.templateRows
-      ? Promise.resolve(referenceData.templateRows)
-      : fetchTemplateRows(db, siteId),
-    referenceData?.rawWindows
-      ? Promise.resolve(referenceData.rawWindows)
-      : fetchRawWindows(db, siteId, shiftTypeId),
-  ]);
-
-  const selectedStepSet = selectedStepIds?.length ? new Set(selectedStepIds) : null;
-  const pileSteps = selectedStepSet
-    ? allSteps.filter((s) => selectedStepSet.has(s.id))
-    : allSteps;
-
-  const templateMap = new Map(templateRows.map((t) => [`${t.dimensionId}|${t.stepId}`, t]));
-
-  const planRows: PreviewPlanStep[] = [];
+/**
+ * Schedules ONE machine-sharing component's piles in total isolation — Pass 1 (resolve each
+ * pile's steps to concrete assignedMachineIds) followed by Pass 2 (greedily schedule whichever
+ * unscheduled pile's next step is ready soonest). Calling this with every pile in the plan
+ * reproduces the full-recompute result exactly; calling it with just one component's piles
+ * (see partitionIntoComponents()) produces exactly the same rows for those piles as the full
+ * run would, since a component never shares a machine with any pile outside it. `piles` must
+ * be a filtered (not re-sorted) slice of the original array — Pass 2's tie-break when two
+ * piles are ready at the exact same instant is "first in original order wins", which only
+ * holds if relative order is preserved.
+ */
+function scheduleComponent(
+  piles: PreviewPileInput[],
+  pileSteps: PilingStep[],
+  templateMap: Map<string, { durationMinutes: number; bufferBeforeMinutes: number }>,
+  rawWindows: PlanRawWindow[],
+  dayBase: Date,
+  planStart: Date,
+  planEnd: Date,
+  now: number,
+): { rows: PreviewPlanStep[]; warningPileIds: string[]; windowsByMachineId: Record<string, EffectivePlanWindow[]> } {
+  const rows: PreviewPlanStep[] = [];
   const warningPileIds: string[] = [];
-  const now = Date.now();
-
-  const planStart = new Date(planStartTime);
-  const dayBase = new Date(planStart);
-  dayBase.setHours(0, 0, 0, 0);
 
   // ── Pass 1: resolve each pile's applicable/remaining steps up front, all the way
   // to a concrete assignedMachineId (never just a track name) — see
@@ -514,7 +603,6 @@ async function buildPlanRowsForPiles(options: {
   }
 
   // ── Pass 2: greedily schedule whichever pile's next step can start soonest ─
-  const planEnd = new Date(planEndTime(planStart.toISOString()));
 
   // Once less than this much time is left in the plan's 24h window, don't start
   // any further step for a pile — it's deferred to tomorrow's plan and picked up
@@ -567,7 +655,7 @@ async function buildPlanRowsForPiles(options: {
         machineWindows.get(assignedMachineId)!,
         pile.checklistPileId,
         now,
-        planRows,
+        rows,
         poolFreeAt,
         planEnd,
         pile.resumeWork,
@@ -577,10 +665,115 @@ async function buildPlanRowsForPiles(options: {
     }
   }
 
-  // Dev-time sanity check (design invariant: at most one continuing step per
-  // pile per day, and it's always the last one by sequenceOrder). Structurally
-  // guaranteed by the scheduling loop above — this is cheap insurance against
-  // a future regression, not required for correctness today.
+  const windowsByMachineId: Record<string, EffectivePlanWindow[]> = {};
+  for (const [machineId, windows] of machineWindows) {
+    windowsByMachineId[machineId] = windows
+      .map((w) => ({
+        id: w.id,
+        label: w.label,
+        start: toLocalIsoString(w.start),
+        end: toLocalIsoString(w.end),
+      }))
+      .sort((a, b) => a.start.localeCompare(b.start));
+  }
+
+  return { rows, warningPileIds, windowsByMachineId };
+}
+
+async function buildPlanRowsForPiles(options: {
+  piles: PreviewPileInput[];
+  planStartTime: string;
+  siteId: string;
+  shiftTypeId?: string;
+  selectedStepIds?: string[];
+  /** Pre-fetched, session-cached reference data — see fetchPlanReferenceData().
+   * Any field left out falls back to fetching it here, so existing callers
+   * that don't pass this at all keep working unchanged. */
+  referenceData?: {
+    allSteps?: PilingStep[];
+    templateRows?: PlanTemplateRow[];
+    rawWindows?: PlanRawWindow[];
+  };
+  /** Previous call's result, reused for any component whose piles' stepTrackOverrides didn't
+   * change — see PlanScheduleCache. Pass null/undefined to always force a full recompute (the
+   * one-shot persist path in generatePlan() does this — no repeated-recompute need there). */
+  scheduleCache?: PlanScheduleCache | null;
+}): Promise<BuildPlanRowsResult> {
+  const { piles, planStartTime, siteId, shiftTypeId, selectedStepIds, referenceData, scheduleCache } = options;
+
+  const db = await initDb();
+
+  // These three are mutually independent (none reads another's result), and
+  // 100% static for a whole wizard session — fetched in parallel, and skipped
+  // entirely for whichever pieces the caller already has cached.
+  const [allSteps, templateRows, rawWindows] = await Promise.all([
+    referenceData?.allSteps
+      ? Promise.resolve(referenceData.allSteps)
+      : db.select().from(pilingSteps).orderBy(pilingSteps.sequenceOrder).all(),
+    referenceData?.templateRows
+      ? Promise.resolve(referenceData.templateRows)
+      : fetchTemplateRows(db, siteId),
+    referenceData?.rawWindows
+      ? Promise.resolve(referenceData.rawWindows)
+      : fetchRawWindows(db, siteId, shiftTypeId),
+  ]);
+
+  const selectedStepSet = selectedStepIds?.length ? new Set(selectedStepIds) : null;
+  const pileSteps = selectedStepSet
+    ? allSteps.filter((s) => selectedStepSet.has(s.id))
+    : allSteps;
+
+  const templateMap = new Map(templateRows.map((t) => [`${t.dimensionId}|${t.stepId}`, t]));
+
+  const now = Date.now();
+  const planStart = new Date(planStartTime);
+  const dayBase = new Date(planStart);
+  dayBase.setHours(0, 0, 0, 0);
+  const planEnd = new Date(planEndTime(planStart.toISOString()));
+
+  // Partition into machine-sharing components once per call (cheap — O(piles), never itself
+  // cached) — see partitionIntoComponents(). A fingerprint match means every component's
+  // membership and non-override inputs are unchanged from the cached run, so only the
+  // component(s) whose piles' overrides actually differ need to be rescheduled.
+  const componentIdByPileId = partitionIntoComponents(piles);
+  const pilesByComponent = new Map<string, PreviewPileInput[]>();
+  for (const pile of piles) {
+    const componentId = componentIdByPileId.get(pile.checklistPileId)!;
+    const list = pilesByComponent.get(componentId);
+    if (list) list.push(pile);
+    else pilesByComponent.set(componentId, [pile]);
+  }
+
+  const fingerprint = computeFingerprint(piles, planStartTime, siteId, shiftTypeId, selectedStepIds);
+  const cacheUsable = scheduleCache?.fingerprint === fingerprint;
+
+  const planRows: PreviewPlanStep[] = [];
+  const warningPileIds: string[] = [];
+  const windowsByMachineId: Record<string, EffectivePlanWindow[]> = {};
+  const componentResults: PlanScheduleCache['componentResults'] = {};
+
+  for (const [componentId, componentPiles] of pilesByComponent) {
+    const overridesFingerprint = computeOverridesFingerprint(componentPiles);
+    const cached = cacheUsable ? scheduleCache!.componentResults[componentId] : undefined;
+    const result =
+      cached?.overridesFingerprint === overridesFingerprint
+        ? cached
+        : {
+            overridesFingerprint,
+            ...scheduleComponent(componentPiles, pileSteps, templateMap, rawWindows, dayBase, planStart, planEnd, now),
+          };
+    componentResults[componentId] = result;
+    planRows.push(...result.rows);
+    warningPileIds.push(...result.warningPileIds);
+    Object.assign(windowsByMachineId, result.windowsByMachineId);
+  }
+
+  // Dev-time sanity check (design invariant: at most one continuing step per pile per day, and
+  // it's always the last one by sequenceOrder). Structurally guaranteed by scheduleComponent's
+  // loop — this is cheap insurance against a future regression, not required for correctness
+  // today. Runs once over the final merged rows regardless of which components were cache
+  // hits vs freshly computed — it's inherently per-pile, so this is correct either way and also
+  // re-validates cached piles against a future bug in the merge/reuse logic itself.
   const rowsByPile = new Map<string, PreviewPlanStep[]>();
   for (const row of planRows) {
     const list = rowsByPile.get(row.checklistPileId);
@@ -603,19 +796,7 @@ async function buildPlanRowsForPiles(options: {
     }
   }
 
-  const windowsByMachineId: Record<string, EffectivePlanWindow[]> = {};
-  for (const [machineId, windows] of machineWindows) {
-    windowsByMachineId[machineId] = windows
-      .map((w) => ({
-        id: w.id,
-        label: w.label,
-        start: toLocalIsoString(w.start),
-        end: toLocalIsoString(w.end),
-      }))
-      .sort((a, b) => a.start.localeCompare(b.start));
-  }
-
-  return { planRows, warningPileIds, windowsByMachineId };
+  return { planRows, warningPileIds, windowsByMachineId, scheduleCache: { fingerprint, componentResults } };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -632,6 +813,10 @@ export interface GeneratePlanPreviewOptions {
     templateRows?: PlanTemplateRow[];
     rawWindows?: PlanRawWindow[];
   };
+  /** Previous call's BuildPlanRowsResult.scheduleCache — reused for any machine-sharing
+   * component whose piles' stepTrackOverrides didn't change since that call. See
+   * PlanScheduleCache. Omit to always fully recompute. */
+  scheduleCache?: PlanScheduleCache | null;
 }
 
 export async function generatePlanPreview(

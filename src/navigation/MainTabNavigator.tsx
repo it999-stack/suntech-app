@@ -5,7 +5,7 @@ import { getFocusedRouteNameFromRoute, type RouteProp } from '@react-navigation/
 import { MainTabParamList } from '@app-types/navigation';
 import HomeStackNavigator from './Home/HomeStackNavigator';
 import PilesStackNavigator from './Piles/PilesStackNavigator';
-import SiteStackNavigator from './Site/SiteStackNavigator';
+import SiteScreen from '@/screens/Site/SiteScreen';
 import ProfileStackNavigator from './Profile/ProfileStackNavigator';
 import {
   LayoutDashboard,
@@ -58,7 +58,7 @@ export default function MainTabNavigator() {
 
             <Tab.Screen
             name="SiteTab"
-            component={SiteStackNavigator}
+            component={SiteScreen}
             options={{
                 title: 'Site',
                 tabBarIcon: ({ color, size }) => (

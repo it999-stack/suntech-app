@@ -251,10 +251,12 @@ export type NewPilingDailyChecklist = typeof pilingDailyChecklists.$inferInsert;
  * Junction: which personnel hold which role on a given checklist day.
  * role: 'PROJECT_MANAGER' | 'PLANNING_ENGINEER' | 'SHIFT_INCHARGE' | 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR'
  * machineId: set for ENGINEER/SUPERVISOR/MACHINE_OPERATOR rows (→ pilingMachines.id), null otherwise.
- * shiftSlot: set for SHIFT_INCHARGE rows (1 or 2), null otherwise.
+ * shiftSlot: set for SHIFT_INCHARGE/ENGINEER/SUPERVISOR/MACHINE_OPERATOR rows (1 or 2 — every
+ * role except PROJECT_MANAGER/PLANNING_ENGINEER is assigned per shift), null otherwise.
  * A person can have multiple rows on one checklist (e.g. an ENGINEER row per
- * machine in their group) — uniqueness is enforced per-shape by the three
- * partial indexes in db/client.ts, not a single (checklist_id, personnel_id) pair.
+ * machine in their group, or a SUPERVISOR row per rig they cover) —
+ * uniqueness is enforced per-shape by the three partial indexes in
+ * db/client.ts, not a single (checklist_id, personnel_id) pair.
  */
 export const pilingChecklistPersonnel = sqliteTable('pil_checklist_personnel', {
   id: text('id').primaryKey(),
