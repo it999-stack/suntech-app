@@ -4,12 +4,12 @@
 // Orchestrates smaller components: main card, timeline bar, summary accordions,
 // and per-pile accordions.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { AlertTriangle } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import PersonnelPickerList from '@components/shared/PersonnelPickerList';
-import { colors, spacing, typography } from '@/theme/theme';
+import { colors, spacing, typography, radius } from '@/theme/theme';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import {
   matchesRoleDesignation,
@@ -23,6 +23,7 @@ import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { PreviewPile } from '@app-types/previewTypes';
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
+import type { PilingStep } from '@/db/schema';
 import SummaryAccordion from '../preview/SummaryAccordion';
 import CoreTeamAccordion, { type RoleTarget } from '../preview/CoreTeamAccordion';
 import MachineTimelineAccordion from '../preview/MachineTimelineAccordion';
@@ -69,11 +70,14 @@ interface PreviewStepProps {
     updater: Record<string, string[]> | ((prev: Record<string, string[]>) => Record<string, string[]>),
   ) => void;
   planSteps: PlanStepWithMeta[];
-  /** True while the plan preview is (re)generating. Only shows the full-screen spinner on the
-   * very first load (no planSteps yet) — a recompute triggered later (e.g. by a track
-   * reassignment) never blanks the screen; the footer's Save Changes/Generate Plan button is
-   * the only place that shows a pending recompute. */
+  /** True while the plan preview is (re)generating. The very first load (no planSteps
+   * yet) gets a full-screen spinner; a recompute triggered later (e.g. by a track
+   * reassignment) instead fades the Piles accordion with an overlay spinner — see
+   * the isLoading && planSteps.length > 0 branch below. */
   isLoading?: boolean;
+  /** Global step catalog, in sequence order — lets PilesAccordion show every step
+   * selected for this plan, not just the ones that got a scheduled time. */
+  allSteps?: PilingStep[];
   /** Non-working windows actually applied per machine, from generatePlanPreview(). */
   windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
   piles: PreviewPile[];
@@ -98,6 +102,7 @@ export default function PreviewStep({
   onPendingTrackOverridesChange,
   planSteps,
   isLoading,
+  allSteps = [],
   windowsByMachineId,
   piles,
   warningPileCodes = [],
@@ -111,6 +116,28 @@ export default function PreviewStep({
   const [rolePickerTarget, setRolePickerTarget] = useState<RoleTarget | null>(null);
 
   const endIso = planEndTime(draft.planStartTime);
+
+  // Stable Date references for MachineTimelineAccordion — passing `new Date(...)` literals
+  // inline on every render would defeat its own internal useMemos.
+  const windowStart = useMemo(() => new Date(draft.planStartTime), [draft.planStartTime]);
+  const windowEnd = useMemo(() => new Date(endIso), [endIso]);
+
+  // Stable across the component's lifetime (only depends on the setState it wraps) — passed
+  // straight into PilesAccordion so tapping one pile's tile never changes the callback identity
+  // seen by every other pile's memoized row.
+  const handleToggleTrack = useCallback(
+    (checklistPileId: string, stepId: string, track: TrackChoice) => {
+      onPendingTrackOverridesChange((prev) => {
+        const current = prev[checklistPileId] ?? [];
+        const next =
+          track === 'RIG'
+            ? current.includes(stepId) ? current : [...current, stepId]
+            : current.filter((id) => id !== stepId);
+        return { ...prev, [checklistPileId]: next };
+      });
+    },
+    [onPendingTrackOverridesChange],
+  );
 
   const cp = draft.checklistPersonnel;
 
@@ -199,35 +226,6 @@ export default function PreviewStep({
 
   function updatePersonnel(patch: Partial<PlanDraft['checklistPersonnel']>) {
     onUpdate({ checklistPersonnel: { ...cp, ...patch } });
-  }
-
-  // Tap handler for a CRANE-track step's Rig/Crane tiles — mutates only the pending
-  // state owned by GeneratePlanScreen, never onUpdate(), so nothing recomputes until
-  // its Confirm Reassignment action (in the fixed footer) commits it into `draft`.
-  function getTrackChoice(pile: PreviewPile, step: PlanStepWithMeta) {
-    // Deliberately does NOT fall back to step.track when not in the list: that field
-    // only updates on Confirm (the recompute), while taps only touch this pending
-    // list — falling back to it made reverting an already-Rig step back to Crane a
-    // dead end (removing it from the list still read the stale, unconfirmed
-    // step.track === 'RIG'). The list itself is already the full source of truth:
-    // edit-mode reopen reconstructs it from the persisted plan's real assignments
-    // (see GeneratePlanScreen's edit-seeding effect), so it's never missing a
-    // previously-overridden step in the first place.
-    const overridden = pendingTrackOverrides[pile.checklistPileId] ?? [];
-    const selected: TrackChoice = overridden.includes(step.stepId) ? 'RIG' : 'CRANE';
-    return {
-      selected,
-      onSelect: (track: TrackChoice) => {
-        onPendingTrackOverridesChange((prev) => {
-          const current = prev[pile.checklistPileId] ?? [];
-          const next =
-            track === 'RIG'
-              ? current.includes(step.stepId) ? current : [...current, step.stepId]
-              : current.filter((id: string) => id !== step.stepId);
-          return { ...prev, [pile.checklistPileId]: next };
-        });
-      },
-    };
   }
 
   function machineNoFor(machineId: string): string {
@@ -346,8 +344,8 @@ export default function PreviewStep({
 
       {/* ── Visual timeline ─────────────────────────────────────────────── */}
       <MachineTimelineAccordion
-        windowStart={new Date(draft.planStartTime)}
-        windowEnd={new Date(endIso)}
+        windowStart={windowStart}
+        windowEnd={windowEnd}
         steps={planSteps}
         activeRigs={activeRigs}
         activeCranes={activeCranes}
@@ -375,12 +373,27 @@ export default function PreviewStep({
       )}
 
       {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
-      <PilesAccordion
-        piles={piles}
-        planSteps={planSteps}
-        getTrackChoice={getTrackChoice}
-        windowsByMachineId={windowsByMachineId}
-      />
+      <View style={styles.pilesWrap}>
+        <PilesAccordion
+          piles={piles}
+          planSteps={planSteps}
+          overriddenTrackStepIdsByPileId={pendingTrackOverrides}
+          onToggleTrack={handleToggleTrack}
+          windowsByMachineId={windowsByMachineId}
+          allSteps={allSteps}
+          selectedStepIds={draft.selectedStepIds}
+          resumeWorkByPileId={draft.resumeWorkByPileId}
+        />
+        {/* A recompute after the first load (e.g. a track reassignment) fades this
+            section with an overlay spinner instead of blanking the whole screen —
+            the isLoading && planSteps.length === 0 branch above already covers the
+            very first load. */}
+        {isLoading && planSteps.length > 0 && (
+          <View style={styles.pilesOverlay}>
+            <ActivityIndicator size="large" color={colors.accent} />
+          </View>
+        )}
+      </View>
 
       {/* ── Core Team role picker ─────────────────────────────────────────── */}
       <AppModal
@@ -423,5 +436,17 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     marginBottom: 2,
+  },
+  pilesWrap: { position: 'relative' },
+  pilesOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
   },
 });

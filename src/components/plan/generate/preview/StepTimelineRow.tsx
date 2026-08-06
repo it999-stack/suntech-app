@@ -17,6 +17,10 @@ interface StepTimelineRowProps {
   isLast: boolean;
   /** True once this step's actual end time has been recorded. */
   isCompleted?: boolean;
+  /** False for a step that's part of this plan's selected steps but didn't
+   * get a scheduled time (cut off by the plan-window limit) — rendered
+   * faded, with "–" instead of a time range. Defaults to true. */
+  isPlanned?: boolean;
   rigMachineNo: string;
   craneMachineNo: string;
   /** Only provided for CRANE-track steps in an editable (not-yet-confirmed) plan preview —
@@ -29,10 +33,11 @@ interface StepTimelineRowProps {
   };
 }
 
-export default function StepTimelineRow({
+function StepTimelineRow({
   step,
   isLast,
   isCompleted,
+  isPlanned = true,
   rigMachineNo,
   craneMachineNo,
   trackChoice,
@@ -43,7 +48,7 @@ export default function StepTimelineRow({
   const businessTrack = step.businessTrack ?? step.track;
 
   return (
-    <View style={[styles.stepRow, isLast && styles.stepRowLast]}>
+    <View style={[styles.stepRow, isLast && styles.stepRowLast, !isPlanned && styles.stepRowUnplanned]}>
       {businessTrack === 'COMPRESSOR' ? (
         <View style={styles.stepTrackBadge}>
           <Text style={[styles.stepTrackText, styles.trackCompressor]}>{step.track}</Text>
@@ -58,7 +63,9 @@ export default function StepTimelineRow({
       )}
       <View style={styles.stepInfo}>
         <Text style={styles.stepName}>{step.stepName}</Text>
-        {isCompleted ? (
+        {!isPlanned ? (
+          <Text style={styles.stepTimes}>–</Text>
+        ) : isCompleted ? (
           <View style={styles.completedRow}>
             <CheckCircle2 size={12} color={colors.success} />
             <Text style={styles.completedText}>Completed</Text>
@@ -71,12 +78,16 @@ export default function StepTimelineRow({
           </Text>
         )}
       </View>
-      <Text style={styles.stepDuration}>
-        {formatDurationMinutes(step.durationMinutes ?? 0)}
-      </Text>
+      {isPlanned && (
+        <Text style={styles.stepDuration}>
+          {formatDurationMinutes(step.durationMinutes ?? 0)}
+        </Text>
+      )}
     </View>
   );
 }
+
+export default React.memo(StepTimelineRow);
 
 const styles = StyleSheet.create({
   stepRow: {
@@ -88,6 +99,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(28,28,46,0.06)',
   },
   stepRowLast: { borderBottomWidth: 0 },
+  stepRowUnplanned: { opacity: 0.4 },
   stepTrackBadge: {
     borderRadius: radius.sm,
     paddingHorizontal: spacing.xs,

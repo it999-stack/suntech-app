@@ -7,7 +7,7 @@ import type { StepResult } from '@sync/bootstrap/syncResult';
 import { apiClient } from '@services/apiClient';
 
 import { saveSteps } from '@repositories/stepsRepository';
-import { saveDurationTemplates } from '@repositories/durationTemplatesRepository';
+import { deleteDurationTemplatesForSite, saveDurationTemplates } from '@repositories/durationTemplatesRepository';
 
 import type {
   NewPilingStep,
@@ -29,6 +29,10 @@ export class SyncStepsStep implements ISyncStep {
       const templates: NewPilingStepDurationTemplate[] = [];
 
       for (const step of data as any[]) {
+        // Steps with no templates for this site aren't configured here — skip
+        // so the local cache only ever holds this site's steps/durations.
+        if (!step.templates?.length) continue;
+
         steps.push({
           id: step.id,
           stepName: step.step_name,
@@ -49,6 +53,10 @@ export class SyncStepsStep implements ISyncStep {
       }
 
       await saveSteps(steps);
+      // Bootstrap always has the site's full current template set, so it's
+      // safe to purge stale rows here (unlike deltaPull, which only ever has
+      // a partial batch — see saveDurationTemplates's doc comment).
+      await deleteDurationTemplatesForSite(ctx.siteId);
       await saveDurationTemplates(templates);
 
       return {

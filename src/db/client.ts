@@ -12,7 +12,7 @@ export let db: ReturnType<typeof drizzle>;
 let _db: ReturnType<typeof drizzle> | null = null;
 
 // ─── DEV RESET FLAG ───────────────────────────────────────────────────────────
-const DEV_RESET_DB = true;
+const DEV_RESET_DB = false;
 // ─────────────────────────────────────────────────────────────────────────────
 /**
  * Opens (or creates) the local SQLite database and runs the schema

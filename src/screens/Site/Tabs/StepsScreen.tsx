@@ -12,8 +12,17 @@ import type { TemplateWithDimension } from '@repositories/stepsRepository';
 import type { PilingStep } from '@/db/schema';
 import { TRACK_META } from '@/utils/trackMeta';
 import { formatDurationLong } from '@/utils/formatTime';
+import { useAuthStore } from '@store/authStore';
 
-function StepCard({ step, templates }: { step: PilingStep; templates: TemplateWithDimension[] }) {
+function StepCard({
+  step,
+  displayNumber,
+  templates,
+}: {
+  step: PilingStep;
+  displayNumber: number;
+  templates: TemplateWithDimension[];
+}) {
   const meta = TRACK_META[step.track as keyof typeof TRACK_META] ?? TRACK_META.RIG;
   const Icon = meta.icon;
 
@@ -21,7 +30,7 @@ function StepCard({ step, templates }: { step: PilingStep; templates: TemplateWi
     <GlassCard innerStyle={styles.card}>
       <View style={styles.headerRow}>
         <View style={[styles.numBadge, { backgroundColor: meta.color }]}>
-          <Text style={styles.numText}>{step.sequenceOrder}</Text>
+          <Text style={styles.numText}>{displayNumber}</Text>
         </View>
         <Text style={styles.stepName} numberOfLines={1}>
           {step.stepName}
@@ -57,19 +66,21 @@ function StepCard({ step, templates }: { step: PilingStep; templates: TemplateWi
 }
 
 export default function StepsScreen() {
+  const siteId = useAuthStore((s) => s.user?.siteId);
   const [steps, setSteps] = useState<PilingStep[]>([]);
   const [templates, setTemplates] = useState<TemplateWithDimension[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([getSteps(), getAllTemplatesWithDimensions()])
+    if (!siteId) { setLoading(false); return; }
+    Promise.all([getSteps(), getAllTemplatesWithDimensions(siteId)])
       .then(([stepRows, templateRows]) => {
         setSteps(stepRows);
         setTemplates(templateRows);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [siteId]);
 
   const templatesByStepId = useMemo(() => {
     const map = new Map<string, TemplateWithDimension[]>();
@@ -104,8 +115,8 @@ export default function StepsScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <StepCard step={item} templates={templatesByStepId.get(item.id) ?? []} />
+            renderItem={({ item, index }) => (
+              <StepCard step={item} displayNumber={index + 1} templates={templatesByStepId.get(item.id) ?? []} />
             )}
           />
         )}

@@ -62,7 +62,7 @@ function Tile({
   );
 }
 
-export default function TrackChoiceTiles({
+function TrackChoiceTiles({
   rigMachineNo,
   craneMachineNo,
   selected,
@@ -87,6 +87,8 @@ export default function TrackChoiceTiles({
     </View>
   );
 }
+
+export default React.memo(TrackChoiceTiles);
 
 const styles = StyleSheet.create({
   row: {

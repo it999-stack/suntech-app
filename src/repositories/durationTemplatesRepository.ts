@@ -1,8 +1,10 @@
 // src/repositories/durationTemplatesRepository.ts
 // Local SQLite access for piling_step_duration_templates.
 
+import { eq, inArray } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
+  pilingDimensions,
   pilingStepDurationTemplates,
   type NewPilingStepDurationTemplate,
   type PilingStepDurationTemplate,
@@ -39,9 +41,47 @@ export async function saveDurationTemplates(
 }
 
 /**
- * Returns all duration templates (used by planner).
+ * Returns all duration templates for a single site (joins through
+ * dimensionId -> pilingDimensions.siteId, since the template table itself
+ * has no site_id column).
  */
-export async function getAllDurationTemplates(): Promise<PilingStepDurationTemplate[]> {
+export async function getAllDurationTemplates(siteId: string): Promise<PilingStepDurationTemplate[]> {
   const db = await initDb();
-  return db.select().from(pilingStepDurationTemplates).all();
+  return db
+    .select({
+      id: pilingStepDurationTemplates.id,
+      stepId: pilingStepDurationTemplates.stepId,
+      dimensionId: pilingStepDurationTemplates.dimensionId,
+      durationMinutes: pilingStepDurationTemplates.durationMinutes,
+      bufferBeforeMinutes: pilingStepDurationTemplates.bufferBeforeMinutes,
+      syncedAt: pilingStepDurationTemplates.syncedAt,
+      updatedAt: pilingStepDurationTemplates.updatedAt,
+    })
+    .from(pilingStepDurationTemplates)
+    .innerJoin(pilingDimensions, eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id))
+    .where(eq(pilingDimensions.siteId, siteId))
+    .all();
+}
+
+/**
+ * Deletes every local duration-template row belonging to the given site
+ * (via dimensionId -> pilingDimensions.siteId). Only safe to call from a
+ * bootstrap sync that immediately re-inserts the site's full current set —
+ * see the caller in syncSteps.ts.
+ */
+export async function deleteDurationTemplatesForSite(siteId: string): Promise<void> {
+  const db = await initDb();
+
+  const dims = await db
+    .select({ id: pilingDimensions.id })
+    .from(pilingDimensions)
+    .where(eq(pilingDimensions.siteId, siteId))
+    .all();
+
+  const dimensionIds = dims.map((d) => d.id);
+  if (!dimensionIds.length) return;
+
+  await db
+    .delete(pilingStepDurationTemplates)
+    .where(inArray(pilingStepDurationTemplates.dimensionId, dimensionIds));
 }

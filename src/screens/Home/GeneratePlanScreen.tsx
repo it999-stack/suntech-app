@@ -264,9 +264,11 @@ export default function GeneratePlanScreen() {
 
     try {
       await generatePlan(siteId, input);
+      setConfirmModalVisible(false);
       navigation.goBack();
     } catch {
-      // error surfaced via planError from PlanContext
+      // error surfaced via planError from PlanContext; modal stays open (loading
+      // resets via isGenerating) so the user can see the failure and retry/cancel.
     }
   }
 
@@ -284,6 +286,27 @@ export default function GeneratePlanScreen() {
     builtPreviewPiles, setEditingMachineId, editingMachine,
     pilesForMachine, handleReorderMachine,
   } = usePreviewReorder({ draft, updateDraft, selectedPlanPiles, rigs, cranes, activeRigs, activeCranes });
+
+  // Shaped/derived views of otherwise-stable data, memoized so PreviewStep (and the
+  // memoized PilePreviewPage rows beneath it) see the same prop reference across
+  // re-renders that don't actually touch rigs/cranes/shifts/warnings — e.g. tapping a
+  // Rig/Crane tile on one pile shouldn't invalidate every other pile's memoized row.
+  const previewActiveRigs = useMemo(
+    () => activeRigs.map((r) => ({ id: r.id, machineNo: r.machineNo, type: 'RIG' as const })),
+    [activeRigs],
+  );
+  const previewActiveCranes = useMemo(
+    () => activeCranes.map((c) => ({ id: c.id, machineNo: c.machineNo, type: 'CRANE' as const })),
+    [activeCranes],
+  );
+  const previewShifts = useMemo(
+    () => shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })),
+    [shifts],
+  );
+  const previewWarningPileCodes = useMemo(
+    () => piles.filter((p) => previewWarningPileIds.includes(p.id)).map((p) => p.code),
+    [piles, previewWarningPileIds],
+  );
 
   if (dataLoading || editSeeding) {
     return (
@@ -395,30 +418,16 @@ export default function GeneratePlanScreen() {
                 onPendingTrackOverridesChange={setPendingTrackOverrides}
                 planSteps={previewSteps}
                 isLoading={previewRecomputing}
+                allSteps={steps}
                 windowsByMachineId={previewWindowsByMachineId}
                 piles={builtPreviewPiles}
                 onEditMachine={setEditingMachineId}
                 onNavigateToStep={(s) => setStep(s)}
-                activeRigs={rigs.filter((r) => draft.activeRigIds.includes(r.id)).map((r) => ({
-                  id: r.id,
-                  machineNo: r.machineNo,
-                  type: 'RIG' as const,
-                }))}
-                activeCranes={cranes.filter((c) => draft.activeCraneIds.includes(c.id)).map((c) => ({
-                  id: c.id,
-                  machineNo: c.machineNo,
-                  type: 'CRANE' as const,
-                }))}
+                activeRigs={previewActiveRigs}
+                activeCranes={previewActiveCranes}
                 personnel={simplePersonnel}
-                shifts={shifts.map((s) => ({
-                  id: s.id,
-                  name: s.name,
-                  startTime: s.startTime,
-                  endTime: s.endTime,
-                }))}
-                warningPileCodes={piles
-                  .filter((p) => previewWarningPileIds.includes(p.id))
-                  .map((p) => p.code)}
+                shifts={previewShifts}
+                warningPileCodes={previewWarningPileCodes}
               />
             )}
 
@@ -458,9 +467,10 @@ export default function GeneratePlanScreen() {
         <EditConfirmModal
           visible={confirmModalVisible}
           onClose={() => setConfirmModalVisible(false)}
-          onConfirm={() => { setConfirmModalVisible(false); handleGenerate(); }}
+          onConfirm={handleGenerate}
           date={draft.date}
           today={today}
+          loading={isGenerating}
         />
 
         {editingMachine ? (

@@ -1,10 +1,7 @@
 // src/screens/Home/generatePlan/EditConfirmModal.tsx
-//
-// "Save Changes?" confirmation shown before committing an edit to an
-// existing plan (GeneratePlanScreen in edit mode).
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { AlertTriangle } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@/theme/theme';
@@ -15,15 +12,18 @@ interface Props {
   onConfirm: () => void;
   date: string;
   today: string;
+  loading?: boolean;
 }
 
-export default function EditConfirmModal({ visible, onClose, onConfirm, date, today }: Props) {
+export default function EditConfirmModal({ visible, onClose, onConfirm, date, today, loading = false }: Props) {
   const isToday = date === today;
+  const handleClose = loading ? () => {} : onClose;
 
   return (
     <AppModal
       visible={visible}
-      onClose={onClose}
+      onClose={handleClose}
+      position="center"
       title="Save Changes?"
       subtitle={`You are about to update the existing plan for ${isToday ? 'today' : date}.`}
     >
@@ -40,11 +40,23 @@ export default function EditConfirmModal({ visible, onClose, onConfirm, date, to
           Any existing actual progress data will be preserved.
         </Text>
         <View style={styles.confirmActions}>
-          <Pressable style={styles.cancelBtn} onPress={onClose}>
+          <Pressable
+            style={[styles.cancelBtn, loading && styles.cancelBtnDisabled]}
+            onPress={handleClose}
+            disabled={loading}
+          >
             <Text style={styles.cancelText}>Cancel</Text>
           </Pressable>
-          <Pressable style={styles.saveBtn} onPress={onConfirm}>
-            <Text style={styles.saveText}>Save Changes</Text>
+          <Pressable
+            style={[styles.saveBtn, loading && styles.saveBtnDisabled]}
+            onPress={onConfirm}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color={colors.white} />
+            ) : (
+              <Text style={styles.saveText}>Save Changes</Text>
+            )}
           </Pressable>
         </View>
       </View>
@@ -55,7 +67,7 @@ export default function EditConfirmModal({ visible, onClose, onConfirm, date, to
 const styles = StyleSheet.create({
   confirmBody: {
     alignItems: 'center',
-    paddingVertical: spacing.lg,
+    paddingTop: spacing.lg,
   },
   confirmIconWrap: {
     width: 56,
@@ -92,6 +104,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     alignItems: 'center',
   },
+  cancelBtnDisabled: {
+    opacity: 0.5,
+  },
   cancelText: {
     ...typography.body,
     fontWeight: '600',
@@ -103,6 +118,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     paddingVertical: spacing.md,
     alignItems: 'center',
+  },
+  saveBtnDisabled: {
+    opacity: 0.7,
   },
   saveText: {
     ...typography.body,

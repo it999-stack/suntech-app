@@ -1,7 +1,7 @@
 // src/repositories/stepsRepository.ts
 // CRUD for piling_steps and piling_step_duration_templates in local SQLite.
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { initDb } from '@/db/client';
 import {
   pilingSteps,
@@ -25,15 +25,27 @@ export async function getSteps(): Promise<PilingStep[]> {
     .orderBy(pilingSteps.sequenceOrder);
 }
 
-/** Returns duration templates for a single step (raw rows — no join). */
+/** Returns duration templates for a single step, scoped to a site (joins
+ * through dimensionId -> pilingDimensions.siteId, since the template table
+ * itself has no site_id column). */
 export async function getTemplatesForStep(
   stepId: string,
+  siteId: string,
 ): Promise<PilingStepDurationTemplate[]> {
   const db = await initDb();
   return db
-    .select()
+    .select({
+      id: pilingStepDurationTemplates.id,
+      stepId: pilingStepDurationTemplates.stepId,
+      dimensionId: pilingStepDurationTemplates.dimensionId,
+      durationMinutes: pilingStepDurationTemplates.durationMinutes,
+      bufferBeforeMinutes: pilingStepDurationTemplates.bufferBeforeMinutes,
+      syncedAt: pilingStepDurationTemplates.syncedAt,
+      updatedAt: pilingStepDurationTemplates.updatedAt,
+    })
     .from(pilingStepDurationTemplates)
-    .where(eq(pilingStepDurationTemplates.stepId, stepId));
+    .innerJoin(pilingDimensions, eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id))
+    .where(and(eq(pilingStepDurationTemplates.stepId, stepId), eq(pilingDimensions.siteId, siteId)));
 }
 
 /**
@@ -47,6 +59,7 @@ export type TemplateWithDimension = PilingStepDurationTemplate & {
 
 export async function getTemplatesWithDimensions(
   stepId: string,
+  siteId: string,
 ): Promise<TemplateWithDimension[]> {
   const db = await initDb();
 
@@ -71,11 +84,11 @@ export async function getTemplatesWithDimensions(
       dimDeletedAt: pilingDimensions.deletedAt,
     })
     .from(pilingStepDurationTemplates)
-    .leftJoin(
+    .innerJoin(
       pilingDimensions,
       eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id),
     )
-    .where(eq(pilingStepDurationTemplates.stepId, stepId))
+    .where(and(eq(pilingStepDurationTemplates.stepId, stepId), eq(pilingDimensions.siteId, siteId)))
     .orderBy(pilingDimensions.dia, pilingDimensions.depth);
 
   return rows.map((r) => ({
@@ -106,7 +119,7 @@ export async function getTemplatesWithDimensions(
  * dia/depth. Used to show all steps' templates inline in one screen without a
  * per-step drill-down.
  */
-export async function getAllTemplatesWithDimensions(): Promise<TemplateWithDimension[]> {
+export async function getAllTemplatesWithDimensions(siteId: string): Promise<TemplateWithDimension[]> {
   const db = await initDb();
 
   const rows = await db
@@ -128,10 +141,11 @@ export async function getAllTemplatesWithDimensions(): Promise<TemplateWithDimen
       dimDeletedAt: pilingDimensions.deletedAt,
     })
     .from(pilingStepDurationTemplates)
-    .leftJoin(
+    .innerJoin(
       pilingDimensions,
       eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id),
     )
+    .where(eq(pilingDimensions.siteId, siteId))
     .orderBy(pilingDimensions.dia, pilingDimensions.depth);
 
   return rows.map((r) => ({

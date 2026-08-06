@@ -92,7 +92,7 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
       </View>
 
       <View style={styles.list}>
-        {steps.map((step) => {
+        {steps.map((step, index) => {
           const selected = selectedSet.has(step.id);
           const locked = lockedStepIds.has(step.id) && selected;
           const meta = TRACK_META[step.track as keyof typeof TRACK_META] ?? TRACK_META.RIG;
@@ -109,7 +109,7 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
               <GlassCard innerStyle={styles.card}>
                 <View style={styles.headerRow}>
                   <View style={[styles.numBadge, { backgroundColor: meta.color }]}>
-                    <Text style={styles.numText}>{step.sequenceOrder}</Text>
+                    <Text style={styles.numText}>{index + 1}</Text>
                   </View>
                   <Text style={styles.stepName} numberOfLines={1}>
                     {step.stepName}

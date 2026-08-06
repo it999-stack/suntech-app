@@ -8,7 +8,6 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Accordion from '@components/shared/Accordion';
 import StepTimelineRow from './StepTimelineRow';
-import { fmtDuration } from '@/types/plan';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { PreviewPile } from '@app-types/previewTypes';
 import { colors, spacing, typography } from '@/theme/theme';

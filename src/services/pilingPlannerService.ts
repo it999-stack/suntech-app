@@ -867,8 +867,6 @@ export async function generatePlan(
       checklistPileId: cp.id,
       pileId: pile.id,
       pileIdCode: pile.pileIdCode,
-      // FIX: piling_piles has no dia/depth columns — dimensionId is the
-      // direct FK and is all the planner needs.
       dimensionId: pile.dimensionId,
       rigId: cp.rigId,
       craneId: cp.craneId,
