@@ -1,30 +1,28 @@
 // src/screens/Piles/PilesScreen.tsx
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  ScrollView,
-  FlatList,
-  StyleSheet,
-  ActivityIndicator,
-  LayoutAnimation,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, LayoutAnimation } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, X } from 'lucide-react-native';
-import PileRow, { type PileRowData } from '@components/piles/PileRow';
+import { useFocusEffect } from '@react-navigation/native';
 import PileStepsModal, { type CompletedStepRow } from '@components/piles/PileStepsModal';
 import { colors, spacing, radius, typography } from '@theme/theme';
-import { usePilesAreasStore } from '@store/pilesAreasStore';
+import {
+  getPilesBySiteWithDimensionsPage,
+  getPileCountsByLocationForSite,
+  type PileWithDimension,
+} from '@repositories/pilesRepository';
+import { getLocationsBySite } from '@repositories/locationsRepository';
+import type { PilingLocation } from '@db/schema';
 import { usePlan } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
 import EmptyState from '@/components/shared/EmptyState';
+import SearchToggleField from '@components/shared/SearchToggleField';
+import LocationFilterPillRow from '@components/shared/LocationFilterPillRow';
+import PileGridCard from '@components/shared/PileGridCard';
+import Pager from '@components/shared/Pager';
 import { derivePileStatus } from '@utils/helpers';
-
-const PAGE_SIZE = 50;
+import { useAppConfig } from '@state/AppConfigContext';
 
 // Steps carry plannedStart/plannedEnd as ISO-ish datetime strings, so a
 // straight ascending string/Date comparison sorts them chronologically.
@@ -39,32 +37,111 @@ function byPlannedStartAsc<T extends { plannedStart?: string }>(a: T, b: T): num
 
 export default function PilesScreen() {
   const user = useAuthStore((s) => s.user);
-
-  const { piles, areas, dimensions, isLoading: pilesLoading, error, loadAll } = usePilesAreasStore();
+  const siteId = user?.siteId;
   const { checklistPiles, planSteps, actualSteps } = usePlan();
-
-  useEffect(() => {
-    loadAll(user?.siteId);
-  }, [user?.siteId, loadAll]);
+  const { config } = useAppConfig();
 
   const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [activeDimensionId, setActiveDimensionId] = useState<string>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [activeLocationId, setActiveLocationId] = useState('all');
+  const [page, setPage] = useState(1);
+  const [items, setItems] = useState<PileWithDimension[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+
+  const [locations, setLocations] = useState<PilingLocation[]>([]);
+  const [countByLocationId, setCountByLocationId] = useState<Record<string, number>>({});
+  const [totalPileCount, setTotalPileCount] = useState(0);
+
+  // Tab screens stay mounted when you switch tabs, so a manual sync on the
+  // Profile tab wouldn't otherwise be reflected here without leaving and
+  // re-entering the tab — bump a tick on every focus to force a refetch.
+  const [refreshTick, setRefreshTick] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      setRefreshTick((t) => t + 1);
+    }, []),
+  );
 
   function toggleSearch(): void {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     if (searchOpen) {
-      setQuery('');
+      setSearchInput('');
+      setDebouncedSearch('');
       setSearchOpen(false);
     } else {
       setSearchOpen(true);
     }
   }
 
-  // ── Lookups ──────────────────────────────────────────────────────────────
-  const areaNameById = useMemo(() => new Map(areas.map((a) => [a.id, a.name])), [areas]);
-  const pileById = useMemo(() => new Map(piles.map((p) => [p.id, p])), [piles]);
+  // Debounce the raw input before it drives a query — every keystroke would
+  // otherwise fire a fresh SQL round-trip.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), config.pilesSearchDebounceMs);
+    return () => clearTimeout(t);
+  }, [searchInput, config.pilesSearchDebounceMs]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, activeLocationId]);
+
+  useEffect(() => {
+    if (!siteId) return;
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    getPilesBySiteWithDimensionsPage({
+      siteId,
+      search: debouncedSearch,
+      locationId: activeLocationId,
+      page,
+      pageSize: config.pilesPageSize,
+    })
+      .then((result) => {
+        if (requestIdRef.current !== requestId) return; // stale response, drop it
+        setItems(result.items);
+        setTotal(result.total);
+        setError(null);
+        setLoading(false);
+        setInitialLoading(false);
+      })
+      .catch(() => {
+        if (requestIdRef.current !== requestId) return;
+        setError('Failed to load piles.');
+        setLoading(false);
+        setInitialLoading(false);
+      });
+  }, [siteId, debouncedSearch, activeLocationId, page, refreshTick, config.pilesPageSize]);
+
+  // Locations + per-location pile counts for the filter pill row — fetched
+  // once per site/focus (not per keystroke/page), independent of search text.
+  useEffect(() => {
+    if (!siteId) return;
+    let cancelled = false;
+    Promise.all([getLocationsBySite(siteId), getPileCountsByLocationForSite(siteId)]).then(([locationRows, counts]) => {
+      if (cancelled) return;
+      setLocations(locationRows);
+      const byId: Record<string, number> = {};
+      let sum = 0;
+      for (const c of counts) {
+        sum += c.count;
+        if (c.locationId) byId[c.locationId] = c.count;
+      }
+      setCountByLocationId(byId);
+      setTotalPileCount(sum);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [siteId, refreshTick]);
+
+  const totalPages = Math.max(1, Math.ceil(total / config.pilesPageSize));
+
+  // ── Status lookups (today's checklist only — small, independent of how
+  // many piles are currently paged in) ────────────────────────────────────
   const checklistPileByPileId = useMemo(
     () => new Map(checklistPiles.map((cp) => [cp.pileId, cp])),
     [checklistPiles],
@@ -88,7 +165,7 @@ export default function PilesScreen() {
     return map;
   }, [actualSteps]);
 
-  function statusForPile(pileId: string): PileRowData['status'] {
+  function statusForPile(pileId: string): 'pending' | 'in_progress' | 'completed' {
     const cp = checklistPileByPileId.get(pileId);
     if (!cp) return 'pending';
     const steps = planStepsByChecklistPileId.get(cp.id) ?? [];
@@ -96,71 +173,8 @@ export default function PilesScreen() {
     return derivePileStatus(steps.length, actuals);
   }
 
-  // ── Dimension pills ──────────────────────────────────────────────────────
-  const pileCountByDimensionId = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const p of piles) map[p.dimensionId] = (map[p.dimensionId] ?? 0) + 1;
-    return map;
-  }, [piles]);
-
-  const dimensionOptions = useMemo(
-    () => dimensions.filter((d) => (pileCountByDimensionId[d.id] ?? 0) > 0),
-    [dimensions, pileCountByDimensionId],
-  );
-
-  // ── Row data + filtering ─────────────────────────────────────────────────
-  const rows = useMemo<PileRowData[]>(
-    () =>
-      piles.map((p) => ({
-        id: p.id,
-        code: p.code,
-        dia: p.dia,
-        depth: p.depth,
-        areaName: p.areaId ? areaNameById.get(p.areaId) ?? null : null,
-        status: statusForPile(p.id),
-      })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [piles, areaNameById, checklistPileByPileId, planStepsByChecklistPileId, actualsByChecklistPileId],
-  );
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      const matchesQuery = !q || r.code.toLowerCase().includes(q);
-      const matchesDimension =
-        activeDimensionId === 'all' || pileById.get(r.id)?.dimensionId === activeDimensionId;
-      return matchesQuery && matchesDimension;
-    });
-  }, [rows, query, activeDimensionId, pileById]);
-
-  // ── Pagination (batches of 50, guarded against duplicate onEndReached) ──
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const loadingMoreRef = useRef(false);
-
-  useEffect(() => {
-    setVisibleCount(PAGE_SIZE);
-    loadingMoreRef.current = false;
-    setLoadingMore(false);
-  }, [query, activeDimensionId]);
-
-  useEffect(() => {
-    loadingMoreRef.current = false;
-    setLoadingMore(false);
-  }, [visibleCount]);
-
-  function handleEndReached() {
-    if (loadingMoreRef.current) return;
-    if (visibleCount >= filtered.length) return;
-    loadingMoreRef.current = true;
-    setLoadingMore(true);
-    setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length));
-  }
-
-  const visibleRows = filtered.slice(0, visibleCount);
-
   // ── Steps modal (computed lazily, only for the tapped pile) ─────────────
-  const [selectedPile, setSelectedPile] = useState<PileRowData | null>(null);
+  const [selectedPile, setSelectedPile] = useState<PileWithDimension | null>(null);
 
   const selectedPileSteps = useMemo<CompletedStepRow[]>(() => {
     if (!selectedPile) return [];
@@ -184,10 +198,8 @@ export default function PilesScreen() {
       .filter((s): s is CompletedStepRow => s !== null);
   }, [selectedPile, checklistPileByPileId, planStepsByChecklistPileId, actualsByChecklistPileId]);
 
-  const shownCount = filtered.length;
-
   // ── Loading ─────────────────────────────────────────────────────────────
-  if (pilesLoading) {
+  if (initialLoading) {
     return (
       <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
         <SafeAreaView style={[styles.flex, styles.center]} edges={['top']}>
@@ -209,66 +221,64 @@ export default function PilesScreen() {
           <View style={styles.titleRow}>
             <Text style={styles.h1}>Piles</Text>
             <View style={styles.countBadge}>
-              <Text style={styles.countText}>{shownCount} shown</Text>
+              <Text style={styles.countText}>{total} shown</Text>
             </View>
           </View>
 
-          <View style={styles.toolbarRow}>
-            <View style={styles.flexSlot}>
-              {searchOpen ? (
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search piles by code"
-                  placeholderTextColor={colors.textSecondary}
-                  style={styles.input}
-                  autoFocus
-                  returnKeyType="search"
-                />
-              ) : dimensionOptions.length > 0 ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-                  <Pill
-                    label={`All (${piles.length})`}
-                    active={activeDimensionId === 'all'}
-                    onPress={() => setActiveDimensionId('all')}
-                  />
-                  {dimensionOptions.map((d) => (
-                    <Pill
-                      key={d.id}
-                      label={`${d.label && d.label.trim() ? d.label : `Ø${d.dia}mm · ${d.depth}m`} (${pileCountByDimensionId[d.id] ?? 0})`}
-                      active={activeDimensionId === d.id}
-                      onPress={() => setActiveDimensionId(d.id)}
-                    />
-                  ))}
-                </ScrollView>
-              ) : null}
-            </View>
-
-            <Pressable style={styles.iconBtn} onPress={toggleSearch} hitSlop={spacing.sm}>
-              {searchOpen ? <X size={16} color={colors.textSecondary} /> : <Search size={16} color={colors.textSecondary} />}
-            </Pressable>
-          </View>
+          <SearchToggleField
+            value={searchInput}
+            onChangeText={setSearchInput}
+            placeholder="Search piles by code"
+            icon={searchOpen ? 'x' : 'search'}
+            onIconPress={toggleSearch}
+            showField={searchOpen}
+            autoFocus
+            collapsedContent={
+              <LocationFilterPillRow
+                locations={locations}
+                countByLocationId={countByLocationId}
+                totalCount={totalPileCount}
+                activeLocationId={activeLocationId}
+                onLocationChange={setActiveLocationId}
+              />
+            }
+          />
         </View>
 
-        {/* Paginated list */}
+        {/* Paginated grid */}
         <FlatList
-          data={visibleRows}
+          data={items}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <PileRow pile={item} onPress={() => setSelectedPile(item)} />}
+          numColumns={2}
+          columnWrapperStyle={styles.columnWrapper}
+          renderItem={({ item }) => (
+            <PileGridCard
+              code={item.pileIdCode}
+              dia={item.dia}
+              depth={item.depth}
+              area={item.area}
+              badge="none"
+              completed={statusForPile(item.id) === 'completed'}
+              onPress={() => setSelectedPile(item)}
+            />
+          )}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          onEndReachedThreshold={0.4}
-          onEndReached={handleEndReached}
           ListHeaderComponent={error ? <Text style={styles.errorText}>⚠ {error}</Text> : null}
-          ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={colors.accent} style={styles.footerSpinner} /> : null}
+          ListFooterComponent={
+            <View style={styles.pagerRow}>
+              {loading && <ActivityIndicator size="small" color={colors.accent} style={styles.pagerSpinner} />}
+              <Pager page={page} totalPages={totalPages} onPageChange={setPage} />
+            </View>
+          }
           ListEmptyComponent={
             !error ? (
               <EmptyState
-                icon={piles.length === 0 ? 'download' : 'search'}
-                title={piles.length === 0 ? 'No piles synced' : 'No matches'}
+                icon={totalPileCount === 0 ? 'download' : 'search'}
+                title={totalPileCount === 0 ? 'No piles synced' : 'No matches'}
                 message={
-                  piles.length === 0
+                  totalPileCount === 0
                     ? 'No piles synced yet. Pull data from the Profile tab.'
                     : 'No piles match your search or filter.'
                 }
@@ -280,19 +290,11 @@ export default function PilesScreen() {
         <PileStepsModal
           visible={!!selectedPile}
           onClose={() => setSelectedPile(null)}
-          pileCode={selectedPile?.code ?? ''}
+          pileCode={selectedPile?.pileIdCode ?? ''}
           steps={selectedPileSteps}
         />
       </SafeAreaView>
     </LinearGradient>
-  );
-}
-
-function Pill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable style={[styles.pill, active && styles.pillActive]} onPress={onPress}>
-      <Text style={[styles.pillText, active && styles.pillTextActive]} numberOfLines={1}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -329,57 +331,21 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
 
-  toolbarRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  flexSlot: { flex: 1, minWidth: 0, justifyContent: 'center' },
-  input: {
-    ...typography.caption,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.glassFillStrong,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    color: colors.textPrimary,
-  },
-  iconBtn: {
-    padding: spacing.sm,
-    aspectRatio: 1,
-    borderRadius: radius.md,
-    backgroundColor: colors.glassFillStrong,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  pill: {
-    minWidth: 84,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: colors.glassFill,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  pillText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  pillTextActive: { color: colors.textInverse },
+  columnWrapper: { gap: spacing.sm },
 
   listContent: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.xxxl,
+    gap: spacing.sm,
   },
 
-  footerSpinner: {
-    marginVertical: spacing.lg,
+  pagerRow: {
+    marginTop: spacing.sm,
+    alignItems: 'center',
+    gap: spacing.xs,
   },
+  pagerSpinner: { marginBottom: spacing.xs },
 
   emptyText: {
     ...typography.body,

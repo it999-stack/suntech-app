@@ -90,6 +90,20 @@ export interface SyncConflict {
   current_updated_at: string;
 }
 
+/**
+ * Echoes back the fresh `updated_at` for a row this push actually wrote,
+ * keyed by the id this client submitted it under — lets the client advance
+ * its local optimistic-concurrency cache (pileActualSteps.serverUpdatedAt /
+ * pilingChecklistPiles.serverUpdatedAt) immediately instead of waiting on
+ * the next pull, which closes the window where a client's own rapid
+ * back-to-back edits could get rejected as a false self-conflict.
+ */
+export interface SyncedVersion {
+  entity: 'actual_step' | 'checklist_pile';
+  id: string;
+  updated_at: string;
+}
+
 export interface SyncAppPlanResponse {
   success: boolean;
   checklists_synced: number;
@@ -98,4 +112,5 @@ export interface SyncAppPlanResponse {
   machine_events_synced: number;
   errors?: Array<{ checklist_id: string; error: string }>;
   conflicts?: SyncConflict[];
+  synced_versions?: SyncedVersion[];
 }

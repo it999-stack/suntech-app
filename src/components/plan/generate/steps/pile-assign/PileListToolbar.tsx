@@ -7,7 +7,7 @@ import { colors, spacing, radius, typography } from '@theme/theme';
 import FilterMenuButton, { type FilterMenuOption } from '@components/shared/FilterMenuButton';
 import type { PileFilter } from './types';
 
-export interface AreaFilterOption { id: string; name: string; }
+export interface LocationFilterOption { id: string; name: string; }
 
 interface PileListToolbarProps {
   search: string;
@@ -17,15 +17,15 @@ interface PileListToolbarProps {
   allCount: number;
   pendingCount: number;
   assignedCount: number;
-  areas: AreaFilterOption[];
-  pileCountByAreaId: Record<string, number>;
-  activeAreaId: string;
-  onAreaChange: (areaId: string) => void;
+  locations: LocationFilterOption[];
+  pileCountByLocationId: Record<string, number>;
+  activeLocationId: string;
+  onLocationChange: (locationId: string) => void;
 }
 
 export default function PileListToolbar({
   search, onSearchChange, filter, onFilterChange, allCount, pendingCount, assignedCount,
-  areas, pileCountByAreaId, activeAreaId, onAreaChange,
+  locations, pileCountByLocationId, activeLocationId, onLocationChange,
 }: PileListToolbarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -54,14 +54,14 @@ export default function PileListToolbar({
             autoFocus
             returnKeyType="search"
           />
-        ) : areas.length > 0 ? (
+        ) : locations.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-            {areas.map((area) => (
+            {locations.map((location) => (
               <Pill
-                key={area.id}
-                label={`${area.name} (${pileCountByAreaId[area.id] ?? 0})`}
-                active={activeAreaId === area.id}
-                onPress={() => onAreaChange(area.id)}
+                key={location.id}
+                label={`${location.name} (${pileCountByLocationId[location.id] ?? 0})`}
+                active={activeLocationId === location.id}
+                onPress={() => onLocationChange(location.id)}
               />
             ))}
           </ScrollView>

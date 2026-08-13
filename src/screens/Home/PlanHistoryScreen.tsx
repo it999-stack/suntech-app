@@ -120,71 +120,71 @@ export default function PlanHistoryScreen() {
           <Text style={styles.pageTitle}>Plan History</Text>
         </View>
 
-        {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color={colors.accent} />
-            <Text style={styles.loadingText}>Loading plans…</Text>
-          </View>
-        ) : summaries.length === 0 ? (
-          <GlassCard>
+        <View style={styles.bodyArea}>
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color={colors.accent} />
+              <Text style={styles.loadingText}>Loading plans…</Text>
+            </View>
+          ) : summaries.length === 0 ? (
             <EmptyState icon="calendar" title="No plans yet" message="No plans found for this site yet." />
-          </GlassCard>
-        ) : (
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {summaries.map((cl) => {
-              const st = statusConfig(cl.status);
-              const showBar = cl.status !== 'upcoming';
-              const subParts = [`${cl.pileCount} pile${cl.pileCount === 1 ? '' : 's'} planned`];
-              if (cl.status !== 'upcoming' && cl.status !== 'not_started') {
-                subParts.push(`${cl.completionPercent}% complete`);
-                if (cl.varianceLabel) subParts.push(cl.varianceLabel);
-              }
+          ) : (
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+              {summaries.map((cl) => {
+                const st = statusConfig(cl.status);
+                const showBar = cl.status !== 'upcoming';
+                const subParts = [`${cl.pileCount} pile${cl.pileCount === 1 ? '' : 's'} planned`];
+                if (cl.status !== 'upcoming' && cl.status !== 'not_started') {
+                  subParts.push(`${cl.completionPercent}% complete`);
+                  if (cl.varianceLabel) subParts.push(cl.varianceLabel);
+                }
 
-              return (
-                <Pressable
-                  key={cl.id}
-                  onPress={() => navigation.navigate('PlanDetail', { checklistId: cl.id })}
-                  style={({ pressed }) => pressed && styles.pressed}
-                >
-                  <GlassCard innerStyle={styles.cardInner}>
-                    <View style={styles.topRow}>
-                      <View style={styles.rowLeft}>
-                        <View style={styles.iconWrap}>
-                          <Calendar size={16} color={colors.accent} />
+                return (
+                  <Pressable
+                    key={cl.id}
+                    onPress={() => navigation.navigate('PlanDetail', { checklistId: cl.id })}
+                    style={({ pressed }) => pressed && styles.pressed}
+                  >
+                    <GlassCard innerStyle={styles.cardInner}>
+                      <View style={styles.topRow}>
+                        <View style={styles.rowLeft}>
+                          <View style={styles.iconWrap}>
+                            <Calendar size={16} color={colors.accent} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.dateText}>{cl.displayDate}</Text>
+                            <Text style={styles.subText}>{subParts.join(' · ')}</Text>
+                          </View>
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.dateText}>{cl.displayDate}</Text>
-                          <Text style={styles.subText}>{subParts.join(' · ')}</Text>
+                        <View style={styles.rowRight}>
+                          <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
+                            <Text style={[styles.statusBadgeText, { color: st.fg }]}>{st.label}</Text>
+                          </View>
+                          
+                          <ChevronRight size={18} color={colors.textSecondary} />
                         </View>
                       </View>
-                      <View style={styles.rowRight}>
-                        <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
-                          <Text style={[styles.statusBadgeText, { color: st.fg }]}>{st.label}</Text>
-                        </View>
-                        
-                        <ChevronRight size={18} color={colors.textSecondary} />
-                      </View>
-                    </View>
 
-                    {showBar && (
-                      <View style={styles.progressTrack}>
-                        <View
-                          style={[
-                            styles.progressFill,
-                            {
-                              width: `${Math.min(100, cl.completionPercent)}%`,
-                              backgroundColor: progressBarColor(cl.status),
-                            },
-                          ]}
-                        />
-                      </View>
-                    )}
-                  </GlassCard>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        )}
+                      {showBar && (
+                        <View style={styles.progressTrack}>
+                          <View
+                            style={[
+                              styles.progressFill,
+                              {
+                                width: `${Math.min(100, cl.completionPercent)}%`,
+                                backgroundColor: progressBarColor(cl.status),
+                              },
+                            ]}
+                          />
+                        </View>
+                      )}
+                    </GlassCard>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+        </View>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -201,6 +201,10 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg,
     gap: spacing.sm,
   },
+  bodyArea: { 
+    flex: 1, 
+    paddingHorizontal: spacing.md 
+  },
   backBtn: {
     width: 36,
     height: 36,
@@ -209,7 +213,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pageTitle: { ...typography.h1, color: colors.textPrimary },
+  pageTitle: { ...typography.h1, textAlign: 'center', color: colors.textPrimary },
   loadingText: { ...typography.body, color: colors.textSecondary },
   scrollContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl, gap: spacing.md },
 

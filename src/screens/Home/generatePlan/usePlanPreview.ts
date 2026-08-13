@@ -19,6 +19,7 @@ import {
   type PlanScheduleCache,
 } from '@/services/pilingPlannerService';
 import type { EligiblePile } from './useGeneratePlanData';
+import { useAppConfig } from '@state/AppConfigContext';
 
 export function usePlanPreview(args: {
   step: Step;
@@ -39,6 +40,7 @@ export function usePlanPreview(args: {
   planReferenceData: { templateRows: PlanTemplateRow[]; rawWindows: PlanRawWindow[] } | null;
 } {
   const { step, draft, updateDraft, piles, siteId, selectedPlanPiles, steps } = args;
+  const { config } = useAppConfig();
 
   // Not-yet-confirmed Rig/Crane tile selections from the Preview step's PilesAccordion.
   // Tapping a tile updates this immediately (instant visual feedback on the tile itself) —
@@ -149,6 +151,7 @@ export function usePlanPreview(args: {
         siteId,
         shiftTypeId: draft.shiftTypeId ?? undefined,
         selectedStepIds: draft.selectedStepIds,
+        noNewStepCutoffMinutes: config.noNewStepCutoffMinutes,
         // steps is this screen's own already-loaded step-definition list (see
         // the initial data-loading effect above) — no need for the service to
         // fetch it again. templateRows/rawWindows come from the session cache
@@ -187,7 +190,7 @@ export function usePlanPreview(args: {
       updatePreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, draft, piles, siteId]);
+  }, [step, draft, piles, siteId, config.noNewStepCutoffMinutes]);
 
   return {
     pendingTrackOverrides,

@@ -4,7 +4,7 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
 /** A named work zone within a piling site, such as "Zone A" or "Tower 1". */
-export const pilingAreas = sqliteTable('pil_areas', {
+export const pilingLocations = sqliteTable('pil_locations', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
   name: text('name').notNull(),
@@ -14,12 +14,12 @@ export const pilingAreas = sqliteTable('pil_areas', {
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
   // Phase 3: mirrors the server's deleted_at, added for full reference-table
-  // symmetry even though no delete endpoint exists for areas yet.
+  // symmetry even though no delete endpoint exists for locations yet.
   deletedAt: integer('deleted_at'),
 });
 
-export type PilingArea = typeof pilingAreas.$inferSelect;
-export type NewPilingArea = typeof pilingAreas.$inferInsert;
+export type PilingLocation = typeof pilingLocations.$inferSelect;
+export type NewPilingLocation = typeof pilingLocations.$inferInsert;
 
 /**
  * The unfinished work item for a physical pile. This is deliberately separate
@@ -51,9 +51,9 @@ export type NewPileWorkProgress = typeof pileWorkProgress.$inferInsert;
 export const pilingPiles = sqliteTable('pil_piles', {
   id: text('id').primaryKey(),
   siteId: text('site_id').notNull(),
-  areaId: text('area_id'),
+  locationId: text('location_id'),
   pileIdCode: text('pile_id_code').notNull(),
-  areaLocation: text('area_location'),
+  area: text('area'),
   dimensionId: text('dimension_id').notNull(),
   notes: text('notes'),
   syncedAt: integer('synced_at').notNull(),
@@ -178,17 +178,38 @@ export const pilingSitePersonnel = sqliteTable('pil_site_personnel', {
 export type PilingSitePersonnel = typeof pilingSitePersonnel.$inferSelect;
 export type NewPilingSitePersonnel = typeof pilingSitePersonnel.$inferInsert;
 
-// ─── Piling Steps (seeded locally on first init) ──────────────────────────────
+// ─── Site Coordinators (synced from server) ───────────────────────────────────
 
 /**
- * Default workflow steps for piling operations.
- * These are seeded once on initDb() and never synced from server.
+ * Local cache of site_coordinator-role users fetched from the server for the
+ * user's site — the "who do I call" list behind Generate Plan's "Connect Head
+ * Office" action. `id` is the backend person.id.
+ */
+export const pilSiteCoordinators = sqliteTable('pil_site_coordinators', {
+  id: text('id').primaryKey(),
+  siteId: text('site_id').notNull(),
+  name: text('name').notNull(),
+  phone: text('phone'),
+  email: text('email'),
+  syncedAt: integer('synced_at').notNull(),
+});
+
+export type PilSiteCoordinator = typeof pilSiteCoordinators.$inferSelect;
+export type NewPilSiteCoordinator = typeof pilSiteCoordinators.$inferInsert;
+
+// ─── Piling Steps (synced from server) ──────────────────────────────────────
+
+/**
+ * Global workflow-step definitions, synced from server on every bootstrap
+ * (see sync/steps/syncSteps.ts) — this table is fully replaced (delete-all,
+ * then insert) on each sync, not merged.
  */
 export const pilingSteps = sqliteTable('pil_steps', {
   id: text('id').primaryKey(),
   stepName: text('step_name').notNull(),
   sequenceOrder: integer('sequence_order').notNull().unique(),
   track: text('track').notNull(),
+  isSplittable: integer('is_splittable', { mode: 'boolean' }).notNull().default(true),
   // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
   updatedAt: integer('updated_at'),
 });
@@ -383,9 +404,9 @@ export type NewPileActualStep = typeof pileActualSteps.$inferInsert;
 // ─── Machine Events (audit log for swap/breakdown reporting) ─────────────────
 
 /**
- * User-logged machine breakdown/replacement/resume events, recorded against
- * a pile (and optionally a specific step) within a checklist day.
- * eventType: 'BREAKDOWN' | 'REPLACED' | 'RESUMED'
+ * User-logged machine breakdown/replacement/resume/idle events, recorded
+ * against a pile (and optionally a specific step) within a checklist day.
+ * eventType: 'BREAKDOWN' | 'REPLACED' | 'RESUMED' | 'IDLE_START' | 'IDLE_END'
  * occurredAt is an ISO timestamp string (editable by the user, not always "now").
  */
 export const pilMachineEvents = sqliteTable('pil_machine_events', {
@@ -445,3 +466,25 @@ export const pilSyncCursor = sqliteTable('pil_sync_cursor', {
 
 export type PilSyncCursorRow = typeof pilSyncCursor.$inferSelect;
 export type NewPilSyncCursorRow = typeof pilSyncCursor.$inferInsert;
+
+// ─── App Config (server-managed constants, synced from GET /shared/app-config) ─
+
+/**
+ * Generic key/value store for small tunable values the server owns (see
+ * suntech-core/modules/shared/app_config/constants.py) — page sizes, debounce
+ * timings, plan-generation grace windows, etc. Not piling-specific (hence no
+ * `pil_` prefix), so it isn't scoped to a site.
+ *
+ * `value` holds JSON.stringify(rawValue) — the server returns native JSON
+ * types (bool/int/string), and round-tripping through JSON.stringify/parse
+ * preserves the original type without a separate value_type column, keeping
+ * this table genuinely generic for whatever gets added to it later.
+ */
+export const appConfig = sqliteTable('app_config', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  syncedAt: integer('synced_at').notNull(),
+});
+
+export type AppConfigRow = typeof appConfig.$inferSelect;
+export type NewAppConfigRow = typeof appConfig.$inferInsert;

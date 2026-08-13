@@ -7,6 +7,7 @@
 import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
 import type { SyncContext } from '@sync/bootstrap/syncContext';
 import type { StepResult } from '@sync/bootstrap/syncResult';
+import { toFailedStepResult } from '@sync/bootstrap/stepError';
 
 import { flushQueue } from '@sync/SyncManager';
 
@@ -25,12 +26,7 @@ export class SyncAppPlanStep implements ISyncStep {
         error: result.failed > 0 ? result.error : undefined,
       };
     } catch (err) {
-      return {
-        step: this.name,
-        count: 0,
-        syncedAt,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      return toFailedStepResult(this.name, syncedAt, err);
     }
   }
 }

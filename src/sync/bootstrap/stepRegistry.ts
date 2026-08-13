@@ -4,11 +4,13 @@
 // The orchestrator (bootstrapSync.ts) never needs to change.
 
 import type { ISyncStep } from './ISyncStep';
-import { SyncAreasStep } from '@/sync/steps/syncAreas';
+import { SyncAppConfigStep } from '@sync/steps/syncAppConfig';
+import { SyncLocationsStep } from '@/sync/steps/syncLocations';
 import { SyncDimensionsStep } from '@sync/steps/syncDimensions';
 import { SyncShiftsStep } from '@sync/steps/syncShifts';
 import { SyncMachinesStep } from '@sync/steps/syncMachines';
 import { SyncPersonnelStep } from '@sync/steps/syncPersonnel';
+import { SyncSiteCoordinatorsStep } from '@sync/steps/syncSiteCoordinators';
 import { SyncRoleDefaultsStep } from '@sync/steps/syncRoleDefaults';
 import { SyncStepsStep } from '@sync/steps/syncSteps';
 import { SyncChecklistHistoryStep } from '@sync/steps/syncChecklistHistory';
@@ -16,12 +18,17 @@ import { SyncAppPlanStep } from '../steps/syncAppPlan';
 import { SyncActivePlanStep } from '../steps/syncActivePlan';
 
 export const BOOTSTRAP_STEPS: ISyncStep[] = [
+  // Server-managed constants — not site data, but pulled first so any step
+  // below could in principle read a config value if it ever needs to.
+  new SyncAppConfigStep(),
+
   // Pull reference data from server
-  new SyncAreasStep(),
+  new SyncLocationsStep(),
   new SyncDimensionsStep(),
   new SyncShiftsStep(),
   new SyncMachinesStep(),
   new SyncPersonnelStep(),
+  new SyncSiteCoordinatorsStep(),
   new SyncRoleDefaultsStep(),
   new SyncStepsStep(),
 

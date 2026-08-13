@@ -6,11 +6,12 @@
 
 import { apiClient } from '@services/apiClient';
 
-import { saveAreas, deleteAreasByIds } from '@repositories/areasRepository';
+import { saveLocations, deleteLocationsByIds } from '@repositories/locationsRepository';
 import { savePiles, deletePilesByIds } from '@repositories/pilesRepository';
 import { saveDimensions, deleteDimensionsByIds } from '@repositories/dimensionsRepository';
 import { saveMachines, deleteMachinesByIds } from '@repositories/machinesRepository';
 import { savePersonnel, deletePersonnelByIds } from '@repositories/personnelRepository';
+import { replaceSiteCoordinators } from '@repositories/siteCoordinatorsRepository';
 import {
   saveShiftTypes,
   saveNonWorkingWindows,
@@ -22,7 +23,7 @@ import { hydrateChecklistFromServer, purgeChecklistPilesByIds } from '@repositor
 import { getDirtyChecklistIds } from '@repositories/syncQueueRepository';
 
 import type {
-  NewPilingArea,
+  NewPilingLocation,
   NewPilingPile,
   NewPilingDimension,
   NewPilingMachine,
@@ -30,6 +31,7 @@ import type {
   NewPilingShiftType,
   NewPilingNonWorkingWindow,
   NewPilingStepDurationTemplate,
+  NewPilSiteCoordinator,
 } from '@db/schema';
 
 export type DeltaPullResult = {
@@ -43,25 +45,25 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
   });
   const syncedAt = Date.now();
 
-  const areaRows: NewPilingArea[] = (data.areas as any[]).map((a) => ({
-    id: a.id,
-    siteId: a.site_id,
-    name: a.name,
-    code: a.code ?? null,
-    sortOrder: a.sort_order ?? 0,
+  const locationRows: NewPilingLocation[] = (data.locations as any[]).map((l) => ({
+    id: l.id,
+    siteId: l.site_id,
+    name: l.name,
+    code: l.code ?? null,
+    sortOrder: l.sort_order ?? 0,
     isActive: true,
     createdAt: syncedAt,
     updatedAt: syncedAt,
   }));
-  await saveAreas(areaRows);
-  await deleteAreasByIds((data.deleted_area_ids as string[]) ?? []);
+  await saveLocations(locationRows);
+  await deleteLocationsByIds((data.deleted_location_ids as string[]) ?? []);
 
   const pileRows: NewPilingPile[] = (data.piles as any[]).map((p) => ({
     id: p.id,
     siteId: p.site_id,
-    areaId: p.area_id ?? null,
+    locationId: p.location_id ?? null,
     pileIdCode: p.pile_id_code,
-    areaLocation: p.area_location ?? null,
+    area: p.area ?? null,
     dimensionId: p.dimension_id,
     notes: p.notes ?? null,
     syncedAt,
@@ -137,6 +139,20 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
     syncedAt,
   }));
   await saveDurationTemplates(templateRows);
+
+  // Always the site's full current list, not a delta — see the schema
+  // comment on SyncPullOut.coordinators server-side for why. A full replace
+  // (not upsert) is what lets a removed/reassigned coordinator actually
+  // disappear locally.
+  const coordinatorRows: NewPilSiteCoordinator[] = (data.coordinators as any[]).map((c) => ({
+    id: c.id,
+    siteId,
+    name: c.name,
+    phone: c.phone ?? null,
+    email: c.email ?? null,
+    syncedAt,
+  }));
+  await replaceSiteCoordinators(siteId, coordinatorRows);
 
   const checklists = (data.checklists as any[]) ?? [];
   // Skip checklists that still have unsynced local edits (e.g. an actual time

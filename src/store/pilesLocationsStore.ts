@@ -1,40 +1,40 @@
-// src/store/pilesAreasStore.ts
+// src/store/pilesLocationsStore.ts
 //
-// Zustand store for locally cached piling_piles + piling_areas data.
+// Zustand store for locally cached piling_piles + piling_locations data.
 // Single source of truth for both — replaces the old pilesStore +
-// PilesContext split. Any screen that needs piles or areas reads directly
-// from this store; no React Context wrapper needed.
+// PilesContext split. Any screen that needs piles or locations reads
+// directly from this store; no React Context wrapper needed.
 
 import { create } from 'zustand';
 import { getPilesBySiteWithDimensions, type PileWithDimension } from '@repositories/pilesRepository';
-import { getAreasBySite } from '@repositories/areasRepository';
+import { getLocationsBySite } from '@repositories/locationsRepository';
 import { getDimensionsBySite } from '@repositories/dimensionsRepository';
-import type { PilingArea, PilingDimension } from '@db/schema';
+import type { PilingLocation, PilingDimension } from '@db/schema';
 
 // Extended pile type for display that includes dia/depth from joined dimensions
 export type DisplayPile = PileWithDimension & {
   code: string; // alias for pileIdCode
 };
 
-type PilesAreasState = {
+type PilesLocationsState = {
   piles: DisplayPile[];
-  areas: PilingArea[];
+  locations: PilingLocation[];
   dimensions: PilingDimension[];
   isLoading: boolean;
   error: string | null;
   currentSiteId: string | null;
 
-  /** Load piles + areas for a site. Called on mount and after sync. */
+  /** Load piles + locations for a site. Called on mount and after sync. */
   loadAll: (siteId: string | undefined | null) => Promise<void>;
-  /** Reload piles + areas for the current site. Called after sync completes. */
+  /** Reload piles + locations for the current site. Called after sync completes. */
   reload: () => Promise<void>;
-  /** Clear piles + areas (e.g., on logout or site change). */
+  /** Clear piles + locations (e.g., on logout or site change). */
   clear: () => void;
 };
 
-export const usePilesAreasStore = create<PilesAreasState>((set, get) => ({
+export const usePilesLocationsStore = create<PilesLocationsState>((set, get) => ({
   piles: [],
-  areas: [],
+  locations: [],
   dimensions: [],
   isLoading: false,
   error: null,
@@ -43,26 +43,26 @@ export const usePilesAreasStore = create<PilesAreasState>((set, get) => ({
   loadAll: async (siteId: string | undefined | null) => {
     // Clear state if no siteId provided (e.g., on logout)
     if (!siteId) {
-      set({ piles: [], areas: [], dimensions: [], error: null, currentSiteId: null });
+      set({ piles: [], locations: [], dimensions: [], error: null, currentSiteId: null });
       return;
     }
 
     set({ isLoading: true, error: null, currentSiteId: siteId });
     try {
-      const [pilesRaw, areas, dimensions] = await Promise.all([
+      const [pilesRaw, locations, dimensions] = await Promise.all([
         getPilesBySiteWithDimensions(siteId),
-        getAreasBySite(siteId),
+        getLocationsBySite(siteId),
         getDimensionsBySite(siteId),
       ]);
       set({
         piles: pilesRaw.map(p => ({ ...p, code: p.pileIdCode })),
-        areas,
+        locations,
         dimensions,
         isLoading: false
       });
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : 'Failed to load piles/areas',
+        error: err instanceof Error ? err.message : 'Failed to load piles/locations',
         isLoading: false,
       });
     }
@@ -76,6 +76,6 @@ export const usePilesAreasStore = create<PilesAreasState>((set, get) => ({
   },
 
   clear: () => {
-    set({ piles: [], areas: [], dimensions: [], error: null, currentSiteId: null });
+    set({ piles: [], locations: [], dimensions: [], error: null, currentSiteId: null });
   },
 }));

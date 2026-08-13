@@ -26,8 +26,10 @@ import {
   getOperatorMachineCandidates,
   getMachineRoleDisabledIds,
   getShiftInchargeDisabledIds,
+  formatAssignmentLocation,
   findFirstMissingTeamField,
   type SimpleMachine,
+  type DisabledAssignmentInfo,
 } from '@/utils/personnelRoles';
 import { useScrollToField } from '@hooks/useScrollToField';
 
@@ -85,9 +87,15 @@ function TeamRow({
       style={[styles.machineTeamRow, highlighted && styles.machineTeamRowHighlighted]}
       onPress={onPress}
     >
-      <View style={styles.machineIcon}>{icon}</View>
-      <Text style={styles.machineTeamNo}>{label}</Text>
-      <AssigneeChip name={assigneeName} onPress={onPress} />
+      <View style={styles.machineTeamTopRow}>
+        <View style={styles.machineIcon}>{icon}</View>
+        <Text style={styles.machineTeamNo} numberOfLines={1}>
+          {label}
+        </Text>
+      </View>
+      <View style={styles.machineTeamBottomRow}>
+        <AssigneeChip name={assigneeName} onPress={onPress} />
+      </View>
     </Pressable>
   );
 }
@@ -116,6 +124,22 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
   const shift2 = shifts[1];
   const tab1Label = shift1 ? `${shift1.name}` : 'Shift 1 (Day)';
   const tab2Label = shift2 ? `${shift2.name}` : 'Shift 2 (Night)';
+  const currentShiftLabel = activeTab === 1 ? tab1Label : tab2Label;
+  const otherShiftLabel = activeTab === 1 ? tab2Label : tab1Label;
+
+  const machineNoFor = useMemo(() => {
+    const map = new Map([...activeRigs, ...activeCranes].map((m) => [m.id, m.machineNo]));
+    return (machineId: string) => map.get(machineId) ?? '';
+  }, [activeRigs, activeCranes]);
+
+  function toDisabledDetails(info: Map<string, DisabledAssignmentInfo>): Map<string, string> {
+    return new Map(
+      [...info].map(([id, entry]) => [
+        id,
+        formatAssignmentLocation(entry, machineNoFor, (s) => (s === 'current' ? currentShiftLabel : otherShiftLabel)),
+      ]),
+    );
+  }
 
   const shiftIncharges = useMemo(
     () => personnel.filter((p) => matchesRoleDesignation('SHIFT_INCHARGE', p.designation)),
@@ -218,7 +242,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
           selectedId: team.shiftInchargeId,
           allowNone: true,
           emptyLabel: 'No matching shift incharges synced for this site.',
-          disabledIds: getShiftInchargeDisabledIds(otherTeam.shiftInchargeId),
+          disabledDetails: toDisabledDetails(getShiftInchargeDisabledIds(otherTeam.shiftInchargeId)),
           onSelect: (id: string | null) => updateTeam({ shiftInchargeId: id }),
         };
       case 'ENGINEER':
@@ -228,11 +252,13 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
           selectedId: team.engineerByMachineId[pickerTarget.machineId] ?? null,
           allowNone: false,
           emptyLabel: 'No matching engineers synced for this site.',
-          disabledIds: getMachineRoleDisabledIds(
-            pickerTarget.machineId,
-            team.engineerByMachineId,
-            otherTeam.engineerByMachineId,
-            { excludeSameShiftOtherMachines: false },
+          disabledDetails: toDisabledDetails(
+            getMachineRoleDisabledIds(
+              pickerTarget.machineId,
+              team.engineerByMachineId,
+              otherTeam.engineerByMachineId,
+              { excludeSameShiftOtherMachines: false },
+            ),
           ),
           onSelect: (id: string | null) => setEngineer(pickerTarget.machineId, id),
         };
@@ -243,11 +269,13 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
           selectedId: team.supervisorByMachineId[pickerTarget.machineId] ?? null,
           allowNone: true,
           emptyLabel: 'No matching supervisors synced for this site.',
-          disabledIds: getMachineRoleDisabledIds(
-            pickerTarget.machineId,
-            team.supervisorByMachineId,
-            otherTeam.supervisorByMachineId,
-            { excludeSameShiftOtherMachines: false },
+          disabledDetails: toDisabledDetails(
+            getMachineRoleDisabledIds(
+              pickerTarget.machineId,
+              team.supervisorByMachineId,
+              otherTeam.supervisorByMachineId,
+              { excludeSameShiftOtherMachines: false },
+            ),
           ),
           onSelect: (id: string | null) => setSupervisor(pickerTarget.machineId, id),
         };
@@ -258,16 +286,29 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
           selectedId: team.operatorByMachineId[pickerTarget.machineId] ?? null,
           allowNone: true,
           emptyLabel: 'No matching machine operators synced for this site.',
-          disabledIds: getMachineRoleDisabledIds(
-            pickerTarget.machineId,
-            team.operatorByMachineId,
-            otherTeam.operatorByMachineId,
-            { excludeSameShiftOtherMachines: true },
+          disabledDetails: toDisabledDetails(
+            getMachineRoleDisabledIds(
+              pickerTarget.machineId,
+              team.operatorByMachineId,
+              otherTeam.operatorByMachineId,
+              { excludeSameShiftOtherMachines: true },
+            ),
           ),
           onSelect: (id: string | null) => setOperator(pickerTarget.machineId, id),
         };
     }
-  }, [pickerTarget, shiftIncharges, engineers, supervisors, operatorCandidates, team, otherTeam]);
+  }, [
+    pickerTarget,
+    shiftIncharges,
+    engineers,
+    supervisors,
+    operatorCandidates,
+    team,
+    otherTeam,
+    machineNoFor,
+    currentShiftLabel,
+    otherShiftLabel,
+  ]);
 
   return (
     <>
@@ -384,7 +425,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
             selectedId={pickerConfig.selectedId}
             allowNone={pickerConfig.allowNone}
             emptyLabel={pickerConfig.emptyLabel}
-            disabledIds={pickerConfig.disabledIds}
+            disabledDetails={pickerConfig.disabledDetails}
             onSelect={(id) => {
               pickerConfig.onSelect(id);
               setPickerTarget(null);
@@ -445,8 +486,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   machineTeamRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: spacing.sm,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
@@ -459,11 +498,20 @@ const styles = StyleSheet.create({
   machineTeamRowHighlighted: {
     borderColor: colors.danger,
   },
+  machineTeamTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  machineTeamBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
   machineIcon: { width: 24, alignItems: 'center' },
   machineTeamNo: {
     ...typography.body,
     fontWeight: '600',
     color: colors.textPrimary,
-    flex: 1,
+    flexShrink: 1,
   },
 });

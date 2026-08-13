@@ -6,16 +6,14 @@
 // (GeneratePlanScreen skips its shared footer for this step so this bar
 // lands in the exact same screen position).
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import type { PlanDraft } from '@/types/plan';
 import IndexTable from '@components/shared/IndexTable';
 
-import PileListToolbar, { type AreaFilterOption } from './pile-assign/PileListToolbar';
+import PileListToolbar, { type LocationFilterOption } from './pile-assign/PileListToolbar';
 import BulkAssignBar from './pile-assign/BulkAssignBar';
-import ResumeTimeConfirmModal from './pile-assign/ResumeTimeConfirmModal';
-import { useResumeConfirmQueue } from './pile-assign/useResumeConfirmQueue';
 import { buildColumns } from './pile-assign/pileTableColumns';
 import type { EligiblePile, MachineKind, PileFilter, SimpleMachine } from './pile-assign/types';
 
@@ -27,7 +25,7 @@ interface PileAssignStepProps {
   draft: PlanDraft;
   onUpdate: (patch: Partial<PlanDraft>) => void;
   piles?: EligiblePile[];
-  areas?: AreaFilterOption[];
+  locations?: LocationFilterOption[];
   activeRigs?: SimpleMachine[];
   activeCranes?: SimpleMachine[];
   onContinue: () => void;
@@ -48,17 +46,16 @@ function mostCommonPair(assignments: PlanDraft['assignments']): { rig: string; c
 }
 
 export default function PileAssignStep({
-  draft, onUpdate, piles = [], areas = [], activeRigs = [], activeCranes = [],
+  draft, onUpdate, piles = [], locations = [], activeRigs = [], activeCranes = [],
   onContinue, continueDisabled,
 }: PileAssignStepProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<PileFilter>('all');
-  const [activeAreaId, setActiveAreaId] = useState(() => areas[0]?.id ?? '');
+  const [activeLocationId, setActiveLocationId] = useState(() => locations[0]?.id ?? '');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkRigId, setBulkRigId] = useState<string | null>(null);
   const [bulkCraneId, setBulkCraneId] = useState<string | null>(null);
-  const [bulkDefaulted, setBulkDefaulted] = useState(false);
   const [lastUsedPair, setLastUsedPair] = useState(() => mostCommonPair(draft.assignments));
 
   function machineLabel(kind: MachineKind, machineId: string): string {
@@ -83,27 +80,9 @@ export default function PileAssignStep({
     setBulkOpen(false);
   }
 
-  const resumeConfirm = useResumeConfirmQueue(draft, onUpdate, commitAssignment);
-
-  // Piles auto-preselected with a still-active rig/crane (carry-over work,
-  // see GeneratePlanScreen's preselection effect) arrive here already fully
-  // assigned, so the manual "Assign" flow below never runs for them. Catch
-  // those and open the confirm queue automatically, once per visit to this step.
-  const autoPromptedRef = useRef(false);
-  useEffect(() => {
-    if (autoPromptedRef.current || !piles.length) return;
-    const toConfirm = piles
-      .map((p) => p.id)
-      .filter((id) => isPileFullyAssigned(id) && resumeConfirm.needsResumeConfirm(id));
-    if (toConfirm.length === 0) return; // preselection may not have landed in `draft` yet — keep watching
-    autoPromptedRef.current = true;
-    resumeConfirm.startAutoConfirm(toConfirm);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [piles, draft.assignments, draft.resumeWorkByPileId]);
-
-  const pileCountByAreaId = useMemo(() => {
+  const pileCountByLocationId = useMemo(() => {
     const counts: Record<string, number> = {};
-    piles.forEach((p) => { if (p.areaId) counts[p.areaId] = (counts[p.areaId] ?? 0) + 1; });
+    piles.forEach((p) => { if (p.locationId) counts[p.locationId] = (counts[p.locationId] ?? 0) + 1; });
     return counts;
   }, [piles]);
 
@@ -111,19 +90,15 @@ export default function PileAssignStep({
     const q = search.trim().toLowerCase();
     return piles
       .filter((p) => {
-        if (p.areaId !== activeAreaId) return false;
+        if (p.locationId !== activeLocationId) return false;
         if (q && !p.code.toLowerCase().includes(q)) return false;
         if (filter === 'pending') return !isPileFullyAssigned(p.id);
         if (filter === 'assigned') return isPileFullyAssigned(p.id);
         return true;
       })
-      .sort((a, b) => {
-        const ar = !!draft.resumeWorkByPileId[a.id], br = !!draft.resumeWorkByPileId[b.id];
-        if (ar !== br) return ar ? -1 : 1;
-        return a.code.localeCompare(b.code);
-      });
+      .sort((a, b) => a.code.localeCompare(b.code));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [piles, search, filter, activeAreaId, draft.assignments, draft.resumeWorkByPileId]);
+  }, [piles, search, filter, activeLocationId, draft.assignments]);
 
   const pendingCount = piles.filter((p) => !isPileFullyAssigned(p.id)).length;
   const allVisibleSelected = visiblePiles.length > 0 && visiblePiles.every((p) => selectedIds.has(p.id));
@@ -153,12 +128,10 @@ export default function PileAssignStep({
   }
 
   function openBulkPanel(): void {
-    const defaulted = !!lastUsedPair || (activeRigs.length === 1 && activeCranes.length === 1);
     const pair = lastUsedPair ?? (activeRigs.length === 1 && activeCranes.length === 1
       ? { rig: activeRigs[0].id, crane: activeCranes[0].id } : null);
     setBulkRigId(pair?.rig ?? null);
     setBulkCraneId(pair?.crane ?? null);
-    setBulkDefaulted(defaulted);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setBulkOpen(true);
   }
@@ -169,9 +142,7 @@ export default function PileAssignStep({
 
   function applyBulkAssign(): void {
     if (!bulkRigId || !bulkCraneId || selectedIds.size === 0) return;
-    const pileIds = [...selectedIds];
-    if (resumeConfirm.start(bulkRigId, bulkCraneId, pileIds)) return;
-    commitAssignment(bulkRigId, bulkCraneId, pileIds);
+    commitAssignment(bulkRigId, bulkCraneId, [...selectedIds]);
   }
 
   function unassignSelected(): void {
@@ -194,9 +165,6 @@ export default function PileAssignStep({
     [draft.assignments, activeRigs, activeCranes],
   );
 
-  const confirmPile = piles.find((p) => p.id === resumeConfirm.confirmQueue[0]);
-  const confirmResumeWork = confirmPile ? draft.resumeWorkByPileId[confirmPile.id] : undefined;
-
   return (
     <View style={styles.root}>
       <View style={styles.toolbarSection}>
@@ -208,10 +176,10 @@ export default function PileAssignStep({
           allCount={piles.length}
           pendingCount={pendingCount}
           assignedCount={piles.length - pendingCount}
-          areas={areas}
-          pileCountByAreaId={pileCountByAreaId}
-          activeAreaId={activeAreaId}
-          onAreaChange={setActiveAreaId}
+          locations={locations}
+          pileCountByLocationId={pileCountByLocationId}
+          activeLocationId={activeLocationId}
+          onLocationChange={setActiveLocationId}
         />
       </View>
 
@@ -239,9 +207,8 @@ export default function PileAssignStep({
             cranes={activeCranes}
             rigId={bulkRigId}
             craneId={bulkCraneId}
-            onSelectRig={(id) => { setBulkRigId(id); setBulkDefaulted(false); }}
-            onSelectCrane={(id) => { setBulkCraneId(id); setBulkDefaulted(false); }}
-            defaulted={bulkDefaulted}
+            onSelectRig={setBulkRigId}
+            onSelectCrane={setBulkCraneId}
             onApply={applyBulkAssign}
             onUnassign={unassignSelected}
             unassignDisabled={!anySelectedAssigned}
@@ -256,16 +223,6 @@ export default function PileAssignStep({
           </Pressable>
         )}
       </View>
-
-      {confirmPile && confirmResumeWork && (
-        <ResumeTimeConfirmModal
-          visible={resumeConfirm.confirmQueue.length > 0}
-          pileCode={confirmPile.code}
-          resumeWork={confirmResumeWork}
-          onConfirm={resumeConfirm.confirm}
-          onClose={resumeConfirm.cancel}
-        />
-      )}
     </View>
   );
 }

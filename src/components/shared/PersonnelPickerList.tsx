@@ -8,7 +8,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { User } from 'lucide-react-native';
+import { User, X } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import type { SimplePersonnel } from '@/utils/personnelRoles';
 
@@ -22,12 +22,14 @@ function PersonnelRow({
   active,
   disabled,
   onPress,
+  onUnassign,
 }: {
   label: string;
   sublabel?: string;
   active: boolean;
   disabled?: boolean;
   onPress: () => void;
+  onUnassign?: () => void;
 }) {
   return (
     <Pressable
@@ -40,8 +42,15 @@ function PersonnelRow({
       </View>
       <View style={styles.personInfo}>
         <Text style={[styles.personName, active && styles.personNameActive]}>{label}</Text>
-        {sublabel ? <Text style={styles.personDesig}>{sublabel}</Text> : null}
+        {sublabel ? (
+          <Text style={[styles.personDesig, disabled && styles.personDesigDisabled]}>{sublabel}</Text>
+        ) : null}
       </View>
+      {active && onUnassign ? (
+        <Pressable hitSlop={10} style={styles.unassignBtn} onPress={onUnassign}>
+          <X size={16} color={colors.danger} />
+        </Pressable>
+      ) : null}
     </Pressable>
   );
 }
@@ -56,8 +65,8 @@ interface PersonnelPickerListProps {
   emptyLabel?: string;
   maxHeight?: number;
   /** Person ids to show in the list but greyed out and unpressable — e.g. already assigned to
-   * this same role in another shift. */
-  disabledIds?: Set<string>;
+   * this same role elsewhere — mapped to a "where" label (machine · shift). */
+  disabledDetails?: Map<string, string>;
 }
 
 export default function PersonnelPickerList({
@@ -67,7 +76,7 @@ export default function PersonnelPickerList({
   allowNone = true,
   emptyLabel = 'No matching personnel synced for this site.',
   maxHeight = LIST_MAX_HEIGHT,
-  disabledIds,
+  disabledDetails,
 }: PersonnelPickerListProps) {
   if (!personnel.length) {
     return <Text style={styles.emptyText}>{emptyLabel}</Text>;
@@ -80,20 +89,15 @@ export default function PersonnelPickerList({
       nestedScrollEnabled
       showsVerticalScrollIndicator
     >
-      {allowNone ? (
-        <>
-          <PersonnelRow label="None / Skip" active={selectedId === null} onPress={() => onSelect(null)} />
-          <View style={{ height: spacing.xs }} />
-        </>
-      ) : null}
       {personnel.map((item, idx) => (
         <React.Fragment key={item.id}>
           <PersonnelRow
             label={item.name}
-            sublabel={item.designation}
+            sublabel={disabledDetails?.get(item.id) ?? item.designation}
             active={selectedId === item.id}
-            disabled={disabledIds?.has(item.id)}
+            disabled={disabledDetails?.has(item.id)}
             onPress={() => onSelect(item.id)}
+            onUnassign={allowNone ? () => onSelect(null) : undefined}
           />
           {idx < personnel.length - 1 ? <View style={{ height: spacing.xs }} /> : null}
         </React.Fragment>
@@ -141,5 +145,16 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: 1,
+  },
+  personDesigDisabled: {
+    fontStyle: 'italic',
+  },
+  unassignBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.dangerSoft,
   },
 });

@@ -1,7 +1,6 @@
 // src/repositories/machinesRepository.ts
-// CRUD helpers for piling_machines in local SQLite.
 
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingMachines,
@@ -13,19 +12,23 @@ import {
  * Upsert a batch of machines (replace on conflict by primary key).
  * Called by SyncMachinesStep after fetching from the server.
  */
-export async function saveMachines(rows: NewPilingMachine[]): Promise<void> {
+export async function saveMachines(
+  rows: NewPilingMachine[]
+): Promise<void> {
   if (!rows.length) return;
+
   const db = await initDb();
+
   await db
     .insert(pilingMachines)
     .values(rows)
     .onConflictDoUpdate({
       target: pilingMachines.id,
       set: {
-        machineNo: pilingMachines.machineNo,
-        type: pilingMachines.type,
-        status: pilingMachines.status,
-        syncedAt: pilingMachines.syncedAt,
+        machineNo: sql`excluded.machine_no`,
+        type: sql`excluded.type`,
+        status: sql`excluded.status`,
+        syncedAt: sql`excluded.synced_at`,
       },
     });
 }

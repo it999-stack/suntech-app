@@ -9,15 +9,20 @@ import {
   RefreshCw,
   LogOut,
   Info,
+  Phone,
 } from 'lucide-react-native';
 
 import GlassCard from '@components/shared/GlassCard';
+import CoordinatorCallModal from '@components/shared/CoordinatorCallModal';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
-import { usePilesAreasStore } from '@store/pilesAreasStore';
+import { usePilesLocationsStore } from '@store/pilesLocationsStore';
 import { getPendingCount } from '@repositories/syncQueueRepository';
 import { onQueueChanged } from '@sync/SyncManager';
+import { getSiteCoordinatorsBySite } from '@repositories/siteCoordinatorsRepository';
+import { callPhone } from '@utils/phone';
+import type { PilSiteCoordinator } from '@db/schema';
 
 const APP_VERSION = '0.1.0';
 
@@ -84,6 +89,24 @@ export default function ProfileScreen() {
     .toUpperCase();
 
   const [pendingCount, setPendingCount] = useState(0);
+  const [supportContacts, setSupportContacts] = useState<PilSiteCoordinator[]>([]);
+  const [supportPickerVisible, setSupportPickerVisible] = useState(false);
+
+  // Load the site's support contacts for the "Need help and support" card.
+  useEffect(() => {
+    if (!user?.siteId) return;
+    getSiteCoordinatorsBySite(user.siteId).then(setSupportContacts).catch(() => {});
+  }, [user?.siteId]);
+
+  // One contact: call them directly, no picker needed. Multiple: open the
+  // shared picker so the user can choose who to call.
+  const handleSupportPress = () => {
+    if (supportContacts.length === 1) {
+      callPhone(supportContacts[0].phone);
+    } else if (supportContacts.length > 1) {
+      setSupportPickerVisible(true);
+    }
+  };
 
   // Load last sync time from local DB when screen mounts
   useEffect(() => {
@@ -110,7 +133,7 @@ export default function ProfileScreen() {
     try {
       await sync(user.siteId);
       // Refresh piles after sync completes so the UI reflects new data
-      await usePilesAreasStore.getState().reload();
+      await usePilesLocationsStore.getState().reload();
     } catch {
       // error surfaced via syncError in the modal + card
     }
@@ -202,6 +225,22 @@ export default function ProfileScreen() {
             </View>
           </GlassCard>
 
+          {/* Need help and support */}
+          {supportContacts.length > 0 && (
+            <GlassCard style={{ marginTop: spacing.lg }}>
+              <Row
+                icon={<Phone size={18} color={colors.accent} />}
+                label="Need help and support"
+                value={
+                  supportContacts.length === 1
+                    ? (supportContacts[0].phone ?? undefined)
+                    : `${supportContacts.length} contacts`
+                }
+                onPress={handleSupportPress}
+              />
+            </GlassCard>
+          )}
+
           {/* App info + logout */}
           <GlassCard style={{ marginTop: spacing.lg }}>
             <Row
@@ -220,6 +259,13 @@ export default function ProfileScreen() {
 
         </ScrollView>
       </SafeAreaView>
+
+      <CoordinatorCallModal
+        visible={supportPickerVisible}
+        onClose={() => setSupportPickerVisible(false)}
+        title="Need help and support"
+        coordinators={supportContacts}
+      />
     </LinearGradient>
   );
 }

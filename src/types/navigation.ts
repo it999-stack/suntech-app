@@ -13,7 +13,6 @@ export type HomeStackParamList = {
   PlanDetail: { checklistId: string };
   GeneratePlan: { date?: string; edit?: boolean } | undefined;
   FillActuals: { date?: string } | undefined;
-  EditPlan: { date?: string } | undefined;
 };
 
 // Piles stack

@@ -1,7 +1,7 @@
 // src/repositories/pilesRepository.ts
 // Local SQLite access for cached piling_piles data.
 
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';
 import { initDb, db } from '@db/client';
 import { pilingPiles, pilingDimensions, type NewPilingPile, type PilingPile, type PilingDimension } from '@db/schema';
 
@@ -12,23 +12,25 @@ import { pilingPiles, pilingDimensions, type NewPilingPile, type PilingPile, typ
 export async function savePiles(piles: NewPilingPile[]): Promise<void> {
   if (piles.length === 0) return;
   const db = await initDb();
-  for (const pile of piles) {
-    await db
-      .insert(pilingPiles)
-      .values(pile)
-      .onConflictDoUpdate({
-        target: pilingPiles.id,
-        set: {
-          siteId: pile.siteId,
-          areaId: pile.areaId,
-          pileIdCode: pile.pileIdCode,
-          areaLocation: pile.areaLocation,
-          dimensionId: pile.dimensionId,
-          notes: pile.notes,
-          syncedAt: pile.syncedAt,
-        },
-      });
-  }
+  await db.transaction(async (tx) => {
+    for (const pile of piles) {
+      await tx
+        .insert(pilingPiles)
+        .values(pile)
+        .onConflictDoUpdate({
+          target: pilingPiles.id,
+          set: {
+            siteId: pile.siteId,
+            locationId: pile.locationId,
+            pileIdCode: pile.pileIdCode,
+            area: pile.area,
+            dimensionId: pile.dimensionId,
+            notes: pile.notes,
+            syncedAt: pile.syncedAt,
+          },
+        });
+    }
+  });
 }
 
 /**
@@ -42,28 +44,28 @@ export async function getPilesBySite(siteId: string): Promise<PilingPile[]> {
     .where(eq(pilingPiles.siteId, siteId));
 }
 
-/** Get all piles assigned to one area within a site. */
-export async function getPilesByArea(siteId: string, areaId: string): Promise<PilingPile[]> {
+/** Get all piles assigned to one location within a site. */
+export async function getPilesByLocation(siteId: string, locationId: string): Promise<PilingPile[]> {
   const db = await initDb();
   return db
     .select()
     .from(pilingPiles)
-    .where(and(eq(pilingPiles.siteId, siteId), eq(pilingPiles.areaId, areaId)));
+    .where(and(eq(pilingPiles.siteId, siteId), eq(pilingPiles.locationId, locationId)));
 }
 
-/** Get piles that have not yet been assigned to any area. */
+/** Get piles that have not yet been assigned to any location. */
 export async function getUnassignedPilesBySite(siteId: string): Promise<PilingPile[]> {
   const db = await initDb();
   return db
     .select()
     .from(pilingPiles)
-    .where(and(eq(pilingPiles.siteId, siteId), isNull(pilingPiles.areaId)));
+    .where(and(eq(pilingPiles.siteId, siteId), isNull(pilingPiles.locationId)));
 }
 
-/** Assign a pile to an area, or clear the assignment by passing null. */
-export async function setPileArea(pileId: string, areaId: string | null): Promise<void> {
+/** Assign a pile to a location, or clear the assignment by passing null. */
+export async function setPileLocation(pileId: string, locationId: string | null): Promise<void> {
   const db = await initDb();
-  await db.update(pilingPiles).set({ areaId }).where(eq(pilingPiles.id, pileId));
+  await db.update(pilingPiles).set({ locationId }).where(eq(pilingPiles.id, pileId));
 }
 
 /**
@@ -119,15 +121,28 @@ export function pilesBySiteLiveQuery(siteId: string) {
 export interface PileWithDimension {
   id: string;
   siteId: string;
-  areaId: string | null;
+  locationId: string | null;
   pileIdCode: string;
-  areaLocation: string | null;
+  area: string | null;
   dimensionId: string;
   notes: string | null;
   syncedAt: number;
   dia: number;
   depth: number;
 }
+
+const pileWithDimensionColumns = {
+  id: pilingPiles.id,
+  siteId: pilingPiles.siteId,
+  locationId: pilingPiles.locationId,
+  pileIdCode: pilingPiles.pileIdCode,
+  area: pilingPiles.area,
+  dimensionId: pilingPiles.dimensionId,
+  notes: pilingPiles.notes,
+  syncedAt: pilingPiles.syncedAt,
+  dia: pilingDimensions.dia,
+  depth: pilingDimensions.depth,
+};
 
 /**
  * Get all piles for a site with dia/depth from the dimensions table.
@@ -136,20 +151,97 @@ export interface PileWithDimension {
 export async function getPilesBySiteWithDimensions(siteId: string): Promise<PileWithDimension[]> {
   const database = await initDb();
   const rows = await database
-    .select({
-      id: pilingPiles.id,
-      siteId: pilingPiles.siteId,
-      areaId: pilingPiles.areaId,
-      pileIdCode: pilingPiles.pileIdCode,
-      areaLocation: pilingPiles.areaLocation,
-      dimensionId: pilingPiles.dimensionId,
-      notes: pilingPiles.notes,
-      syncedAt: pilingPiles.syncedAt,
-      dia: pilingDimensions.dia,
-      depth: pilingDimensions.depth,
-    })
+    .select(pileWithDimensionColumns)
     .from(pilingPiles)
     .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
     .where(eq(pilingPiles.siteId, siteId));
   return rows;
+}
+
+export interface PilesPageParams {
+  siteId: string;
+  /** Substring match against pileIdCode, case-insensitive. Empty/undefined = no filter. */
+  search?: string;
+  /** Restrict to one location. Undefined/'all' = no location filter. */
+  locationId?: string;
+  /** Pile ids to exclude from results (e.g. piles already in today's plan). */
+  excludeIds?: string[];
+  /** 1-based page number. */
+  page: number;
+  pageSize: number;
+}
+
+export interface PilesPageResult {
+  items: PileWithDimension[];
+  total: number;
+}
+
+/**
+ * Paginated + searchable variant of getPilesBySiteWithDimensions, for pickers
+ * that must stay responsive on sites with thousands of piles. Filtering,
+ * limiting, and counting all happen in SQL — only one page is ever loaded
+ * into memory.
+ */
+export async function getPilesBySiteWithDimensionsPage({
+  siteId,
+  search,
+  locationId,
+  excludeIds = [],
+  page,
+  pageSize,
+}: PilesPageParams): Promise<PilesPageResult> {
+  const database = await initDb();
+  const q = search?.trim();
+
+  const conditions = [eq(pilingPiles.siteId, siteId)];
+  if (q) conditions.push(like(pilingPiles.pileIdCode, `%${q}%`));
+  if (locationId && locationId !== 'all') conditions.push(eq(pilingPiles.locationId, locationId));
+  if (excludeIds.length > 0) conditions.push(notInArray(pilingPiles.id, excludeIds));
+  const where = and(...conditions);
+
+  const [items, countRows] = await Promise.all([
+    database
+      .select(pileWithDimensionColumns)
+      .from(pilingPiles)
+      .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
+      .where(where)
+      .orderBy(pilingPiles.pileIdCode, pilingPiles.id)
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    database
+      .select({ total: sql<number>`count(*)` })
+      .from(pilingPiles)
+      .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
+      .where(where),
+  ]);
+
+  return { items, total: countRows[0]?.total ?? 0 };
+}
+
+export interface LocationPileCount {
+  locationId: string | null;
+  count: number;
+}
+
+/**
+ * Pile counts grouped by location, for labeling a location-filter pill row
+ * without loading the site's full pile list into memory. Independent of any
+ * search text — mirrors PilesScreen.tsx's existing dimension-count behavior,
+ * where facet counts don't react to the active search query.
+ */
+export async function getPileCountsByLocationForSite(
+  siteId: string,
+  excludeIds: string[] = [],
+): Promise<LocationPileCount[]> {
+  const database = await initDb();
+
+  const conditions = [eq(pilingPiles.siteId, siteId)];
+  if (excludeIds.length > 0) conditions.push(notInArray(pilingPiles.id, excludeIds));
+
+  return database
+    .select({ locationId: pilingPiles.locationId, count: sql<number>`count(*)` })
+    .from(pilingPiles)
+    .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
+    .where(and(...conditions))
+    .groupBy(pilingPiles.locationId);
 }

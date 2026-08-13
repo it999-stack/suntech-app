@@ -5,30 +5,33 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 
 export type Step =
-  | 'area'
+  | 'location'
   | 'start'
   | 'machines'
   | 'team'
   | 'piles'
+  | 'resume'
   | 'steps'
   | 'preview';
 
 export const STEP_ORDER: Step[] = [
   'start',
-  'area',
+  'location',
   'machines',
   'team',
   'piles',
+  'resume',
   'steps',
   'preview',
 ];
 
 export const STEP_LABEL: Record<Step, string> = {
-  area: 'Area & Piles',
+  location: 'Location & Piles',
   start: 'Start Time',
   machines: 'Machines',
   team: 'Team',
   piles: 'Piles & Assign',
+  resume: 'Planned Piles',
   steps: 'Steps',
   preview: 'Preview',
 };

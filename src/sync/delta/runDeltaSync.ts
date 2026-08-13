@@ -7,6 +7,7 @@
 import { deltaPush, type FlushResult } from '@sync/delta/deltaPush';
 import { deltaPull, type DeltaPullResult } from '@sync/delta/deltaPull';
 import { getCursor, setCursor } from '@repositories/syncCursorRepository';
+import { SyncAppConfigStep } from '@sync/steps/syncAppConfig';
 
 export type DeltaSyncResult = {
   ran: boolean;
@@ -45,6 +46,14 @@ export async function runDeltaSync(siteId: string): Promise<DeltaSyncResult> {
   if (!cursor) return { ran: false };
 
   const push = await deltaPush();
+
+  // app_config isn't part of the per-site pull payload below (it isn't site
+  // data — see syncAppConfig.ts) so it's refreshed here too, not just at
+  // bootstrap, so a server-side constants change reaches already-installed
+  // apps without a reinstall. Non-fatal: on failure, whatever's already
+  // cached locally (or the in-memory defaults) just stays in place until the
+  // next successful sync.
+  await new SyncAppConfigStep().run({ siteId });
 
   try {
     const pull = await deltaPull(siteId, cursor);

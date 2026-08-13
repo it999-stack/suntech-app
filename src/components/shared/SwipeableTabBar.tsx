@@ -5,8 +5,8 @@
 // the same controlled `value`/`onChange`. Domain-agnostic: callers supply
 // `items` and a `renderPage` function.
 
-import React, { useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, ScrollView, StyleSheet, type LayoutChangeEvent } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import PagerView from 'react-native-pager-view';
 import { colors, spacing, radius } from '@theme/theme';
@@ -77,6 +77,17 @@ export interface SwipeableTabBarProps<T extends string = string> {
   /** Background color the fade should dissolve into. Required when scrollHint='fade'
    * if the bar sits on a non-default background (e.g. inside a gradient screen). */
   fadeToColor?: string;
+  /** Optional fixed element rendered to the right of the pill row (e.g. an icon
+   * button) — same layout PilesScreen.tsx uses for its search icon beside filter
+   * pills. Omitted by default; existing callers are unaffected. */
+  trailingAccessory?: React.ReactNode;
+  /**
+   * Pill sizing preset.
+   * 'default' — this component's own padding/font (existing behavior).
+   * 'piles'   — matches PilesScreen.tsx's filter `Pill` (minWidth 84, tighter
+   *             padding, 1px border, 13/500 text). Opt-in; other callers unaffected.
+   */
+  pillVariant?: 'default' | 'piles';
 }
 
 const FALLBACK_PAGE_HEIGHT = 120;
@@ -89,6 +100,8 @@ export default function SwipeableTabBar<T extends string = string>({
   renderPage,
   scrollHint = 'fade',
   fadeToColor = colors.backdropEnd,
+  trailingAccessory,
+  pillVariant = 'default',
 }: SwipeableTabBarProps<T>) {
   const pagerRef = useRef<PagerView>(null);
   const [pageHeights, setPageHeights] = useState<Record<number, number>>({});
@@ -100,53 +113,94 @@ export default function SwipeableTabBar<T extends string = string>({
     pagerRef.current?.setPage(index);
   };
 
+  // Keeps the active pill in view whenever the selection changes — including
+  // via a page swipe, which moves the pager but (unlike a pill tap) never
+  // touches this ScrollView on its own, so the pill row would otherwise sit
+  // frozen while the page underneath moves on.
+  const pillScrollRef = useRef<ScrollView>(null);
+  const pillLayouts = useRef<Record<number, { x: number; width: number }>>({});
+  const [rowWidth, setRowWidth] = useState(0);
+  const [layoutTick, setLayoutTick] = useState(0);
+
+  const handlePillLayout = (index: number) => (e: LayoutChangeEvent) => {
+    const { x, width } = e.nativeEvent.layout;
+    pillLayouts.current[index] = { x, width };
+    setLayoutTick((t) => t + 1);
+  };
+
+  useEffect(() => {
+    const layout = pillLayouts.current[activeIndex];
+    if (!layout || !rowWidth) return;
+    const targetX = layout.x + layout.width / 2 - rowWidth / 2;
+    pillScrollRef.current?.scrollTo({ x: Math.max(0, targetX), animated: true });
+    // layoutTick re-runs this once a pill's real position is measured (it isn't
+    // known yet on the very first render), not just when activeIndex changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex, rowWidth, layoutTick]);
+
   if (items.length === 0) return null;
 
   return (
     <View>
-      <View style={styles.pillRowWrap}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.pillRow,
-            // extra trailing space so the last pill can sit half-cut at the edge
-            scrollHint !== 'none' && { paddingRight: spacing.lg },
-          ]}
+      <View style={styles.topRow}>
+        <View
+          style={[styles.pillRowWrap, styles.pillRowFlex]}
+          onLayout={(e) => setRowWidth(e.nativeEvent.layout.width)}
         >
-          {items.map((item, index) => {
-            const color = item.color ?? colors.accent;
-            const active = index === activeIndex;
-            return (
-              <Pressable
-                key={item.value}
-                onPress={() => handlePillPress(index)}
-                style={[
-                  styles.pill,
-                  {
-                    backgroundColor: active ? `${color}22` : colors.glassFill,
-                    borderColor: active ? `${color}55` : 'transparent',
-                  },
-                ]}
-              >
-                {item.renderIcon?.(color, active)}
-                <Text style={[styles.pillText, { color: active ? color : colors.textSecondary }]}>
-                  {item.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+          <ScrollView
+            ref={pillScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={[
+              styles.pillRow,
+              // extra trailing space so the last pill can sit half-cut at the edge
+              scrollHint !== 'none' && { paddingRight: spacing.lg },
+            ]}
+          >
+            {items.map((item, index) => {
+              const color = item.color ?? colors.accent;
+              const active = index === activeIndex;
+              return (
+                <Pressable
+                  key={item.value}
+                  onPress={() => handlePillPress(index)}
+                  onLayout={handlePillLayout(index)}
+                  style={[
+                    styles.pill,
+                    pillVariant === 'piles' && styles.pillPilesVariant,
+                    {
+                      backgroundColor: active ? `${color}22` : colors.glassFill,
+                      borderColor: active ? `${color}55` : 'transparent',
+                    },
+                  ]}
+                >
+                  {item.renderIcon?.(color, active)}
+                  <Text
+                    style={[
+                      styles.pillText,
+                      pillVariant === 'piles' && styles.pillTextPilesVariant,
+                      { color: active ? color : colors.textSecondary },
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
 
-        {scrollHint === 'fade' && (
-          <LinearGradient
-            colors={['transparent', fadeToColor]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.fadeEdge}
-            pointerEvents="none"
-          />
-        )}
+          {scrollHint === 'fade' && (
+            <LinearGradient
+              colors={['transparent', fadeToColor]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.fadeEdge}
+              pointerEvents="none"
+            />
+          )}
+        </View>
+
+        {trailingAccessory}
       </View>
 
       {scrollHint === 'dots' && (
@@ -178,8 +232,16 @@ export default function SwipeableTabBar<T extends string = string>({
 }
 
 const styles = StyleSheet.create({
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
   pillRowWrap: {
     position: 'relative',
+  },
+  pillRowFlex: {
+    flex: 1,
   },
   pillRow: {
     flexDirection: 'row',
@@ -193,10 +255,18 @@ const styles = StyleSheet.create({
     gap: 6,
     borderRadius: radius.pill,
     borderWidth: 1.5,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
     paddingVertical: 7,
   },
   pillText: { fontSize: 12, fontWeight: '800' },
+  pillPilesVariant: {
+    minWidth: 84,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    justifyContent: 'center',
+  },
+  pillTextPilesVariant: { fontSize: 13, fontWeight: '500' },
 
   // 'fade' variant
   fadeEdge: {

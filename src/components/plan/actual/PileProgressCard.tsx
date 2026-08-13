@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ChevronRight, AlertTriangle } from 'lucide-react-native';
+import { ChevronRight, AlertTriangle, Coffee } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { ActualEntry } from '@app-types/plan';
@@ -14,10 +14,21 @@ interface Props {
   steps: ActualEntry[];
   /** True when a not-yet-done step's assigned machine has been reported down. */
   hasBreakdownWarning?: boolean;
+  /** True when the current step's assigned machine has an open self-logged
+   * idle session — this pile's actual time entry is blocked until it ends. */
+  isBlockedByIdle?: boolean;
   onPress: () => void;
 }
 
-export default function PileProgressCard({ pileCode, rig, crane, steps, hasBreakdownWarning, onPress }: Props) {
+export default function PileProgressCard({
+  pileCode,
+  rig,
+  crane,
+  steps,
+  hasBreakdownWarning,
+  isBlockedByIdle,
+  onPress,
+}: Props) {
   const total = steps.length;
   const doneCount = steps.filter((s) => s.actualEnd !== undefined).length;
   const currentIndex = steps.findIndex((s) => s.actualEnd === undefined);
@@ -64,13 +75,25 @@ export default function PileProgressCard({ pileCode, rig, crane, steps, hasBreak
             <Text style={styles.warningText}>Machine reported down — tap to reassign</Text>
           </View>
         )}
+
+        {isBlockedByIdle && (
+          <View style={styles.idleBanner}>
+            <Coffee size={14} color={colors.warning} />
+            <Text style={styles.idleText}>Machine idle — tap to end idle</Text>
+          </View>
+        )}
       </GlassCard>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {},
+  card: {
+    minHeight: 120,
+    width: '100%',
+    alignSelf: 'stretch',
+    paddingTop: spacing.sm,
+  },
   pad: { padding: spacing.md },
   topRow: {
     flexDirection: 'row',
@@ -125,6 +148,22 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '700',
     color: colors.danger,
+    flex: 1,
+  },
+  idleBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.warningSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginTop: spacing.md,
+  },
+  idleText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.warning,
     flex: 1,
   },
 });

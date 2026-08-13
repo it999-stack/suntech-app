@@ -5,6 +5,8 @@
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import { stepNaturalEndMs } from '@utils/stepTiming';
+import { stepWorkStart, isContinuingStep } from '@utils/helpers';
+import { toLocalIsoString } from '@/utils/formatTime';
 
 // formatMinutes (duration) lives in utils/formatTime — re-export for local consumers.
 export { formatDurationMinutes as formatMinutes } from '@/utils/formatTime';
@@ -141,4 +143,64 @@ export function computePileStepBreaks(
     }
   }
   return breaks;
+}
+
+export interface StepSegment {
+  start: string;
+  end: string;
+  durationMinutes: number;
+}
+
+export interface StepInternalSplit {
+  segments: StepSegment[];
+  breaks: { label: string; start: string; end: string }[];
+}
+
+/**
+ * Splits one step's own [workStart, plannedEnd] span wherever a real, configured
+ * non-working window (lunch/shift-change) landed strictly inside it — the step was
+ * paused and resumed by the scheduler (see skipNonWorkingWindows) without a step
+ * boundary in between, so computePileStepBreaks (inter-step only) never sees it.
+ * A window sitting exactly at this step's own edge is already that function's
+ * job and is deliberately excluded here (`>`/`<`, not `>=`/`<=`) to avoid
+ * double-counting it. Returns null when there's nothing to split — no
+ * plannedEnd/assignedMachineId, or no window falls strictly inside.
+ */
+export function splitStepByInternalWindows(
+  step: PlanStepWithMeta,
+  windowsByMachineId: Record<string, EffectivePlanWindow[]>,
+): StepInternalSplit | null {
+  if (!step.plannedStart || isContinuingStep(step) || !step.assignedMachineId) return null;
+  const workStart = new Date(stepWorkStart(step)).getTime();
+  const stepEnd = new Date(step.plannedEnd as string).getTime();
+
+  const windows = (windowsByMachineId[step.assignedMachineId] ?? [])
+    .map((w) => ({ label: w.label, start: new Date(w.start).getTime(), end: new Date(w.end).getTime() }))
+    .filter((w) => w.start > workStart && w.end < stepEnd)
+    .sort((a, b) => a.start - b.start);
+  if (windows.length === 0) return null;
+
+  const segments: StepSegment[] = [];
+  const breaks: { label: string; start: string; end: string }[] = [];
+  let cursor = workStart;
+  for (const w of windows) {
+    segments.push({
+      start: toLocalIsoString(new Date(cursor)),
+      end: toLocalIsoString(new Date(w.start)),
+      durationMinutes: (w.start - cursor) / 60_000,
+    });
+    breaks.push({
+      label: w.label,
+      start: toLocalIsoString(new Date(w.start)),
+      end: toLocalIsoString(new Date(w.end)),
+    });
+    cursor = w.end;
+  }
+  segments.push({
+    start: toLocalIsoString(new Date(cursor)),
+    end: toLocalIsoString(new Date(stepEnd)),
+    durationMinutes: (stepEnd - cursor) / 60_000,
+  });
+
+  return { segments, breaks };
 }

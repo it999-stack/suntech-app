@@ -7,7 +7,7 @@ import { runBootstrapSync } from '@sync/bootstrap/bootstrapSync';
 import { runDeltaSync } from '@sync/delta/runDeltaSync';
 import { getCursor } from '@repositories/syncCursorRepository';
 import { getLastSyncTime } from '@repositories/pilesRepository';
-import type { StepResult } from '@sync/bootstrap/syncResult';
+import type { StepResult, SyncErrorKind } from '@sync/bootstrap/syncResult';
 
 type SyncState = {
   isSyncing: boolean;
@@ -15,6 +15,7 @@ type SyncState = {
   pilesCount: number | null;
   checklistsSynced: number | null;
   error: string | null;
+  errorKind: SyncErrorKind | null;
   /** Name of the step currently running (e.g. "piles"), null when idle. */
   currentStep: string | null;
   /** Steps finished so far in this run, in order. Reset at the start of each sync. */
@@ -30,6 +31,7 @@ export const useSyncStore = create<SyncState>((set) => ({
   pilesCount: null,
   checklistsSynced: null,
   error: null,
+  errorKind: null,
   currentStep: null,
   completedSteps: [],
 
@@ -43,11 +45,14 @@ export const useSyncStore = create<SyncState>((set) => ({
   },
 
   sync: async (siteId: string) => {
-    set({ isSyncing: true, error: null, currentStep: null, completedSteps: [] });
+    set({ isSyncing: true, error: null, errorKind: null, currentStep: null, completedSteps: [] });
     try {
       // No cursor yet — never bootstrapped (fresh install/reset) — run the
       // full bootstrap. Once a cursor exists, steady state is push + delta
-      // pull only; bootstrap never runs again for this device.
+      // pull only; bootstrap never runs again for this device. The cursor is
+      // a complete signal on its own: bootstrapSync.ts only persists it once
+      // every reference-data step succeeds, regardless of whether the site
+      // happens to have any piles yet.
       const cursor = await getCursor(siteId);
 
       if (!cursor) {
@@ -73,6 +78,7 @@ export const useSyncStore = create<SyncState>((set) => ({
           checklistsSynced,
           currentStep: null,
           error: failedStep ? failedStep.error! : null,
+          errorKind: failedStep ? (failedStep.errorKind ?? 'unknown') : null,
         });
         return;
       }
@@ -84,12 +90,14 @@ export const useSyncStore = create<SyncState>((set) => ({
         checklistsSynced: result.pull?.checklistsApplied ?? null,
         currentStep: null,
         error: result.error ?? null,
+        errorKind: null,
       });
     } catch (err) {
       set({
         isSyncing: false,
         currentStep: null,
         error: 'Sync failed. Please try again later.',
+        errorKind: 'unknown',
       });
       throw err;
     }

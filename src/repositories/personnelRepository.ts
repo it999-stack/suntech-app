@@ -1,7 +1,7 @@
 // src/repositories/personnelRepository.ts
 // CRUD helpers for piling_site_personnel in local SQLite.
 
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { initDb } from '@db/client';
 import {
   pilingSitePersonnel,
@@ -22,13 +22,13 @@ export async function savePersonnel(rows: NewPilingSitePersonnel[]): Promise<voi
     .onConflictDoUpdate({
       target: pilingSitePersonnel.id,
       set: {
-        name: pilingSitePersonnel.name,
-        designation: pilingSitePersonnel.designation,
-        phone: pilingSitePersonnel.phone,
-        email: pilingSitePersonnel.email,
-        employeeCode: pilingSitePersonnel.employeeCode,
-        isActive: pilingSitePersonnel.isActive,
-        syncedAt: pilingSitePersonnel.syncedAt,
+        name: sql`excluded.name`,
+        designation: sql`excluded.designation`,
+        phone: sql`excluded.phone`,
+        email: sql`excluded.email`,
+        employeeCode: sql`excluded.employee_code`,
+        isActive: sql`excluded.is_active`,
+        syncedAt: sql`excluded.synced_at`,
       },
     });
 }

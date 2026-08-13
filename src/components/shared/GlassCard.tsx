@@ -43,7 +43,6 @@ const styles = StyleSheet.create({
     ...shadow.glass,
   },
   blur: {
-    flex: 1,
     borderRadius: radius.xl,
     overflow: 'hidden',
     borderWidth: 1,
@@ -51,7 +50,6 @@ const styles = StyleSheet.create({
   },
   borderless: { borderWidth: 0 },
   inner: {
-    flex: 1,
     backgroundColor: colors.glassFill,
     padding: 16,
   },

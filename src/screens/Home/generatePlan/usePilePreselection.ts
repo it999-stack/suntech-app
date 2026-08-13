@@ -11,7 +11,13 @@ import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
 import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { ResumeWorkInfo } from '@/services/resumeWorkService';
-import { buildResumePreselection, getLockedStepIds, mergeLockedSteps } from '@/services/planPreselectService';
+import {
+  buildResumePreselection,
+  buildResumeWorkByPileId,
+  getLockedStepIds,
+  mergeLockedSteps,
+} from '@/services/planPreselectService';
+import { useAppConfig } from '@state/AppConfigContext';
 
 export function usePilePreselection(args: {
   step: Step;
@@ -21,12 +27,13 @@ export function usePilePreselection(args: {
   steps: PilingStep[];
 }): void {
   const { step, draft, setDraft, pendingWorkItems, steps } = args;
+  const { config } = useAppConfig();
 
   const preselectKeyRef = useRef('');
 
   useEffect(() => {
     preselectKeyRef.current = '';
-  }, [draft.areaIds]);
+  }, [draft.locationIds]);
 
   useEffect(() => {
     if (step !== 'piles') return;
@@ -44,7 +51,12 @@ export function usePilePreselection(args: {
       pendingItems: pendingWorkItems,
       activeRigIds: draft.activeRigIds,
       activeCraneIds: draft.activeCraneIds,
+      maxPiles: config.maxAutoPreselectPiles,
     });
+    // Uncapped — every pending pile gets tracked, not just the auto-preselected subset,
+    // so a pile added later (manually, past the auto-preselect cap) is still flagged by
+    // the review Planned Piles step. See buildResumeWorkByPileId's own docstring.
+    const allResumeWorkByPileId = buildResumeWorkByPileId(pendingWorkItems);
 
     setDraft((prev) => {
       const manualIds = prev.selectedPileIds.filter(
@@ -56,14 +68,21 @@ export function usePilePreselection(args: {
           .map((id) => [id, prev.assignments[id]]),
       );
 
+      // A pile the user already confirmed keeps that confirmation instead of being
+      // reset back to unconfirmed every time this effect re-runs (e.g. active
+      // rigs/cranes changed).
+      const confirmedOverrides = Object.fromEntries(
+        Object.entries(prev.resumeWorkByPileId).filter(([, r]) => r.remainingTimeConfirmed),
+      );
+
       return {
         ...prev,
         selectedPileIds: [...preselection.selectedPileIds, ...manualIds],
         assignments: { ...manualAssignments, ...preselection.assignments },
-        resumeWorkByPileId: preselection.resumeWorkByPileId,
+        resumeWorkByPileId: { ...allResumeWorkByPileId, ...confirmedOverrides },
       };
     });
-  }, [step, pendingWorkItems, draft.activeRigIds, draft.activeCraneIds]);
+  }, [step, pendingWorkItems, draft.activeRigIds, draft.activeCraneIds, config.maxAutoPreselectPiles]);
 
   useEffect(() => {
     if (step !== 'steps') return;

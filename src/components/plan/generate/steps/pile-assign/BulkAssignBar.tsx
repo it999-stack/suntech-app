@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Check, X, SquareCheckBig, Eraser } from 'lucide-react-native';
+import { X, SquareCheckBig, Eraser } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import MachineSelect from './MachineSelect';
@@ -19,7 +19,6 @@ interface BulkAssignBarProps {
   craneId: string | null;
   onSelectRig: (id: string) => void;
   onSelectCrane: (id: string) => void;
-  defaulted: boolean;
   onApply: () => void;
   onUnassign: () => void;
   unassignDisabled: boolean;
@@ -28,7 +27,7 @@ interface BulkAssignBarProps {
 export default function BulkAssignBar({
   selectedCount, onClear, panelOpen, onTogglePanel,
   rigs, cranes, rigId, craneId, onSelectRig, onSelectCrane,
-  defaulted, onApply, onUnassign, unassignDisabled,
+  onApply, onUnassign, unassignDisabled,
 }: BulkAssignBarProps) {
   return (
     <View style={styles.row}>
@@ -61,9 +60,6 @@ export default function BulkAssignBar({
         subtitle={`${selectedCount} ${selectedCount === 1 ? 'pile' : 'piles'} selected`}
         position="center"
       >
-        {defaulted && (
-          <Text style={styles.hint}>Defaulted to your last combination — change if needed.</Text>
-        )}
         <MachineSelect label="Rig" kind="rig" options={rigs} valueId={rigId} onSelect={onSelectRig} />
         <MachineSelect label="Crane" kind="crane" options={cranes} valueId={craneId} onSelect={onSelectCrane} />
         <Pressable
@@ -116,7 +112,6 @@ const styles = StyleSheet.create({
   },
   unassignButtonDisabled: { opacity: 0.4 },
   unassignButtonText: { ...typography.caption, fontWeight: '700', color: colors.white },
-  hint: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md },
   applyButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: colors.accent, borderRadius: radius.lg, paddingVertical: spacing.md,

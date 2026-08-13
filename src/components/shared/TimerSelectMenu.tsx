@@ -20,6 +20,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { createAudioPlayer } from 'expo-audio';
+import { Calendar, PencilLine } from 'lucide-react-native';
+import AppModal from '@components/shared/AppModal';
+import AppCalendar from '@components/shared/AppCalendar';
+import { toLocalDateStr } from '@utils/formatTime';
 import { colors as themeColors } from '@theme/theme';
 
 const ITEM_HEIGHT = 84;
@@ -50,8 +54,12 @@ interface TimerSelectMenuProps {
   /** Required in 'time' mode (the default). Ignored in 'duration' mode. */
   onTimeSelect?: (date: Date) => void;
   initialDate?: Date;
-  /** Optional callback fired when user confirms - receives the selected date (time mode only). */
-  onConfirm?: (date: Date) => void;
+  /**
+   * Optional callback fired when user confirms - receives the selected date
+   * (time mode only) and whether the user explicitly changed the date via
+   * the header calendar (as opposed to it just being the seeded default).
+   */
+  onConfirm?: (date: Date, dateWasExplicit: boolean) => void;
   /**
    * 'time' (default) — 12-hour wall-clock picker with AM/PM and day/night gradient.
    * 'duration' — plain hour/minute picker (0-23h), no AM/PM, white background,
@@ -70,6 +78,15 @@ interface TimerSelectMenuProps {
    * embed it inside their own modal/card. Caller owns visibility in this case.
    */
   embedded?: boolean;
+  /**
+   * Time mode only. When set, the weekday/date header becomes tappable and
+   * opens a calendar (no future dates) to change which day this time is
+   * being logged against — otherwise the header is a plain read-only label.
+   * Off by default so screens with their own separate date field (e.g.
+   * MachineEventsModal) or a date fixed by an earlier step (e.g. Generate
+   * Plan) aren't affected.
+   */
+  allowDateChange?: boolean;
 }
 
 // One shared player for every wheel's tick; volume is set per-play so fast
@@ -95,8 +112,6 @@ function WheelItem({ label, index, scrollY, fontSize, textColor }: WheelItemProp
     const distance = scrollY.value / ITEM_HEIGHT - index;
     const opacity = interpolate(distance, [-2, -1, 0, 1, 2], [0.15, 0.4, 1, 0.4, 0.15], Extrapolation.CLAMP);
     const scale = interpolate(distance, [-2, -1, 0, 1, 2], [0.7, 0.86, 1, 0.86, 0.7], Extrapolation.CLAMP);
-    // Cylindrical tilt: rows above/below the center lean away, like text
-    // wrapping around a drum.
     const rotateX = interpolate(distance, [-2, -1, 0, 1, 2], [55, 30, 0, -30, -55], Extrapolation.CLAMP);
     return {
       opacity,
@@ -113,8 +128,6 @@ function WheelItem({ label, index, scrollY, fontSize, textColor }: WheelItemProp
 interface WheelColumnProps {
   values: string[];
   selectedIndex: number;
-  /** `deltaCycles`: signed wrap count since last selection (0 for non-infinite
-   * columns). Only the hour column uses it, to auto-flip AM/PM. */
   onSelect: (index: number, deltaCycles?: number) => void;
   width: number;
   fontSize: number;
@@ -270,8 +283,10 @@ export default function TimerSelectMenu({
   onDurationSelect,
   title,
   embedded = false,
+  allowDateChange = false,
 }: TimerSelectMenuProps) {
   const isDuration = mode === 'duration';
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
 
   const [hour24, setHour24] = useState(() =>
     isDuration ? Math.floor((initialMinutes ?? 0) / 60) : (initialDate ?? new Date()).getHours(),
@@ -280,6 +295,10 @@ export default function TimerSelectMenu({
     isDuration ? (initialMinutes ?? 0) % 60 : (initialDate ?? new Date()).getMinutes(),
   );
   const [dayDate, setDayDate] = useState(initialDate ?? new Date());
+  // True only once the user deliberately picks a day via the header
+  // calendar — never inferred from comparing dates, so re-confirming the
+  // same day the user just picked still counts as explicit.
+  const [dateExplicitlyChanged, setDateExplicitlyChanged] = useState(false);
 
   // Reset the wheels to the current value every time the sheet opens.
   useEffect(() => {
@@ -293,6 +312,7 @@ export default function TimerSelectMenu({
       setHour24(d.getHours());
       setMinute(d.getMinutes());
       setDayDate(d);
+      setDateExplicitlyChanged(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -373,10 +393,10 @@ export default function TimerSelectMenu({
       onClose();
       return;
     }
-    const d = new Date(initialDate ?? new Date());
+    const d = new Date(dayDate);
     d.setHours(hour24, minute, 0, 0);
     onTimeSelect?.(d);
-    onConfirm?.(d);
+    onConfirm?.(d, dateExplicitlyChanged);
     onClose();
   }
 
@@ -417,12 +437,29 @@ export default function TimerSelectMenu({
       <View style={styles.header}>
         {isDuration ? (
           <Text style={styles.headerDateDark}>{title ?? 'Select remaining time'}</Text>
+        ) : allowDateChange ? (
+          <Pressable
+            style={styles.headerDateBar}
+            onPress={() => setDatePickerOpen(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Change date"
+          >
+            <Calendar size={20} color={themeColors.accent} style={styles.headerCalendarIcon} />
+            <Text style={styles.headerWeekdayOnLight}>
+              {headerLabel.weekday.charAt(0).toUpperCase() + headerLabel.weekday.slice(1).toLowerCase()}
+            </Text>
+            <Text style={styles.headerDateOnLight}>- {headerLabel.date}</Text>
+            <PencilLine size={16} color={themeColors.textSecondary} style={styles.headerEditIcon} />
+          </Pressable>
         ) : (
-          <>
+          <View style={styles.headerDateBarStatic}>
             <Animated.View style={[styles.headerDot, topDotStyle]} />
-            <Text style={styles.headerWeekday}>{headerLabel.weekday.toLowerCase()}</Text>
+            <Text style={styles.headerWeekday}>
+              {headerLabel.weekday.charAt(0).toUpperCase() + headerLabel.weekday.slice(1).toLowerCase()}
+            </Text>
             <Text style={styles.headerDate}> · {headerLabel.date}</Text>
-          </>
+          </View>
         )}
       </View>
 
@@ -456,15 +493,47 @@ export default function TimerSelectMenu({
     </Animated.View>
   );
 
-  if (embedded) return content;
+  const datePickerModal = allowDateChange && !isDuration ? (
+    <AppModal visible={datePickerOpen} onClose={() => setDatePickerOpen(false)} title="Select date" position="center">
+      <AppCalendar
+        selectedDate={toLocalDateStr(dayDate)}
+        onSelectDate={(dateStr) => {
+          const [y, m, d] = dateStr.split('-').map(Number);
+          setDayDate((prev) => {
+            const next = new Date(prev);
+            next.setFullYear(y, m - 1, d);
+            return next;
+          });
+          setDateExplicitlyChanged(true);
+          setDatePickerOpen(false);
+        }}
+        getDayState={(dateStr) => ({
+          disabled: dateStr > toLocalDateStr(new Date()),
+          selected: dateStr === toLocalDateStr(dayDate),
+        })}
+      />
+    </AppModal>
+  ) : null;
+
+  if (embedded) {
+    return (
+      <>
+        {content}
+        {datePickerModal}
+      </>
+    );
+  }
 
   return (
-    <Modal visible={visible} animationType="none" transparent onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={styles.centerWrap} pointerEvents="box-none">
-        {content}
-      </View>
-    </Modal>
+    <>
+      <Modal visible={visible} animationType="none" transparent onRequestClose={onClose} statusBarTranslucent>
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View style={styles.centerWrap} pointerEvents="box-none">
+          {content}
+        </View>
+      </Modal>
+      {datePickerModal}
+    </>
   );
 }
 
@@ -505,10 +574,7 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
+    width: '100%',
   },
   headerDot: {
     width: 6,
@@ -517,15 +583,47 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   headerWeekday: {
-    fontSize: 13,
+    fontSize: 17,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.6)',
+    color: themeColors.white,
     letterSpacing: 0.5,
   },
   headerDate: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
     color: themeColors.white,
+  },
+  headerDateBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    backgroundColor: themeColors.white,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  headerDateBarStatic: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+  },
+  headerCalendarIcon: {
+    marginRight: 2,
+  },
+  headerWeekdayOnLight: {
+    fontSize: 19,
+    fontWeight: '600',
+    color: themeColors.textPrimary,
+  },
+  headerDateOnLight: {
+    fontSize: 19,
+    fontWeight: '600',
+    color: themeColors.textPrimary,
+  },
+  headerEditIcon: {
+    marginLeft: 4,
   },
   headerDateDark: {
     fontSize: 15,

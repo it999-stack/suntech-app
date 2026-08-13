@@ -34,7 +34,7 @@ import Animated, {
   interpolate,
   LinearTransition,
 } from 'react-native-reanimated';
-import { ChevronUp, ChevronDown, Lock, X } from 'lucide-react-native';
+import { ChevronUp, ChevronDown, Lock, X, Plus, Trash2 } from 'lucide-react-native';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import type { MachineInfo } from '@/types/timeline';
 
@@ -53,10 +53,20 @@ interface ReorderPilesOverlayProps {
   onClose: () => void;
   machine: MachineInfo;
   piles: ReorderPile[];
-  onReorder: (newOrderIds: string[]) => void;
+  onReorder: (newOrderIds: string[]) => void | Promise<void>;
   /** True while a confirmed reorder is being applied to the real plan — guards
    *  the Confirm button against double-taps while that recompute is in flight. */
   isUpdating?: boolean;
+  /** When provided, shows a "+" button in the header for adding another pile
+   *  to this machine's sequence. Omitted by default; existing callers unaffected. */
+  onAddPile?: () => void;
+  /** When provided, shows a trash icon on each unlocked row for removing that
+   *  pile from the plan. Omitted by default; existing callers unaffected. */
+  onRemove?: (id: string) => void;
+  /** Overrides the footer button's label. Default: 'Confirm Sequence'. */
+  confirmLabel?: string;
+  /** Overrides the subtitle under the machine name. Default: 'Use the arrows to reorder, then confirm'. */
+  subtitleText?: string;
 }
 
 export default function ReorderPilesOverlay({
@@ -66,6 +76,10 @@ export default function ReorderPilesOverlay({
   piles,
   onReorder,
   isUpdating = false,
+  onAddPile,
+  onRemove,
+  confirmLabel = 'Confirm Sequence',
+  subtitleText = 'Use the arrows to reorder, then confirm',
 }: ReorderPilesOverlayProps) {
   const progress = useSharedValue(0);
 
@@ -100,9 +114,14 @@ export default function ReorderPilesOverlay({
     setLocalPiles(reordered); // local only — applied to the real plan on Confirm
   }
 
-  function confirm() {
-    onReorder(localPiles.map((p) => p.id));
-    onClose();
+  async function confirm() {
+    try {
+      await onReorder(localPiles.map((p) => p.id));
+      onClose();
+    } catch {
+      // Save failed — stay open so the user can retry without losing their
+      // edits. The parent already surfaced the error via Alert.
+    }
   }
 
   return (
@@ -117,10 +136,14 @@ export default function ReorderPilesOverlay({
             <View style={styles.headerTextWrap}>
               <View style={styles.titleRow}>
                 <Text style={styles.title}>{machine.machineNo} · Sequence</Text>
-                {isUpdating ? <ActivityIndicator size="small" color={colors.accent} /> : null}
               </View>
-              <Text style={styles.subtitle}>Use the arrows to reorder, then confirm</Text>
+              <Text style={styles.subtitle}>{subtitleText}</Text>
             </View>
+            {onAddPile && (
+              <Pressable onPress={onAddPile} hitSlop={12} style={styles.closeBtn}>
+                <Plus size={18} color={colors.accent} />
+              </Pressable>
+            )}
             <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
               <X size={18} color={colors.textSecondary} />
             </Pressable>
@@ -135,10 +158,6 @@ export default function ReorderPilesOverlay({
               data={localPiles}
               keyExtractor={(item) => item.id}
               renderItem={({ item, index }) => {
-                // A neighbor blocked by a locked pile is just as unmovable
-                // in that direction as one at the very edge of the list —
-                // its arrow should look and behave disabled too, not just
-                // no-op on press.
                 const canMoveUp = index > 0 && !localPiles[index - 1].locked;
                 const canMoveDown = index < localPiles.length - 1 && !localPiles[index + 1].locked;
                 return (
@@ -183,6 +202,18 @@ export default function ReorderPilesOverlay({
                             color={canMoveDown ? colors.accent : colors.textSecondary}
                           />
                         </Pressable>
+                        {onRemove && (
+                          <Pressable
+                            onPress={() => {
+                              setLocalPiles((prev) => prev.filter((p) => p.id !== item.id));
+                              onRemove(item.id);
+                            }}
+                            hitSlop={8}
+                            style={({ pressed }) => [styles.moveBtn, pressed && styles.moveBtnPressed]}
+                          >
+                            <Trash2 size={16} color={colors.danger} />
+                          </Pressable>
+                        )}
                       </View>
                     )}
                   </View>
@@ -206,7 +237,7 @@ export default function ReorderPilesOverlay({
                 {isUpdating ? (
                   <ActivityIndicator size="small" color={colors.white} />
                 ) : (
-                  <Text style={styles.confirmText}>Confirm Sequence</Text>
+                  <Text style={styles.confirmText}>{confirmLabel}</Text>
                 )}
               </Pressable>
             </View>
@@ -218,8 +249,6 @@ export default function ReorderPilesOverlay({
 }
 
 const styles = StyleSheet.create({
-  // Fills the whole screen — sits as a plain sibling in the tree, not a
-  // native Modal window.
   root: {
     position: 'absolute',
     top: 0,
@@ -227,7 +256,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 1000,
-    elevation: 20, // Android stacking, since there's no native Modal to force it above siblings
+    elevation: 20,
   },
   backdrop: {
     position: 'absolute',
@@ -257,6 +286,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    gap: spacing.xs,
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
   },

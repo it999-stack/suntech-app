@@ -9,9 +9,9 @@
 // pendingTrackOverrides + Confirm action), so tapping here never recomputes anything.
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { Drill, Forklift } from 'lucide-react-native';
-import { colors, spacing, radius, typography } from '@/theme/theme';
+import { colors, spacing, radius } from '@/theme/theme';
 
 export type TrackChoice = 'RIG' | 'CRANE';
 
@@ -42,22 +42,20 @@ function Tile({
 }) {
   const meta = TILE_META[track];
   const Icon = meta.icon;
+  const tint = selected
+    ? { backgroundColor: meta.soft, borderColor: meta.color }
+    : styles.tileUnselected;
   return (
     <Pressable
       onPress={onPress}
       disabled={!onPress}
-      style={[
-        styles.tile,
-        selected
-          ? { backgroundColor: meta.soft, borderColor: meta.color }
-          : styles.tileUnselected,
-      ]}
+      style={styles.tile}
       hitSlop={4}
+      accessibilityLabel={machineNo}
     >
-      <Icon size={16} color={selected ? meta.color : colors.textSecondary} />
-      <Text style={[styles.tileLabel, selected && { color: meta.color, fontWeight: '700' }]}>
-        {machineNo}
-      </Text>
+      <View style={[styles.tileIcon, tint]}>
+        <Icon size={16} color={selected ? meta.color : colors.textSecondary} />
+      </View>
     </Pressable>
   );
 }
@@ -93,24 +91,22 @@ export default React.memo(TrackChoiceTiles);
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    gap: spacing.xs,
+    gap: spacing.sm,
   },
   tile: {
-    width: 44,
-    height: 44,
+    alignItems: 'flex-start',
+    gap: 3,
+  },
+  tileIcon: {
+    width: 32,
+    height: 32,
     borderRadius: radius.sm,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
   },
   tileUnselected: {
     backgroundColor: 'transparent',
     borderColor: 'rgba(28,28,46,0.10)',
-  },
-  tileLabel: {
-    ...typography.caption,
-    fontSize: 9,
-    color: colors.textSecondary,
   },
 });

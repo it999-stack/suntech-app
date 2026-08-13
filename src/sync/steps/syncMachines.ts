@@ -7,6 +7,7 @@
 import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
 import type { SyncContext } from '@sync/bootstrap/syncContext';
 import type { StepResult } from '@sync/bootstrap/syncResult';
+import { toFailedStepResult } from '@sync/bootstrap/stepError';
 import { apiClient } from '@services/apiClient';
 import { saveMachines, deleteMachinesByIds } from '@repositories/machinesRepository';
 import type { NewPilingMachine } from '@db/schema';
@@ -22,20 +23,15 @@ export class SyncMachinesStep implements ISyncStep {
         id: m.id,
         siteId: m.site_id,
         machineNo: m.machine_no,
-        type: m.type,       // "RIG" | "CRANE"
-        status: m.status,   // "ACTIVE" | "INACTIVE"
+        type: m.type,
+        status: m.status,
         syncedAt,
       }));
       await saveMachines(rows);
       await deleteMachinesByIds((data.deleted_ids as string[]) ?? []);
       return { step: this.name, count: rows.length, syncedAt };
     } catch (err) {
-      return {
-        step: this.name,
-        count: 0,
-        syncedAt,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      return toFailedStepResult(this.name, syncedAt, err);
     }
   }
 }

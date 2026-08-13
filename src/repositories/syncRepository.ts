@@ -16,7 +16,7 @@ import {
   type PileActualStep,
   type PilMachineEvent,
 } from '@db/schema';
-import type { SyncChecklist } from '@sync/SyncAppPlanPayload';
+import type { SyncChecklist, SyncedVersion } from '@sync/SyncAppPlanPayload';
 
 // ─── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -187,4 +187,31 @@ export async function getChecklistsForSync(
   }
 
   return result;
+}
+
+/**
+ * Applies the `synced_versions` a push response echoes back — advances the
+ * local optimistic-concurrency cache (serverUpdatedAt) for rows the server
+ * just wrote, keyed by the id this client submitted them under. Lets the
+ * client learn its own write's new version immediately instead of waiting
+ * on the next pull, closing the window where a client's own rapid
+ * back-to-back edits (e.g. clear an actual time, then set a new one) could
+ * otherwise be rejected as a false self-conflict against a stale local cache.
+ */
+export async function applySyncedVersions(versions: SyncedVersion[]): Promise<void> {
+  if (!versions.length) return;
+  const db = await initDb();
+  for (const v of versions) {
+    if (v.entity === 'actual_step') {
+      await db
+        .update(pileActualSteps)
+        .set({ serverUpdatedAt: v.updated_at })
+        .where(eq(pileActualSteps.id, v.id));
+    } else if (v.entity === 'checklist_pile') {
+      await db
+        .update(pilingChecklistPiles)
+        .set({ serverUpdatedAt: v.updated_at })
+        .where(eq(pilingChecklistPiles.id, v.id));
+    }
+  }
 }

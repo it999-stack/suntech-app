@@ -32,9 +32,9 @@ const EXACT_ROLE_LABELS: Record<
   'PROJECT_MANAGER' | 'PLANNING_ENGINEER' | 'SHIFT_INCHARGE' | 'ENGINEER' | 'SUPERVISOR',
   string
 > = {
-  PROJECT_MANAGER: 'project manager',
-  PLANNING_ENGINEER: 'planning engineer',
-  SHIFT_INCHARGE: 'shift incharge',
+  PROJECT_MANAGER: 'project_manager',
+  PLANNING_ENGINEER: 'planning_engineer',
+  SHIFT_INCHARGE: 'shift_incharge',
   ENGINEER: 'engineer',
   SUPERVISOR: 'supervisor',
 };
@@ -81,6 +81,14 @@ export function getOperatorMachineCandidates(
   return personnel.filter((p) => matchesOperatorDesignation(machineType, p.designation));
 }
 
+/** Where a disabled candidate is already assigned — which machine (if any) and shift,
+ * relative to the picker currently open. Used to show "where are they working" in the
+ * picker instead of just greying the row out with no explanation. */
+export interface DisabledAssignmentInfo {
+  machineId: string | null; // null for Shift Incharge — no per-machine concept
+  shift: 'current' | 'other';
+}
+
 /**
  * Person ids that should show as disabled (visible in the list, not selectable) for a
  * per-machine role — Engineer, Supervisor, or Machine Operator — on a given machine+shift:
@@ -95,14 +103,16 @@ export function getMachineRoleDisabledIds(
   thisShiftMap: Record<string, string>,
   otherShiftMap: Record<string, string>,
   options: { excludeSameShiftOtherMachines: boolean },
-): Set<string> {
-  const disabled = new Set<string>();
-  for (const personnelId of Object.values(otherShiftMap)) {
-    if (personnelId) disabled.add(personnelId);
+): Map<string, DisabledAssignmentInfo> {
+  const disabled = new Map<string, DisabledAssignmentInfo>();
+  for (const [otherMachineId, personnelId] of Object.entries(otherShiftMap)) {
+    if (personnelId) disabled.set(personnelId, { machineId: otherMachineId, shift: 'other' });
   }
   if (options.excludeSameShiftOtherMachines) {
     for (const [otherMachineId, personnelId] of Object.entries(thisShiftMap)) {
-      if (personnelId && otherMachineId !== machineId) disabled.add(personnelId);
+      if (personnelId && otherMachineId !== machineId) {
+        disabled.set(personnelId, { machineId: otherMachineId, shift: 'current' });
+      }
     }
   }
   return disabled;
@@ -110,8 +120,23 @@ export function getMachineRoleDisabledIds(
 
 /** Person id that should show as disabled for Shift Incharge — whoever's already the OTHER
  * shift's incharge (a single plan-wide slot per shift, no per-machine concept). */
-export function getShiftInchargeDisabledIds(otherShiftInchargeId: string | null | undefined): Set<string> {
-  return new Set(otherShiftInchargeId ? [otherShiftInchargeId] : []);
+export function getShiftInchargeDisabledIds(
+  otherShiftInchargeId: string | null | undefined,
+): Map<string, DisabledAssignmentInfo> {
+  const disabled = new Map<string, DisabledAssignmentInfo>();
+  if (otherShiftInchargeId) disabled.set(otherShiftInchargeId, { machineId: null, shift: 'other' });
+  return disabled;
+}
+
+/** Formats a disabled candidate's assignment as "{machine} · {shift}" (or just the shift
+ * label for Shift Incharge, which has no machine). */
+export function formatAssignmentLocation(
+  info: DisabledAssignmentInfo,
+  machineNoFor: (machineId: string) => string,
+  shiftLabelFor: (shift: 'current' | 'other') => string,
+): string {
+  const shiftLabel = shiftLabelFor(info.shift);
+  return info.machineId ? `${machineNoFor(info.machineId)} · ${shiftLabel}` : shiftLabel;
 }
 
 export type MissingTeamField =

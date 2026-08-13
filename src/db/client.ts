@@ -35,6 +35,7 @@ export async function initDb() {
   // ── DEV: nuke all tables so every cold start is a clean slate ─────────────
   if (DEV_RESET_DB) {
     await sqlite.execAsync(`
+      DROP TABLE IF EXISTS app_config;
       DROP TABLE IF EXISTS pil_sync_cursor;
       DROP TABLE IF EXISTS pil_sync_queue;
       DROP TABLE IF EXISTS pil_machine_events;
@@ -46,6 +47,7 @@ export async function initDb() {
       DROP TABLE IF EXISTS pil_daily_checklists;
       DROP TABLE IF EXISTS pil_step_duration_templates;
       DROP TABLE IF EXISTS pil_steps;
+      DROP TABLE IF EXISTS pil_site_coordinators;
       DROP TABLE IF EXISTS pil_site_personnel;
       DROP TABLE IF EXISTS pil_machines;
       DROP TABLE IF EXISTS pil_non_working_windows;
@@ -53,14 +55,14 @@ export async function initDb() {
       DROP TABLE IF EXISTS pil_dimensions;
       DROP TABLE IF EXISTS pil_piles;
       DROP TABLE IF EXISTS pil_work_progress;
-      DROP TABLE IF EXISTS pil_areas;
+      DROP TABLE IF EXISTS pil_locations;
     `);
   }
 
   // ── Core sync tables ──────────────────────────────────────────────────────
 
   await sqlite.execAsync(`
-    CREATE TABLE IF NOT EXISTS pil_areas (
+    CREATE TABLE IF NOT EXISTS pil_locations (
       id          TEXT PRIMARY KEY NOT NULL,
       site_id     TEXT NOT NULL,
       name        TEXT NOT NULL,
@@ -74,8 +76,8 @@ export async function initDb() {
   `);
 
   await sqlite.execAsync(`
-    CREATE INDEX IF NOT EXISTS idx_areas_site_sort
-      ON pil_areas (site_id, sort_order, name);
+    CREATE INDEX IF NOT EXISTS idx_locations_site_sort
+      ON pil_locations (site_id, sort_order, name);
   `);
 
   await sqlite.execAsync(`
@@ -98,14 +100,19 @@ export async function initDb() {
       id           TEXT PRIMARY KEY NOT NULL,
       site_id      TEXT NOT NULL,
       dimension_id TEXT NOT NULL,
-      area_id      TEXT,
+      location_id  TEXT,
       pile_id_code TEXT NOT NULL,
-      area_location TEXT,
+      area         TEXT,
       notes        TEXT,
       synced_at    INTEGER NOT NULL,
       updated_at   INTEGER,
       deleted_at   INTEGER
     );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_pil_piles_site_code
+      ON pil_piles (site_id, pile_id_code);
   `);
 
   await sqlite.execAsync(`
@@ -178,11 +185,23 @@ export async function initDb() {
   `);
 
   await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_site_coordinators (
+      id         TEXT PRIMARY KEY NOT NULL,
+      site_id    TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      phone      TEXT,
+      email      TEXT,
+      synced_at  INTEGER NOT NULL
+    );
+  `);
+
+  await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_steps (
       id             TEXT PRIMARY KEY NOT NULL,
       step_name      TEXT NOT NULL,
       sequence_order INTEGER NOT NULL,
       track          TEXT NOT NULL,
+      is_splittable  INTEGER NOT NULL DEFAULT 1,
       updated_at     INTEGER
     );
   `);
@@ -253,21 +272,12 @@ export async function initDb() {
       ON pil_checklist_personnel (checklist_id, role, shift_slot)
       WHERE role = 'SHIFT_INCHARGE';
   `);
-  // ENGINEER/SUPERVISOR/MACHINE_OPERATOR are now per-shift too, so shift_slot
-  // joins the key — a machine can have a different person per role per
-  // shift. CREATE INDEX IF NOT EXISTS is a no-op on devices where the old
-  // (checklist_id, role, machine_id) index already exists under this name,
-  // so the old definition must be dropped explicitly before recreating it.
-  await sqlite.execAsync(`DROP INDEX IF EXISTS idx_checklist_personnel_machine;`);
   await sqlite.execAsync(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_personnel_machine
       ON pil_checklist_personnel (checklist_id, role, machine_id, shift_slot)
       WHERE machine_id IS NOT NULL;
   `);
 
-  // Site-scoped "last used" personnel per role — server is the sole writer
-  // (see roleDefaultsRepository.replaceRoleDefaultsForSite), read once at
-  // draft-init time to pre-fill a new plan's role pickers.
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_role_defaults (
       id            TEXT PRIMARY KEY NOT NULL,
@@ -290,9 +300,7 @@ export async function initDb() {
       ON pil_role_defaults (site_id, role, shift_slot)
       WHERE role = 'SHIFT_INCHARGE';
   `);
-  // Same shift_slot-joins-the-key change as idx_checklist_personnel_machine
-  // above, and same reason for the explicit drop first.
-  await sqlite.execAsync(`DROP INDEX IF EXISTS idx_role_defaults_machine;`);
+  // Same shift_slot-joins-the-key change as idx_checklist_personnel_machine above.
   await sqlite.execAsync(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_role_defaults_machine
       ON pil_role_defaults (site_id, role, machine_id, shift_slot)
@@ -404,6 +412,16 @@ export async function initDb() {
       site_id      TEXT PRIMARY KEY NOT NULL,
       cursor_value TEXT,
       updated_at   INTEGER
+    );
+  `);
+
+  // Server-managed constants (see modules/shared/app_config/constants.py) —
+  // not piling-specific, hence no pil_ prefix.
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS app_config (
+      key        TEXT PRIMARY KEY NOT NULL,
+      value      TEXT NOT NULL,
+      synced_at  INTEGER NOT NULL
     );
   `);
 

@@ -50,6 +50,13 @@ interface Props {
    * a ScrollView breaks touch handling. Defaults to true.
    */
   scrollable?: boolean;
+  /**
+   * Set false when this modal has no direct text input and only hosts
+   * nested child modals (which have their own keyboard avoidance) — avoids
+   * this modal's KeyboardAvoidingView reacting to a child modal's keyboard
+   * events and visibly resizing the sheet. Defaults to true.
+   */
+  avoidKeyboard?: boolean;
 }
 
 export default function AppModal({
@@ -62,6 +69,7 @@ export default function AppModal({
   position = 'bottom',
   topOffset = DEFAULT_TOP_OFFSET,
   scrollable = true,
+  avoidKeyboard = true,
 }: Props) {
   const isTop = position === 'top';
   const isCenter = position === 'center';
@@ -123,6 +131,7 @@ export default function AppModal({
       <KeyboardAvoidingView
         style={styles.flexContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        enabled={avoidKeyboard}
       >
         <Pressable style={styles.backdrop} onPress={onClose} />
 

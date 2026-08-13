@@ -69,8 +69,8 @@ export type ChecklistPersonnelAssignment = {
 export type PlanDraft = {
   /** "YYYY-MM-DD" — the date this plan covers. */
   date: string;
-  /** Work areas whose piles are available to this plan. */
-  areaIds: string[];
+  /** Work locations whose piles are available to this plan. */
+  locationIds: string[];
   /** ISO timestamp — when the 24hr plan begins. */
   planStartTime: string;
   /** Active rig ids for today (user deselects broken ones in MachineSelectStep). */
@@ -114,11 +114,52 @@ export type ActualEntry = {
   actualStart?: number;
   /** Actual end — minutes since midnight, undefined if not yet finished. */
   actualEnd?: number;
+  /** ISO passthroughs of the four fields above, used for date-aware duration
+   * math (plannedStart/actualStart etc. lose the date once reduced to
+   * minutes-since-midnight, which breaks duration calc for overnight steps). */
+  plannedStartIso?: string;
+  plannedEndIso?: string;
+  actualStartIso?: string;
+  actualEndIso?: string;
   remarks?: string;
   /** Machine currently assigned to this step (pil_plan_steps.assigned_machine_id). */
   assignedMachineId?: string;
   /** Machine number label (e.g. "R-01") — joined from piling_machines. */
   assignedMachineNo?: string;
+  /** ISO anchor timestamp the actual-time picker uses to seed its displayed
+   * date for "Fill/Edit start time" — see resolveActualTimeAnchor. */
+  startAnchorIso?: string;
+  /** Same, for "Fill/Edit finish time". */
+  endAnchorIso?: string;
+  /** pil_plan_steps.buffer_minutes for this step — used only to compute the
+   * suggested default start time once the assigned machine becomes free
+   * (machineFloor + bufferMinutes). Never a hard floor. 0 when null/legacy. */
+  bufferMinutes: number;
+  /** Configured non-working window(s) (lunch, shift change, etc.) that landed
+   * strictly inside this step's own plan span, re-derived at render time via
+   * splitStepByInternalWindows — not persisted, since pil_plan_steps has no
+   * column for it. Explains why plannedEndIso is later than the step's pure
+   * work duration would suggest. Undefined/empty when nothing overlapped. */
+  planBreaks?: { label: string; start: string; end: string }[];
+};
+
+/** Shape expected by PileProgressCard and PileStepsModal — one pile's steps
+ * grouped with its rig/crane assignment, used by FillActualScreen. */
+export type PileGroup = {
+  checklistPileId: string;
+  pileId: string;
+  pileCode: string;
+  rig: string;
+  crane: string;
+  rigId: string;
+  craneId: string;
+  steps: ActualEntry[];
+  /** True when a not-yet-done step's assigned machine has status BREAKDOWN. */
+  hasBreakdownWarning: boolean;
+  /** True when the current (not-yet-done) step's assigned machine has an open
+   * self-logged idle session (status IDLE) — that step's actual time entry is
+   * blocked until the idle session is ended, everywhere this pile appears. */
+  isBlockedByIdle: boolean;
 };
 
 /**
@@ -143,7 +184,7 @@ export function defaultPlanDraft(today: string): PlanDraft {
   const dt = new Date(y, m - 1, d, 8, 0, 0, 0);
   return {
     date: today,
-    areaIds: [],
+    locationIds: [],
     planStartTime: toLocalIsoString(dt),
     activeRigIds: [],
     activeCraneIds: [],

@@ -34,6 +34,21 @@ export function formatTime(iso: string | null | undefined): string {
 }
 
 /**
+ * Format an ISO timestamp to time + short date, no year.
+ * e.g. "2026-08-10T08:30:00Z" → "8:30 AM, 10 Aug"
+ */
+export function formatTimeWithDay(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return `${formatTime(iso)}, ${d.getDate()} ${MONTH_ABBR[d.getMonth()]}`;
+  } catch {
+    return '—';
+  }
+}
+
+/**
  * Format an ISO timestamp to full date + time.
  * e.g. "2026-07-09T08:30:00Z" → "09 Jul 2026, 8:30 AM"
  */
@@ -164,12 +179,15 @@ export function formatDurationLong(totalMinutes: number): string {
  */
 export function formatDuration(startIso: string, endIso: string): string {
   try {
-    const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
-    const totalMin = Math.round(ms / 60000);
-    return formatDurationMinutes(totalMin);
+    return formatDurationMinutes(durationMinutes(startIso, endIso));
   } catch {
     return '—';
   }
+}
+
+/** Minutes between two ISO timestamps — date-aware, so correct across midnight. */
+export function durationMinutes(startIso: string, endIso: string): number {
+  return Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
 }
 
 // ─── 4. Date math utilities ───────────────────────────────────────────────────
@@ -191,50 +209,55 @@ export function addMinutes(date: Date, minutes: number): Date {
 }
 
 /**
- * Generous cap on how far forward a single actual-time entry can roll across
- * midnight before it's treated as a genuine backward mistake instead of an
- * overnight continuation (piling steps run for hours, never ~a full day).
- */
-const MAX_OVERNIGHT_GAP_MINUTES = 20 * 60; // 20h
-
-/**
- * True when `candidate` (minutes-since-midnight) is at/after `anchor`, once
- * overnight wraparound is accounted for. Piling steps legitimately continue
- * past midnight (e.g. previous step ends 21:45 = 1305, this one finishes
- * 04:30 the next morning = 270), so a numerically smaller candidate usually
- * means "the following calendar day," not "earlier today." Only rejects when
- * the implied continuation gap is implausibly long, which is the signal that
- * it's actually a same-day backward mistake.
- */
-export function isAtOrAfterOvernightWrap(candidate: number, anchor: number): boolean {
-  if (candidate >= anchor) return true;
-  return candidate + 1440 - anchor <= MAX_OVERNIGHT_GAP_MINUTES;
-}
-
-/**
- * Mirror of isAtOrAfterOvernightWrap for upper bounds — true when `candidate`
- * is at/before `anchor`, tolerating the case where `anchor` itself is the one
- * that rolled past midnight (e.g. "the next step's start time").
- */
-export function isAtOrBeforeOvernightWrap(candidate: number, anchor: number): boolean {
-  if (candidate <= anchor) return true;
-  return anchor + 1440 - candidate <= MAX_OVERNIGHT_GAP_MINUTES;
-}
-
-/**
- * Resolves the correct calendar Date for a newly-picked minutes-since-midnight
- * value, anchored on the last known real ISO timestamp in this step sequence
- * (e.g. the previous step's actual end, or this step's own actual start) —
- * rolling forward one calendar day if the picked time-of-day is earlier than
- * the anchor's, mirroring pilingPlannerService's window-rollover pattern.
+ * Resolves the calendar Date for a newly-picked minutes-since-midnight value,
+ * anchored on the last known real ISO timestamp in this step sequence (e.g.
+ * the previous step's actual end, or this step's own actual start). Always
+ * places the picked time-of-day on the anchor's own calendar day — it never
+ * infers/rolls onto a different day. Crossing into a new calendar day (a
+ * genuine overnight continuation) is something the user must do explicitly
+ * via the time picker's calendar icon; see `explicitDate` in
+ * StepTimeControl/EditTimeButton.
  */
 export function resolveOvernightDate(anchorIso: string, minutesSinceMidnight: number): Date {
-  const anchor = new Date(anchorIso);
-  const anchorMinutes = anchor.getHours() * 60 + anchor.getMinutes();
-  const d = new Date(anchor);
-  if (minutesSinceMidnight < anchorMinutes) d.setDate(d.getDate() + 1);
+  const d = new Date(anchorIso);
   d.setHours(Math.floor(minutesSinceMidnight / 60), minutesSinceMidnight % 60, 0, 0);
   return d;
+}
+
+export interface ActualTimeAnchorStep {
+  plannedStart?: string | null;
+  plannedEnd?: string | null;
+  actualStart?: string | null;
+  actualEnd?: string | null;
+}
+
+/**
+ * Resolves the anchor ISO timestamp that a newly-picked actual start/finish
+ * time will be attributed to (paired with resolveOvernightDate) — the
+ * previous step's actual/planned end for a start time, or this step's own
+ * actual start for a finish time, falling back through planned times and
+ * finally the checklist's plan_start_time. Single source of truth shared by
+ * the time picker's displayed date and the save path itself, so the two
+ * can't silently disagree about "what date is this" (which is what caused
+ * the picker to show device-today instead of the checklist's date).
+ */
+export function resolveActualTimeAnchor(
+  field: 'actualStart' | 'actualEnd',
+  step: ActualTimeAnchorStep,
+  previousStep: ActualTimeAnchorStep | null,
+  planStartTime: string | null | undefined,
+): string {
+  if (field === 'actualEnd') {
+    return step.actualStart ?? step.plannedStart ?? planStartTime ?? toLocalIsoString(new Date());
+  }
+  return (
+    previousStep?.actualEnd ??
+    previousStep?.plannedEnd ??
+    previousStep?.plannedStart ??
+    step.plannedStart ??
+    planStartTime ??
+    toLocalIsoString(new Date())
+  );
 }
 
 // ─── 5. ISO serialization (writes) ────────────────────────────────────────────

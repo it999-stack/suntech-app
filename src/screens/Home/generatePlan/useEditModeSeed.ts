@@ -43,14 +43,15 @@ export function useEditModeSeed(args: {
         assignments[cp.pileId] = { rig: cp.rigId, crane: cp.craneId };
       });
 
-      // Areas aren't stored on the checklist itself — recover them from the
-      // areaId of each checklist pile so AreaSelectStep and PileAssignStep
-      // (which both derive from draft.areaIds) preselect correctly on edit.
+      // Locations aren't stored on the checklist itself — recover them from
+      // the locationId of each checklist pile so LocationSelectStep and
+      // PileAssignStep (which both derive from draft.locationIds) preselect
+      // correctly on edit.
       const pileById = new Map(piles.map((p) => [p.id, p]));
-      const areaIds = [...new Set(
+      const locationIds = [...new Set(
         ids
-          .map((pileId) => pileById.get(pileId)?.areaId)
-          .filter((areaId): areaId is string => !!areaId),
+          .map((pileId) => pileById.get(pileId)?.locationId)
+          .filter((locationId): locationId is string => !!locationId),
       )];
 
       const personnelRows = await getChecklistPersonnel(checklist.id);
@@ -107,7 +108,7 @@ export function useEditModeSeed(args: {
         activeRigIds: [...new Set(checklistPiles.map((cp) => cp.rigId))],
         activeCraneIds: [...new Set(checklistPiles.map((cp) => cp.craneId))],
         selectedPileIds: ids,
-        areaIds,
+        locationIds,
         selectedStepIds: steps.map((s) => s.id),
         assignments,
         resumeWorkByPileId: {},

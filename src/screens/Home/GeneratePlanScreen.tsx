@@ -24,13 +24,16 @@ import { useWorkingDate } from '@/store/workingDateStore';
 
 import ProgressHeader, { type Step, STEP_ORDER } from '@components/plan/generate/ProgressHeader';
 import StartTimeStep from '@components/plan/generate/steps/StartTimeStep';
-import AreaSelectStep from '@components/plan/generate/steps/AreaSelectStep';
+import LocationSelectStep from '@components/plan/generate/steps/LocationSelectStep';
 import MachineSelectStep from '@components/plan/generate/steps/MachineSelectStep';
 import PileAssignStep from '@components/plan/generate/steps/PileAssignStep';
+import ResumeConfirmStep from '@components/plan/generate/steps/ResumeConfirmStep';
 import TeamAssignStep, { type TeamAssignStepHandle } from '@components/plan/generate/steps/TeamAssignStep';
 import StepSelectStep from '@components/plan/generate/steps/StepSelectStep';
 import PreviewStep from '@components/plan/generate/steps/PreviewStep';
 
+import { pileNeedsResumeConfirm } from '@components/plan/generate/steps/resume-confirm/useResumeConfirmQueue';
+import { resolveEffectiveDayStart } from '@/services/pilingPlannerService';
 import { findResumeWorkForPiles, type ResumeWorkInfo } from '@/services/resumeWorkService';
 import { defaultPlanDraft, planEndTime, type PlanDraft } from '@/types/plan';
 import { getPrimaryShiftType, combineDateAndTime } from '@/utils/shiftHelpers';
@@ -73,7 +76,7 @@ export default function GeneratePlanScreen() {
     if (siteId) loadChecklist(siteId, targetDate);
   }, [siteId, targetDate, loadChecklist]);
 
-  const { piles, areas, steps, rigs, cranes, personnel, shifts, roleDefaults, dataLoading } =
+  const { piles, locations, steps, rigs, cranes, personnel, shifts, roleDefaults, dataLoading } =
     useGeneratePlanData(siteId);
 
   const simplePersonnel = useMemo(
@@ -101,14 +104,14 @@ export default function GeneratePlanScreen() {
     setDraft((prev) => ({ ...prev, planStartTime: combineDateAndTime(targetDate, primary.startTime) }));
   }, [dataLoading, shifts, siteId, targetDate, isEditMode]);
 
-  const areaPiles = useMemo(() => {
-    if (!draft.areaIds.length) return [];
-    return piles.filter((p) => p.areaId && draft.areaIds.includes(p.areaId));
-  }, [piles, draft.areaIds]);
+  const locationPiles = useMemo(() => {
+    if (!draft.locationIds.length) return [];
+    return piles.filter((p) => p.locationId && draft.locationIds.includes(p.locationId));
+  }, [piles, draft.locationIds]);
 
-  const selectedAreas = useMemo(
-    () => areas.filter((a) => draft.areaIds.includes(a.id)),
-    [areas, draft.areaIds],
+  const selectedLocations = useMemo(
+    () => locations.filter((l) => draft.locationIds.includes(l.id)),
+    [locations, draft.locationIds],
   );
 
   const selectedPlanPiles = useMemo(
@@ -120,13 +123,13 @@ export default function GeneratePlanScreen() {
   const [completedPileIds, setCompletedPileIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!areaPiles.length) {
+    if (!locationPiles.length) {
       setPendingWorkItems([]);
       setCompletedPileIds(new Set());
       return;
     }
     let cancelled = false;
-    findResumeWorkForPiles(siteId, areaPiles.map((pile) => pile.id), targetDate).then(
+    findResumeWorkForPiles(siteId, locationPiles.map((pile) => pile.id), targetDate).then(
       ({ pendingWorkItems, completedPileIds }) => {
         if (!cancelled) {
           setPendingWorkItems(pendingWorkItems);
@@ -135,12 +138,12 @@ export default function GeneratePlanScreen() {
       },
     );
     return () => { cancelled = true; };
-  }, [areaPiles, siteId, targetDate]);
+  }, [locationPiles, siteId, targetDate]);
 
   // Piles already fully completed on a prior day must not be re-offered here.
   const assignablePiles = useMemo(
-    () => areaPiles.filter((p) => !completedPileIds.has(p.id)),
-    [areaPiles, completedPileIds],
+    () => locationPiles.filter((p) => !completedPileIds.has(p.id)),
+    [locationPiles, completedPileIds],
   );
 
   const { editSeeding } = useEditModeSeed({
@@ -199,6 +202,15 @@ export default function GeneratePlanScreen() {
     previewRecomputing, previewLoading, planReferenceData,
   } = usePlanPreview({ step, draft, updateDraft, piles, siteId, selectedPlanPiles, steps });
 
+  // Where a resume step effectively starts in the new plan (after skipping any opening
+  // non-working window) — the anchor ResumeConfirmStep's "plan finish time" picker
+  // measures duration against. Falls back to the raw plan start until reference data
+  // (non-working windows) has loaded.
+  const effectiveDayStart = useMemo(
+    () => resolveEffectiveDayStart(draft.planStartTime, planReferenceData?.rawWindows ?? []),
+    [draft.planStartTime, planReferenceData],
+  );
+
   const canContinue = useMemo(() => {
     switch (step) {
       case 'start':
@@ -206,8 +218,8 @@ export default function GeneratePlanScreen() {
           !!draft.checklistPersonnel.projectManagerId &&
           !!draft.checklistPersonnel.planningEngineerId
         );
-      case 'area':
-        return draft.areaIds.length > 0;
+      case 'location':
+        return draft.locationIds.length > 0;
       case 'machines': {
         return [...draft.activeRigIds, ...draft.activeCraneIds].length > 0;
       }
@@ -225,15 +237,18 @@ export default function GeneratePlanScreen() {
             (id) => draft.assignments[id]?.rig && draft.assignments[id]?.crane,
           )
         );
+      case 'resume':
+        return !draft.selectedPileIds.some((id) => pileNeedsResumeConfirm(draft.resumeWorkByPileId, id));
       case 'steps':
         return draft.selectedStepIds.length > 0;
       case 'preview':
-        // No uncommitted tile picks — the debounce above hasn't auto-committed yet.
-        return pendingTrackOverrides === draft.stepTrackOverrides;
+        // No uncommitted tile picks (debounce above hasn't auto-committed yet), and no
+        // piles stuck on the default 60m duration — those need a Head Office fix first.
+        return pendingTrackOverrides === draft.stepTrackOverrides && previewWarningPileIds.length === 0;
       default:
         return true;
     }
-  }, [step, draft, pendingTrackOverrides]);
+  }, [step, draft, pendingTrackOverrides, previewWarningPileIds]);
 
   async function handleGenerate() {
     if (!siteId) return;
@@ -337,19 +352,32 @@ export default function GeneratePlanScreen() {
           nextDisabled={step === 'team' ? isGenerating : (!canContinue || isGenerating)}
         />
 
-        {/* Piles step owns its own FlatList — must NOT be inside a ScrollView */}
-        {step === 'piles' ? (
+        {/* Piles and Resume steps own their own FlatList — must NOT be inside a ScrollView */}
+        {step === 'piles' || step === 'resume' ? (
           <View style={styles.pilesStepContainer}>
-            <PileAssignStep
-              draft={draft}
-              onUpdate={updateDraft}
-              piles={assignablePiles}
-              areas={selectedAreas.map((a) => ({ id: a.id, name: a.name }))}
-              activeRigs={activeRigs}
-              activeCranes={activeCranes}
-              onContinue={goNext}
-              continueDisabled={!canContinue || isGenerating}
-            />
+            {step === 'piles' ? (
+              <PileAssignStep
+                draft={draft}
+                onUpdate={updateDraft}
+                piles={assignablePiles}
+                locations={selectedLocations.map((l) => ({ id: l.id, name: l.name }))}
+                activeRigs={activeRigs}
+                activeCranes={activeCranes}
+                onContinue={goNext}
+                continueDisabled={!canContinue || isGenerating}
+              />
+            ) : (
+              <ResumeConfirmStep
+                draft={draft}
+                onUpdate={updateDraft}
+                piles={assignablePiles}
+                activeRigs={activeRigs}
+                activeCranes={activeCranes}
+                effectiveDayStart={effectiveDayStart}
+                onContinue={goNext}
+                continueDisabled={!canContinue || isGenerating}
+              />
+            )}
             {planError ? <Text style={styles.errorText}>{planError}</Text> : null}
           </View>
         ) : (
@@ -360,11 +388,11 @@ export default function GeneratePlanScreen() {
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            {step === 'area' && (
-              <AreaSelectStep
+            {step === 'location' && (
+              <LocationSelectStep
                 draft={draft}
                 onUpdate={updateDraft}
-                areas={areas.map((a) => ({ id: a.id, name: a.name, code: a.code }))}
+                locations={locations.map((l) => ({ id: l.id, name: l.name, code: l.code }))}
               />
             )}
 
@@ -428,6 +456,7 @@ export default function GeneratePlanScreen() {
                 personnel={simplePersonnel}
                 shifts={previewShifts}
                 warningPileCodes={previewWarningPileCodes}
+                siteId={siteId}
               />
             )}
 
@@ -437,7 +466,7 @@ export default function GeneratePlanScreen() {
           </ScrollView>
         )}
 
-        {step !== 'piles' && (
+        {step !== 'piles' && step !== 'resume' && (
           <View style={styles.footer}>
             <Pressable
               disabled={step === 'team' ? isGenerating : (!canContinue || isGenerating || (step === 'preview' && previewRecomputing))}

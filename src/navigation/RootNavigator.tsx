@@ -9,7 +9,8 @@ import { RootStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
 import { useWorkingDateStore } from '@store/workingDateStore';
-import { getLastSyncTime } from '@repositories/pilesRepository';
+import { getCursor } from '@repositories/syncCursorRepository';
+import type { SyncErrorKind } from '@sync/bootstrap/syncResult';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MainTabNavigator from '@navigation/MainTabNavigator';
 import AuthStackNavigator from '@navigation/AuthStackNavigator';
@@ -28,15 +29,30 @@ function SplashScreen({ message }: { message?: string }) {
   );
 }
 
-function InitialSyncErrorScreen({ onRetry }: { onRetry: () => void }) {
+function InitialSyncErrorScreen({
+  onRetry,
+  reason,
+  kind,
+}: {
+  onRetry: () => void;
+  reason: string | null;
+  kind: SyncErrorKind | null;
+}) {
+  const isNetwork = kind === 'network' || !reason;
   return (
     <LinearGradient
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
       style={styles.splash}
     >
-      <Text style={styles.errorTitle}>No connection</Text>
+      <Text style={styles.errorTitle}>{isNetwork ? 'No connection' : "Couldn't finish setup"}</Text>
       <Text style={styles.splashText}>
-        Connect to the internet to set up your data. This only happens once per device.
+        {isNetwork
+          ? 'Connect to the internet to set up your data. This only happens once per device.'
+          // TODO(user-friendly-errors): showing the raw error string here for
+          // debugging (e.g. from a field screenshot). Replace with friendly,
+          // errorKind-driven copy before this is relied on by non-technical
+          // field users.
+          : `Setup couldn't complete: ${reason}`}
       </Text>
       <Pressable style={styles.retryBtn} onPress={onRetry}>
         <Text style={styles.retryBtnText}>Retry</Text>
@@ -54,6 +70,8 @@ function triggerBackgroundSync(siteId: string): void {
 export default function RootNavigator() {
   const { token, user, isBootstrapping, bootstrap } = useAuthStore();
   const isSyncing = useSyncStore((s) => s.isSyncing);
+  const syncError = useSyncStore((s) => s.error);
+  const syncErrorKind = useSyncStore((s) => s.errorKind);
 
   useEffect(() => {
     bootstrap();
@@ -62,14 +80,20 @@ export default function RootNavigator() {
 
   const siteId = user?.siteId ?? null;
 
+  useEffect(() => {
+    if (siteId) void useWorkingDateStore.getState().loadPrimaryShiftStartTime(siteId);
+  }, [siteId]);
+
   // ── Initial-sync gate ──────────────────────────────────────────────────
-  // Blocks navigation only when local SQLite has never been synced for this
-  // site (fresh install, cleared app storage, or a reinstall — all wipe the
-  // SQLite file). Detected via getLastSyncTime, which already exists for
-  // ProfileScreen's "last synced" display and naturally returns null when
-  // no piles are cached locally — no new flag/table needed. Steady-state
-  // logins (data already present) trigger a non-blocking background sync
-  // instead of gating anything.
+  // Blocks navigation only when local SQLite has never completed a bootstrap
+  // for this site (fresh install, cleared app storage, or a reinstall — all
+  // wipe the SQLite file). Detected via the sync cursor rather than pile
+  // count: bootstrapSync.ts only persists the cursor once every
+  // reference-data step succeeds, so it's a complete "did setup finish"
+  // signal that's correct even for a site whose locations have zero piles yet
+  // (pile count alone would wrongly stay "unsynced" forever in that case).
+  // Steady-state logins (cursor already present) trigger a non-blocking
+  // background sync instead of gating anything.
   const [gateChecked, setGateChecked] = useState(false);
   const [needsInitialSync, setNeedsInitialSync] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -80,29 +104,28 @@ export default function RootNavigator() {
     setGateChecked(false);
 
     (async () => {
-      let lastSync = await getLastSyncTime(siteId).catch(() => null);
+      let cursor = await getCursor(siteId).catch(() => null);
       if (cancelled) return;
 
-      if (lastSync == null) {
-        // Never synced — block until we have at least the core reference
-        // data. Re-check getLastSyncTime after the attempt rather than
-        // trusting sync()'s own success/failure directly: a single step
-        // erroring elsewhere (e.g. duration templates) shouldn't block
-        // forever if the piles step itself got through.
+      if (cursor == null) {
+        // Never bootstrapped — block until we have the core reference data.
+        // Re-check getCursor after the attempt rather than trusting sync()'s
+        // own success/failure directly: bootstrapSync.ts is the source of
+        // truth for whether the cursor was actually safe to persist.
         try {
           await useSyncStore.getState().sync(siteId);
         } catch {
           // Network/unexpected failure — fall through to the re-check below,
-          // which will correctly find still-empty local data.
+          // which will correctly find the cursor still unset.
         }
         if (cancelled) return;
-        lastSync = await getLastSyncTime(siteId).catch(() => null);
+        cursor = await getCursor(siteId).catch(() => null);
       } else {
         triggerBackgroundSync(siteId);
       }
 
       if (!cancelled) {
-        setNeedsInitialSync(lastSync == null);
+        setNeedsInitialSync(cursor == null);
         setGateChecked(true);
       }
     })();
@@ -155,7 +178,13 @@ export default function RootNavigator() {
       return <SplashScreen message="Setting up your workspace…" />;
     }
     if (needsInitialSync) {
-      return <InitialSyncErrorScreen onRetry={() => setRetryCount((c) => c + 1)} />;
+      return (
+        <InitialSyncErrorScreen
+          onRetry={() => setRetryCount((c) => c + 1)}
+          reason={syncError}
+          kind={syncErrorKind}
+        />
+      );
     }
   }
 

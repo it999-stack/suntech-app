@@ -39,6 +39,7 @@ import {
 import { insertMachineEvent } from '@repositories/machineEventsRepository';
 import { setMachineStatusLocal } from '@repositories/machinesRepository';
 import { onBootstrapCompleted } from '@sync/bootstrap/bootstrapSync';
+import { onDeltaSyncComplete } from '@sync/delta/runDeltaSync';
 // pilingPlannerService.ts (local plan generation) is intentionally unused —
 // plan generation now happens server-side (see plan_generation_service.py).
 // Kept in the repo as a rollback reference until the server planner is
@@ -119,10 +120,10 @@ export type EditPlanSummary = {
   warningPiles: string[];
 };
 
-/** Input for logging a machine breakdown/replacement/resume event on a step. */
+/** Input for logging a machine breakdown/replacement/resume/idle event on a step. */
 export type LogMachineEventInput = {
   track: 'RIG' | 'CRANE' | 'COMPRESSOR';
-  eventType: 'BREAKDOWN' | 'REPLACED' | 'RESUMED';
+  eventType: 'BREAKDOWN' | 'REPLACED' | 'RESUMED' | 'IDLE_START' | 'IDLE_END';
   /** The machine going down / being resumed. */
   machineId: string | null;
   /** The replacement machine, for eventType 'REPLACED'. */
@@ -169,6 +170,14 @@ type PlanContextValue = {
     stepId: string,
     field: 'actualStart' | 'actualEnd',
     isoTimestamp: string,
+  ) => Promise<void>;
+  /** Clear a previously logged actual start/end time. Clearing the start
+   * time also clears the end time — a step can't be "finished" without
+   * having "started". */
+  clearActualTime: (
+    checklistPileId: string,
+    stepId: string,
+    field: 'actualStart' | 'actualEnd',
   ) => Promise<void>;
   /** Log a machine breakdown/replacement/resume event for a step. */
   logMachineEvent: (
@@ -248,6 +257,19 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
   // forever, since nothing else ever re-triggers loadChecklist().
   useEffect(() => {
     return onBootstrapCompleted(() => {
+      const last = lastLoadedRef.current;
+      if (last) void loadChecklist(last.siteId, last.date);
+    });
+  }, [loadChecklist]);
+
+  // Same re-read, but for every routine sync cycle (periodic/foreground/
+  // reconnect/manual) — onBootstrapCompleted alone only fires on
+  // first-install/full-reset, so without this a screen left mounted across
+  // a delta sync (e.g. another device closing out a machine's step) would
+  // keep validating against stale in-memory data. Mirrors the same pattern
+  // already used in SiteSettingsContext.tsx.
+  useEffect(() => {
+    return onDeltaSyncComplete(() => {
       const last = lastLoadedRef.current;
       if (last) void loadChecklist(last.siteId, last.date);
     });
@@ -407,6 +429,38 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     [actualSteps, checklist],
   );
 
+  const clearActualTime = useCallback(
+    async (checklistPileId: string, stepId: string, field: 'actualStart' | 'actualEnd') => {
+      setError(null);
+      try {
+        const existing = actualSteps.find(
+          (a) => a.checklistPileId === checklistPileId && a.stepId === stepId,
+        );
+        if (!existing) return;
+
+        await upsertActualStep({
+          id: existing.id,
+          checklistPileId,
+          stepId,
+          actualStart: field === 'actualStart' ? null : (existing.actualStart ?? null),
+          actualEnd: field === 'actualStart' || field === 'actualEnd' ? null : (existing.actualEnd ?? null),
+          remarks: existing.remarks ?? null,
+        });
+
+        if (checklist) {
+          await enqueueChecklistSync(checklist.id);
+          triggerDebounced('new-write');
+          const refreshed = await getActualStepsForChecklist(checklist.id);
+          setActualSteps(refreshed);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to clear actual time');
+        throw err;
+      }
+    },
+    [actualSteps, checklist],
+  );
+
   const setRemarks = useCallback(
     async (checklistPileId: string, stepId: string, remarks: string) => {
       setError(null);
@@ -483,6 +537,10 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             await setMachineStatusLocal(input.machineId, 'BREAKDOWN');
           } else if (input.eventType === 'RESUMED') {
             await setMachineStatusLocal(input.machineId, 'ACTIVE');
+          } else if (input.eventType === 'IDLE_START') {
+            await setMachineStatusLocal(input.machineId, 'IDLE');
+          } else if (input.eventType === 'IDLE_END') {
+            await setMachineStatusLocal(input.machineId, 'ACTIVE');
           }
         }
 
@@ -522,6 +580,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       generatePlan,
       editPlanMidDay,
       setActualTime,
+      clearActualTime,
       setRemarks,
       logMachineEvent,
     }),
@@ -540,6 +599,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       generatePlan,
       editPlanMidDay,
       setActualTime,
+      clearActualTime,
       setRemarks,
       logMachineEvent,
     ],

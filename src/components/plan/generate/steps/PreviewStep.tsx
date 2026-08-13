@@ -6,7 +6,6 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import { AlertTriangle } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import PersonnelPickerList from '@components/shared/PersonnelPickerList';
 import { colors, spacing, typography, radius } from '@/theme/theme';
@@ -16,6 +15,8 @@ import {
   getOperatorMachineCandidates,
   getMachineRoleDisabledIds,
   getShiftInchargeDisabledIds,
+  formatAssignmentLocation,
+  type DisabledAssignmentInfo,
 } from '@/utils/personnelRoles';
 
 import type { PlanDraft, ShiftTeamAssignment } from '@/types/plan';
@@ -25,6 +26,7 @@ import type { PreviewPile } from '@app-types/previewTypes';
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import type { PilingStep } from '@/db/schema';
 import SummaryAccordion from '../preview/SummaryAccordion';
+import DurationWarningCard from '../preview/DurationWarningCard';
 import CoreTeamAccordion, { type RoleTarget } from '../preview/CoreTeamAccordion';
 import MachineTimelineAccordion from '../preview/MachineTimelineAccordion';
 import PilesAccordion from '../preview/PilesAccordion';
@@ -82,6 +84,7 @@ interface PreviewStepProps {
   windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
   piles: PreviewPile[];
   warningPileCodes?: string[];
+  siteId: string;
   onNavigateToStep: (step: Step) => void;
   /** Opens the reorder overlay for a machine (pencil icon in the Machine Timeline). */
   onEditMachine: (machineId: string) => void;
@@ -106,6 +109,7 @@ export default function PreviewStep({
   windowsByMachineId,
   piles,
   warningPileCodes = [],
+  siteId,
   onNavigateToStep,
   onEditMachine,
   activeRigs = [],
@@ -232,6 +236,25 @@ export default function PreviewStep({
     return machineTeams.find((m) => m.id === machineId)?.machineNo ?? '';
   }
 
+  function shiftLabelForSlot(slot: 1 | 2): string {
+    const shift = shifts[slot - 1];
+    return shift ? shift.name : slot === 1 ? 'Shift 1 (Day)' : 'Shift 2 (Night)';
+  }
+
+  function toDisabledDetails(
+    info: Map<string, DisabledAssignmentInfo>,
+    slot: 1 | 2,
+  ): Map<string, string> {
+    const currentLabel = shiftLabelForSlot(slot);
+    const otherLabel = shiftLabelForSlot(slot === 1 ? 2 : 1);
+    return new Map(
+      [...info].map(([id, entry]) => [
+        id,
+        formatAssignmentLocation(entry, machineNoFor, (s) => (s === 'current' ? currentLabel : otherLabel)),
+      ]),
+    );
+  }
+
   function getRolePickerConfig(target: RoleTarget) {
     switch (target.role) {
       case 'PROJECT_MANAGER':
@@ -256,7 +279,10 @@ export default function PreviewStep({
           personnel: shiftInchargeCandidates,
           selectedId: teamForSlot(target.slot).shiftInchargeId,
           allowNone: true,
-          disabledIds: getShiftInchargeDisabledIds(otherTeamForSlot(target.slot).shiftInchargeId),
+          disabledDetails: toDisabledDetails(
+            getShiftInchargeDisabledIds(otherTeamForSlot(target.slot).shiftInchargeId),
+            target.slot,
+          ),
           onSelect: (id: string | null) => updateTeamForSlot(target.slot, { shiftInchargeId: id }),
         };
       case 'ENGINEER': {
@@ -266,11 +292,14 @@ export default function PreviewStep({
           personnel: engineerCandidates,
           selectedId: team.engineerByMachineId[target.machineId] ?? null,
           allowNone: false,
-          disabledIds: getMachineRoleDisabledIds(
-            target.machineId,
-            team.engineerByMachineId,
-            otherTeamForSlot(target.slot).engineerByMachineId,
-            { excludeSameShiftOtherMachines: false },
+          disabledDetails: toDisabledDetails(
+            getMachineRoleDisabledIds(
+              target.machineId,
+              team.engineerByMachineId,
+              otherTeamForSlot(target.slot).engineerByMachineId,
+              { excludeSameShiftOtherMachines: false },
+            ),
+            target.slot,
           ),
           onSelect: (id: string | null) => {
             const engineerByMachineId = { ...team.engineerByMachineId };
@@ -287,11 +316,14 @@ export default function PreviewStep({
           personnel: supervisorCandidates,
           selectedId: team.supervisorByMachineId[target.machineId] ?? null,
           allowNone: true,
-          disabledIds: getMachineRoleDisabledIds(
-            target.machineId,
-            team.supervisorByMachineId,
-            otherTeamForSlot(target.slot).supervisorByMachineId,
-            { excludeSameShiftOtherMachines: false },
+          disabledDetails: toDisabledDetails(
+            getMachineRoleDisabledIds(
+              target.machineId,
+              team.supervisorByMachineId,
+              otherTeamForSlot(target.slot).supervisorByMachineId,
+              { excludeSameShiftOtherMachines: false },
+            ),
+            target.slot,
           ),
           onSelect: (id: string | null) => {
             const supervisorByMachineId = { ...team.supervisorByMachineId };
@@ -309,11 +341,14 @@ export default function PreviewStep({
           personnel: getOperatorMachineCandidates(isRig ? 'RIG' : 'CRANE', personnel),
           selectedId: team.operatorByMachineId[target.machineId] ?? null,
           allowNone: true,
-          disabledIds: getMachineRoleDisabledIds(
-            target.machineId,
-            team.operatorByMachineId,
-            otherTeamForSlot(target.slot).operatorByMachineId,
-            { excludeSameShiftOtherMachines: true },
+          disabledDetails: toDisabledDetails(
+            getMachineRoleDisabledIds(
+              target.machineId,
+              team.operatorByMachineId,
+              otherTeamForSlot(target.slot).operatorByMachineId,
+              { excludeSameShiftOtherMachines: true },
+            ),
+            target.slot,
           ),
           onSelect: (id: string | null) => {
             const operatorByMachineId = { ...team.operatorByMachineId };
@@ -355,22 +390,7 @@ export default function PreviewStep({
       />
 
       {/* ── Duration warnings ───────────────────────────────────────────── */}
-      {warningPileCodes.length > 0 && (
-        <SummaryAccordion
-          icon={<AlertTriangle size={18} color={colors.warning} />}
-          title="Duration warnings"
-          summary={`${warningPileCodes.length} pile${warningPileCodes.length === 1 ? '' : 's'} using default 60m durations`}
-          tone="warning"
-          onEdit={() => onNavigateToStep('piles')}
-        >
-          <Text style={styles.detailLine}>
-            The following piles have no matching dimension templates and will use a default 60-minute duration per step:
-          </Text>
-          {warningPileCodes.map((code, i) => (
-            <Text key={i} style={styles.detailLine}>• {code}</Text>
-          ))}
-        </SummaryAccordion>
-      )}
+      <DurationWarningCard pileCodes={warningPileCodes} siteId={siteId} />
 
       {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
       <View style={styles.pilesWrap}>
@@ -407,7 +427,7 @@ export default function PreviewStep({
             personnel={rolePickerConfig.personnel}
             selectedId={rolePickerConfig.selectedId}
             allowNone={rolePickerConfig.allowNone}
-            disabledIds={'disabledIds' in rolePickerConfig ? rolePickerConfig.disabledIds : undefined}
+            disabledDetails={'disabledDetails' in rolePickerConfig ? rolePickerConfig.disabledDetails : undefined}
             onSelect={(id) => {
               rolePickerConfig.onSelect(id);
               setRolePickerTarget(null);
@@ -431,11 +451,6 @@ const styles = StyleSheet.create({
   loadingText: {
     ...typography.body,
     color: colors.textSecondary,
-  },
-  detailLine: {
-    ...typography.body,
-    color: colors.textPrimary,
-    marginBottom: 2,
   },
   pilesWrap: { position: 'relative' },
   pilesOverlay: {

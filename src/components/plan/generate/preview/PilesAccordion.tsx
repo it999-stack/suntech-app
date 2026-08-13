@@ -11,7 +11,12 @@ import Accordion from '@components/shared/Accordion';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import StepTimelineRow from './StepTimelineRow';
 import type { TrackChoice } from './TrackChoiceTiles';
-import { computeTotalDuration, computeMachineOccupancyMinutes, computePileStepBreaks } from './previewUtils';
+import {
+  computeTotalDuration,
+  computeMachineOccupancyMinutes,
+  computePileStepBreaks,
+  splitStepByInternalWindows,
+} from './previewUtils';
 import type { PlanStepWithMeta, ActualStepWithMeta } from '@repositories/planRepository';
 import type { PreviewPile } from '@app-types/previewTypes';
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
@@ -133,12 +138,26 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
         <Text style={styles.pileDuration}>{totalDuration}</Text>
       </View>
       <View style={styles.pileMachinesRow}>
-        <Text style={styles.pileMachineText}>
-          Rig - ({pile.rigMachineNo} · {rigOccupancy})
-        </Text>
-        <Text style={styles.pileMachineText}>
-          Crane - ({pile.craneMachineNo} · {craneOccupancy})
-        </Text>
+        <View
+          style={[
+            styles.machineBadge,
+            { backgroundColor: colors.machines.rig.soft, borderColor: colors.machines.rig.color },
+          ]}
+        >
+          <Text style={[styles.machineBadgeText, { color: colors.machines.rig.color }]}>
+            Rig - ({pile.rigMachineNo} · {rigOccupancy})
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.machineBadge,
+            { backgroundColor: colors.machines.crane.soft, borderColor: colors.machines.crane.color },
+          ]}
+        >
+          <Text style={[styles.machineBadgeText, { color: colors.machines.crane.color }]}>
+            Crane - ({pile.craneMachineNo} · {craneOccupancy})
+          </Text>
+        </View>
       </View>
 
       <View style={styles.stepsContainer}>
@@ -148,6 +167,7 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
           displaySteps.map((s, idx) => {
             const isPlanned = s.plannedStart !== '';
             const scheduledIdx = scheduledIndexByStepId.get(s.stepId);
+            const isCompleted = !!actualByStepId.get(s.stepId)?.actualEnd;
             // Eligibility is the step's nominal (business) track, not the currently-displayed
             // one — once overridden, `s.track` reads as 'RIG', but the tiles must stay offered
             // so it can be toggled back. Falls back to `s.track` where businessTrack isn't
@@ -158,28 +178,69 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
             // because this pile's own Rig is out of room — overriding to Rig is exactly the
             // escape hatch for that case.
             const isCraneEligible = !!onToggleTrack && (s.businessTrack ?? s.track) === 'CRANE';
+            const trackChoice = isCraneEligible
+              ? {
+                  selected: overriddenStepIds.includes(s.stepId) ? ('RIG' as TrackChoice) : ('CRANE' as TrackChoice),
+                  onSelect: (track: TrackChoice) => onToggleTrack!(pile.checklistPileId, s.stepId, track),
+                }
+              : undefined;
+            const isLastDisplayedStep = idx === displaySteps.length - 1;
+            // A real non-working window (lunch/shift-change) the scheduler paused this step
+            // for mid-way, not at a step boundary (that's breaksByIndex above) — render the
+            // step as its own work segments with the break row between them instead of one
+            // row whose visible span silently includes the break.
+            const internalSplit =
+              isPlanned && !isCompleted ? splitStepByInternalWindows(s, windowsByMachineId ?? {}) : null;
             return (
               <React.Fragment key={s.id}>
                 {isPlanned && scheduledIdx !== undefined && breaksByIndex.get(scheduledIdx)?.map((b, i) => (
                   <PileBreakRow key={`break-${idx}-${i}`} label={b.label} start={b.start} end={b.end} />
                 ))}
-                <StepTimelineRow
-                  step={s}
-                  isLast={idx === displaySteps.length - 1}
-                  isPlanned={isPlanned}
-                  isCompleted={!!actualByStepId.get(s.stepId)?.actualEnd}
-                  rigMachineNo={pile.rigMachineNo}
-                  craneMachineNo={pile.craneMachineNo}
-                  trackChoice={
-                    isCraneEligible
-                      ? {
-                          selected: overriddenStepIds.includes(s.stepId) ? 'RIG' : 'CRANE',
-                          onSelect: (track: TrackChoice) =>
-                            onToggleTrack!(pile.checklistPileId, s.stepId, track),
-                        }
-                      : undefined
-                  }
-                />
+                {internalSplit ? (
+                  internalSplit.segments.map((seg, segIdx) => (
+                    <React.Fragment key={`${s.id}-seg-${segIdx}`}>
+                      <StepTimelineRow
+                        step={{
+                          ...s,
+                          plannedStart: seg.start,
+                          plannedEnd: seg.end,
+                          durationMinutes: seg.durationMinutes,
+                          // seg.start is already the buffer-adjusted work-start timestamp
+                          // (splitStepByInternalWindows built it from stepWorkStart(s)), so
+                          // bufferMinutes must be 0 here on every segment — otherwise
+                          // StepTimelineRow's own stepWorkStart(step) call re-adds the buffer
+                          // on top of a start time that already includes it.
+                          bufferMinutes: 0,
+                        }}
+                        isLast={isLastDisplayedStep && segIdx === internalSplit.segments.length - 1}
+                        isPlanned={isPlanned}
+                        isCompleted={false}
+                        rigMachineNo={pile.rigMachineNo}
+                        craneMachineNo={pile.craneMachineNo}
+                        // Interactive only on the first segment — one step, not two
+                        // independent ones to toggle the track of.
+                        trackChoice={segIdx === 0 ? trackChoice : undefined}
+                      />
+                      {internalSplit.breaks[segIdx] && (
+                        <PileBreakRow
+                          label={internalSplit.breaks[segIdx].label}
+                          start={internalSplit.breaks[segIdx].start}
+                          end={internalSplit.breaks[segIdx].end}
+                        />
+                      )}
+                    </React.Fragment>
+                  ))
+                ) : (
+                  <StepTimelineRow
+                    step={s}
+                    isLast={isLastDisplayedStep}
+                    isPlanned={isPlanned}
+                    isCompleted={isCompleted}
+                    rigMachineNo={pile.rigMachineNo}
+                    craneMachineNo={pile.craneMachineNo}
+                    trackChoice={trackChoice}
+                  />
+                )}
               </React.Fragment>
             );
           })
@@ -333,17 +394,21 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
   pileMachinesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
+    flexDirection: 'column',
+    gap: spacing.xs,
     paddingHorizontal: spacing.sm,
     marginTop: spacing.xs,
   },
-  pileMachineText: {
+  machineBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  machineBadgeText: {
     ...typography.caption,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    fontWeight: '700',
   },
   stepsContainer: {
     paddingHorizontal: spacing.md,

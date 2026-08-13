@@ -3,7 +3,6 @@
 
 import { timeToMinutes, toLocalIsoString } from '@utils/formatTime';
 import type { PilingShiftType } from '@db/schema';
-import { GENERATION_GRACE_HOURS } from '@/constants/planGeneration';
 
 /**
  * Resolves the planning start shift — the shift with the earliest start_time
@@ -28,17 +27,19 @@ export function combineDateAndTime(dateStr: string, timeStr: string): string {
 
 /**
  * True while `dateStr`'s plan is still generatable — i.e. `now` is before
- * `shiftStartTime` (on `dateStr`) plus the grace period. Used to disable
- * "today" in the date picker once its own shift's window has closed;
- * "tomorrow" is always within this window since its shift start is always
- * further out than the grace period.
+ * `shiftStartTime` (on `dateStr`) plus `graceHours`. Used to disable "today"
+ * in the date picker once its own shift's window has closed; "tomorrow" is
+ * always within this window since its shift start is always further out
+ * than the grace period. `graceHours` mirrors the server's
+ * APP_CONFIG["generation_grace_hours"] (see useAppConfig()).
  */
 export function isWithinGenerationGrace(
   dateStr: string,
   shiftStartTime: string,
+  graceHours: number,
   now: Date = new Date(),
 ): boolean {
   const shiftStart = new Date(combineDateAndTime(dateStr, shiftStartTime));
-  const cutoff = new Date(shiftStart.getTime() + GENERATION_GRACE_HOURS * 60 * 60 * 1000);
+  const cutoff = new Date(shiftStart.getTime() + graceHours * 60 * 60 * 1000);
   return now < cutoff;
 }

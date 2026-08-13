@@ -1,18 +1,18 @@
 // src/screens/Home/generatePlan/useGeneratePlanData.ts
 //
 // Loads every reference dataset GeneratePlanScreen's wizard steps need for a
-// given site — piles, steps, machines, personnel, shifts, areas, and role
+// given site — piles, steps, machines, personnel, shifts, locations, and role
 // defaults — in one batched fetch.
 
 import { useEffect, useState } from 'react';
 import { getPilesBySiteWithDimensions, PileWithDimension } from '@repositories/pilesRepository';
-import { getAreasBySite } from '@repositories/areasRepository';
+import { getLocationsBySite } from '@repositories/locationsRepository';
 import { getMachinesByType } from '@repositories/machinesRepository';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getRoleDefaultsBySite } from '@repositories/roleDefaultsRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import { getSteps } from '@repositories/stepsRepository';
-import type { PilingArea, PilingSitePersonnel, PilingShiftType, PilingStep, PilingSiteRoleDefault } from '@/db/schema';
+import type { PilingLocation, PilingSitePersonnel, PilingShiftType, PilingStep, PilingSiteRoleDefault } from '@/db/schema';
 
 export type EligiblePile = PileWithDimension & {
   /** Alias for pileIdCode for convenience */
@@ -23,7 +23,7 @@ export type SimpleMachine = { id: string; machineNo: string; description?: strin
 
 export function useGeneratePlanData(siteId: string): {
   piles: EligiblePile[];
-  areas: PilingArea[];
+  locations: PilingLocation[];
   steps: PilingStep[];
   rigs: SimpleMachine[];
   cranes: SimpleMachine[];
@@ -33,7 +33,7 @@ export function useGeneratePlanData(siteId: string): {
   dataLoading: boolean;
 } {
   const [piles, setPiles] = useState<EligiblePile[]>([]);
-  const [areas, setAreas] = useState<PilingArea[]>([]);
+  const [locations, setLocations] = useState<PilingLocation[]>([]);
   const [steps, setSteps] = useState<PilingStep[]>([]);
   const [rigs, setRigs] = useState<SimpleMachine[]>([]);
   const [cranes, setCranes] = useState<SimpleMachine[]>([]);
@@ -48,14 +48,14 @@ export function useGeneratePlanData(siteId: string): {
     (async () => {
       setDataLoading(true);
       try {
-        const [pilesRaw, stepsRaw, rigsRaw, cranesRaw, personnelRaw, shiftsRaw, areasRaw, roleDefaultsRaw] = await Promise.all([
+        const [pilesRaw, stepsRaw, rigsRaw, cranesRaw, personnelRaw, shiftsRaw, locationsRaw, roleDefaultsRaw] = await Promise.all([
           getPilesBySiteWithDimensions(siteId),
           getSteps(),
           getMachinesByType(siteId, 'RIG'),
           getMachinesByType(siteId, 'CRANE'),
           getPersonnelBySite(siteId),
           getAllShiftTypes(),
-          getAreasBySite(siteId),
+          getLocationsBySite(siteId),
           getRoleDefaultsBySite(siteId),
         ]);
         if (cancelled) return;
@@ -70,7 +70,7 @@ export function useGeneratePlanData(siteId: string): {
         setCranes(cranesRaw.map((c: typeof cranesRaw[0]) => ({ id: c.id, machineNo: c.machineNo })));
         setPersonnel(personnelRaw);
         setShifts(shiftsRaw);
-        setAreas(areasRaw);
+        setLocations(locationsRaw);
         setRoleDefaults(roleDefaultsRaw);
       } finally {
         if (!cancelled) setDataLoading(false);
@@ -79,5 +79,5 @@ export function useGeneratePlanData(siteId: string): {
     return () => { cancelled = true; };
   }, [siteId]);
 
-  return { piles, areas, steps, rigs, cranes, personnel, shifts, roleDefaults, dataLoading };
+  return { piles, locations, steps, rigs, cranes, personnel, shifts, roleDefaults, dataLoading };
 }

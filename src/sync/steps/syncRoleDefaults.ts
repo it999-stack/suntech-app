@@ -7,6 +7,7 @@
 import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
 import type { SyncContext } from '@sync/bootstrap/syncContext';
 import type { StepResult } from '@sync/bootstrap/syncResult';
+import { toFailedStepResult } from '@sync/bootstrap/stepError';
 import { apiClient } from '@services/apiClient';
 import { replaceRoleDefaultsForSite } from '@repositories/roleDefaultsRepository';
 import type { NewPilingSiteRoleDefault } from '@db/schema';
@@ -30,12 +31,7 @@ export class SyncRoleDefaultsStep implements ISyncStep {
       await replaceRoleDefaultsForSite(ctx.siteId, rows);
       return { step: this.name, count: rows.length, syncedAt };
     } catch (err) {
-      return {
-        step: this.name,
-        count: 0,
-        syncedAt,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      return toFailedStepResult(this.name, syncedAt, err);
     }
   }
 }

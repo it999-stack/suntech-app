@@ -5,9 +5,12 @@
 // the "today" step, which still runs after this one to stay authoritative for
 // the current day).
 //
-// Also persists bootstrap-history's `server_time` as the very first Phase 3
-// delta-sync cursor — established here, with zero extra network calls, since
-// this is already the last data-fetching step of bootstrap.
+// Also reports bootstrap-history's `server_time` in its StepResult — this is
+// the candidate Phase 3 delta-sync cursor value, established here with zero
+// extra network calls since this is already the last data-fetching step of
+// bootstrap. It's bootstrapSync.ts that actually persists it (via setCursor),
+// and only once it's confirmed no critical pull step failed — this step must
+// not set the cursor itself, or a failure elsewhere would still advance it.
 //
 // Direction: server → app
 // Server endpoint: GET /piling/sites/:siteId/bootstrap-history
@@ -15,9 +18,9 @@
 import type { ISyncStep } from '@sync/bootstrap/ISyncStep';
 import type { SyncContext } from '@sync/bootstrap/syncContext';
 import type { StepResult } from '@sync/bootstrap/syncResult';
+import { toFailedStepResult } from '@sync/bootstrap/stepError';
 import { apiClient } from '@services/apiClient';
 import { hydrateChecklistFromServer } from '@repositories/checklistRepository';
-import { setCursor } from '@repositories/syncCursorRepository';
 
 export class SyncChecklistHistoryStep implements ISyncStep {
   readonly name = 'checklistHistory';
@@ -30,17 +33,14 @@ export class SyncChecklistHistoryStep implements ISyncStep {
       for (const checklist of checklists) {
         await hydrateChecklistFromServer(checklist);
       }
-      if (data.server_time) {
-        await setCursor(ctx.siteId, data.server_time as string);
-      }
-      return { step: this.name, count: checklists.length, syncedAt };
-    } catch (err) {
       return {
         step: this.name,
-        count: 0,
+        count: checklists.length,
         syncedAt,
-        error: err instanceof Error ? err.message : String(err),
+        serverTime: data.server_time as string | undefined,
       };
+    } catch (err) {
+      return toFailedStepResult(this.name, syncedAt, err);
     }
   }
 }

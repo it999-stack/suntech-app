@@ -48,6 +48,7 @@ const MACHINE_META = {
 function statusMeta(status: string): { dot: object; text: object; label: string } {
   if (status === 'ACTIVE') return { dot: styles.dotActive, text: styles.statusTextActive, label: 'Active' };
   if (status === 'BREAKDOWN') return { dot: styles.dotBreakdown, text: styles.statusTextBreakdown, label: 'Reported Down' };
+  if (status === 'IDLE') return { dot: styles.dotIdle, text: styles.statusTextIdle, label: 'Idle' };
   return { dot: styles.dotInactive, text: styles.statusTextInactive, label: 'Inactive' };
 }
 
@@ -139,6 +140,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   headerArea: {
     paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
     paddingBottom: spacing.sm,
   },
   pageTitle: {
@@ -206,6 +208,7 @@ const styles = StyleSheet.create({
   dotActive: { backgroundColor: '#4ade80' },
   dotInactive: { backgroundColor: '#f87171' },
   dotBreakdown: { backgroundColor: colors.danger },
+  dotIdle: { backgroundColor: colors.warning },
   statusText: {
     ...typography.caption,
     fontSize: 12,
@@ -214,6 +217,7 @@ const styles = StyleSheet.create({
   statusTextActive: { color: '#4ade80' },
   statusTextInactive: { color: '#f87171' },
   statusTextBreakdown: { color: colors.danger },
+  statusTextIdle: { color: colors.warning },
   iconAvatar: {
     width: 64,
     height: 64,

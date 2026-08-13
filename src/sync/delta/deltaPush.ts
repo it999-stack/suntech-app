@@ -12,7 +12,7 @@ import {
   markSynced,
   markFailed,
 } from '@repositories/syncQueueRepository';
-import { getChecklistsForSync } from '@repositories/syncRepository';
+import { getChecklistsForSync, applySyncedVersions } from '@repositories/syncRepository';
 import type { SyncAppPlanResponse, SyncConflict } from '@sync/SyncAppPlanPayload';
 
 export type FlushResult = {
@@ -92,6 +92,14 @@ export async function deltaPush(): Promise<FlushResult> {
     const errors = data.errors ?? [];
     const failedIds = new Set(errors.map((e) => e.checklist_id));
     const succeededIds = checklistIds.filter((id) => !failedIds.has(id));
+
+    // Advance the local optimistic-concurrency cache for every row this push
+    // actually wrote, straight from the response — before the checklist is
+    // even marked synced, and without waiting on the next pull (which can be
+    // slow/unreliable). This is what prevents a client's own rapid
+    // back-to-back edits (e.g. clear an actual time, then set a new one)
+    // from being rejected as a false self-conflict against a stale cache.
+    await applySyncedVersions(data.synced_versions ?? []);
 
     // Conflicting rows are NOT retried (retrying a lost conflict is
     // pointless) but the checklist they belong to is still marked synced —

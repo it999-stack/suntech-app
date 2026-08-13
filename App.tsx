@@ -8,6 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import RootNavigator from './src/navigation/RootNavigator';
 import { initDb } from './src/db/client';
+import { AppConfigProvider } from './src/state/AppConfigContext';
 import { PlanProvider } from './src/state/PlanContext';
 import { SiteSettingsProvider } from './src/state/SiteSettingsContext';
 import { DrizzleStudioDevTools } from './src/devtools/DrizzleStudioDevTools';
@@ -45,13 +46,15 @@ export default function App() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <KeyboardProvider>
           <NavigationContainer>
-            <PlanProvider>
-              <SiteSettingsProvider>
-                  <RootNavigator />
-                  <StatusBar style="auto" />
-                  {__DEV__ && <DrizzleStudioDevTools />}
-              </SiteSettingsProvider>
-            </PlanProvider>
+            <AppConfigProvider>
+              <PlanProvider>
+                <SiteSettingsProvider>
+                    <RootNavigator />
+                    <StatusBar style="auto" />
+                    {__DEV__ && <DrizzleStudioDevTools />}
+                </SiteSettingsProvider>
+              </PlanProvider>
+            </AppConfigProvider>
           </NavigationContainer>
         </KeyboardProvider>
       </GestureHandlerRootView>

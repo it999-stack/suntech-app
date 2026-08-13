@@ -26,7 +26,7 @@ import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import { getPrimaryShiftType, combineDateAndTime, isWithinGenerationGrace } from '@utils/shiftHelpers';
 import { toLocalDateStr, formatHeaderDate } from '@utils/formatTime';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
-import { FUTURE_DAYS_AHEAD, ALLOW_ANY_PLAN_DATE } from '@/constants/planGeneration';
+import { useAppConfig } from '@state/AppConfigContext';
 
 const DEFAULT_START_TIME = '08:00';
 
@@ -46,13 +46,15 @@ interface Props {
 }
 
 export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, onConfirm }: Props) {
+  const { config } = useAppConfig();
+
   // Recomputed each time the sheet opens (keyed on `visible`) rather than once
   // at mount, so a day boundary crossed while the app stays open doesn't leave
   // this stuck on a stale "today."
   const today = useMemo(() => toLocalDateStr(new Date()), [visible]);
   const rangeDates = useMemo(
-    () => Array.from({ length: FUTURE_DAYS_AHEAD + 1 }, (_, i) => toLocalDateStr(addDays(new Date(), i))),
-    [visible],
+    () => Array.from({ length: config.futureDaysAhead + 1 }, (_, i) => toLocalDateStr(addDays(new Date(), i))),
+    [visible, config.futureDaysAhead],
   );
 
   const [selectedDate, setSelectedDate] = useState(today);
@@ -106,7 +108,8 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
         // Don't default the selection onto "today" if it's neither planned
         // nor still within its own generation grace window — land on
         // tomorrow instead, which is always open.
-        const todayUsable = planned.has(today) || isWithinGenerationGrace(today, startTime);
+        const todayUsable =
+          planned.has(today) || isWithinGenerationGrace(today, startTime, config.generationGraceHours);
         if (!todayUsable && rangeDates[1]) setSelectedDate(rangeDates[1]);
       } catch {
         if (!cancelled) {
@@ -119,11 +122,11 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
     return () => {
       cancelled = true;
     };
-  }, [visible, siteId, rangeDates, today]);
+  }, [visible, siteId, rangeDates, today, config.generationGraceHours]);
 
   function getDayState(dateStr: string): DayVisualState {
     const idx = rangeDates.indexOf(dateStr);
-    if (idx === -1 && !ALLOW_ANY_PLAN_DATE) return { disabled: true };
+    if (idx === -1 && !config.allowAnyPlanDate) return { disabled: true };
 
     if (plannedDates.has(dateStr)) {
       return {
@@ -135,21 +138,18 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
     }
 
     // A failed server check always disables — no offline guessing, even in
-    // ALLOW_ANY_PLAN_DATE testing mode.
+    // allowAnyPlanDate testing mode.
     if (loadError) {
       return { disabled: true, tone: 'muted', a11yLabel: 'Unavailable' };
     }
 
-    // TESTING: ALLOW_ANY_PLAN_DATE skips the "today's shift grace window has
-    // closed" restriction below. Remove this bypass along with the constant
-    // once testing is done.
-    if (ALLOW_ANY_PLAN_DATE) {
+    if (config.allowAnyPlanDate) {
       return { selected: dateStr === selectedDate, tone: 'default' };
     }
 
     // "Today" closes once its own shift's generation grace window has
     // passed; "tomorrow" is always open (its shift hasn't started yet).
-    if (!isWithinGenerationGrace(dateStr, planStartTimeOfDay)) {
+    if (!isWithinGenerationGrace(dateStr, planStartTimeOfDay, config.generationGraceHours)) {
       return { disabled: true, tone: 'muted', a11yLabel: 'Window closed' };
     }
 
