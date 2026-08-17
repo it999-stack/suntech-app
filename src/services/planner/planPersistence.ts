@@ -53,7 +53,7 @@ export async function generatePlan(
       pileIdCode: pile.pileIdCode,
       dimensionId: pile.dimensionId,
       rigId: cp.rigId,
-      craneId: cp.craneId,
+      craneId: cp.craneId ?? undefined,
       resumeWork: resumeWorkByPileId?.[pile.id],
     });
   }

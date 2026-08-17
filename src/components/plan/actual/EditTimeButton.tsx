@@ -1,14 +1,8 @@
 // src/components/plan/actual/EditTimeButton.tsx
-//
-// Small pencil affordance for correcting an already-logged actual start/end
-// time. Renders only the tappable icon (the caller already renders the time
-// text itself) — opens the same TimerSelectMenu used for first-time entry,
-// validates against optional min/max bounds, then confirms via Alert before
-// saving. Mirrors StepTimeControl's confirm() validation pattern.
 
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Alert } from 'react-native';
-import { Pencil } from 'lucide-react-native';
+import { PencilLine } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/TimerSelectMenu';
 import {
   formatMinutes12,
@@ -160,13 +154,12 @@ export default function EditTimeButton({
         hitSlop={8}
         accessibilityLabel={`Edit ${label}`}
       >
-        <Pencil size={14} color={colors.textSecondary} />
+        <PencilLine size={14} color={colors.textSecondary} />
       </Pressable>
 
       <TimerSelectMenu
         visible={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        allowDateChange
         onConfirm={(date, dateWasExplicit) => {
           const m = date.getHours() * 60 + date.getMinutes();
           confirm(m, dateWasExplicit ? date : undefined);

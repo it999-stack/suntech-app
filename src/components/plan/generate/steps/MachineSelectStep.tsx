@@ -58,6 +58,33 @@ function MachineRow({
   );
 }
 
+// Deactivating a machine must not leave a pile's assignment pointing at it —
+// PileAssignStep/ResumeConfirmStep only "look" correct because they filter
+// their machine lookups against the active list; Preview and the actual
+// generate/save path read draft.assignments raw, so a stale id there would
+// keep scheduling/persisting real work onto a machine the user turned off.
+function scrubAssignmentsForMachine(
+  assignments: PlanDraft['assignments'],
+  machineId: string,
+  type: 'RIG' | 'CRANE',
+): PlanDraft['assignments'] {
+  const next = { ...assignments };
+  let changed = false;
+  for (const [pileId, a] of Object.entries(next)) {
+    if (type === 'RIG' && a.rig === machineId) {
+      // Rig is mandatory — falls back to fully unassigned rather than
+      // keeping a crane-only half-pair.
+      next[pileId] = { rig: '', crane: undefined };
+      changed = true;
+    } else if (type === 'CRANE' && a.crane === machineId) {
+      // Crane is optional — the pile just becomes rig-only.
+      next[pileId] = { ...a, crane: undefined };
+      changed = true;
+    }
+  }
+  return changed ? next : assignments;
+}
+
 export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: MachineSelectStepProps) {
   function clearMachineRoles(id: string) {
     function stripFromTeam(team: PlanDraft['checklistPersonnel']['shift1']) {
@@ -81,7 +108,10 @@ export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: Mac
     const key = isRig ? 'activeRigIds' : 'activeCraneIds';
     if (activeIds.includes(id)) {
       clearMachineRoles(id);
-      onUpdate({ [key]: activeIds.filter((x) => x !== id) });
+      onUpdate({
+        [key]: activeIds.filter((x) => x !== id),
+        assignments: scrubAssignmentsForMachine(draft.assignments, id, type),
+      });
     } else {
       onUpdate({ [key]: [...activeIds, id] });
     }

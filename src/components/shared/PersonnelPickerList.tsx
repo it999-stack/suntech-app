@@ -10,7 +10,7 @@ import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { User, X } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
-import type { SimplePersonnel } from '@/utils/personnelRoles';
+import { formatDesignation, type SimplePersonnel } from '@/utils/personnelRoles';
 
 export type { SimplePersonnel };
 
@@ -93,7 +93,7 @@ export default function PersonnelPickerList({
         <React.Fragment key={item.id}>
           <PersonnelRow
             label={item.name}
-            sublabel={disabledDetails?.get(item.id) ?? item.designation}
+            sublabel={disabledDetails?.get(item.id) ?? formatDesignation(item.designation)}
             active={selectedId === item.id}
             disabled={disabledDetails?.has(item.id)}
             onPress={() => onSelect(item.id)}

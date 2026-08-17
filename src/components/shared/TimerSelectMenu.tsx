@@ -19,11 +19,11 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { createAudioPlayer } from 'expo-audio';
 import { Calendar, PencilLine } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import AppCalendar from '@components/shared/AppCalendar';
 import { toLocalDateStr } from '@utils/formatTime';
+import { pastOrTodayDateRule, type DateRule } from '@utils/validationRules';
 import { colors as themeColors } from '@theme/theme';
 
 const ITEM_HEIGHT = 84;
@@ -34,11 +34,6 @@ const HALF = Math.floor(VISIBLE_ROWS / 2);
 // near either buffer edge — enough that a fling can't outrun a recenter.
 const REPEAT_COUNT = 21;
 const MIDDLE_COPY = Math.floor(REPEAT_COUNT / 2);
-
-// Caps the tick sound's rate (~25/sec) — a fast fling crosses rows far
-// faster than that, and without this cap the backlog of queued tick calls
-// keeps clicking after the wheel has already stopped.
-const MIN_TICK_INTERVAL_MS = 40;
 
 type WheelListItem = { label: string; index: number };
 
@@ -79,24 +74,23 @@ interface TimerSelectMenuProps {
    */
   embedded?: boolean;
   /**
-   * Time mode only. When set, the weekday/date header becomes tappable and
-   * opens a calendar (no future dates) to change which day this time is
-   * being logged against — otherwise the header is a plain read-only label.
-   * Off by default so screens with their own separate date field (e.g.
-   * MachineEventsModal) or a date fixed by an earlier step (e.g. Generate
-   * Plan) aren't affected.
+   * Time mode only. When true (the default), the weekday/date header becomes
+   * tappable and opens a calendar to change which day this time applies to —
+   * otherwise the header is a plain read-only label. Pass `false` for a
+   * screen that has its own separate date field already (e.g.
+   * MachineEventsModal) so it doesn't gain a second, conflicting date
+   * control.
    */
   allowDateChange?: boolean;
-}
-
-// One shared player for every wheel's tick; volume is set per-play so fast
-// flings tick louder than a settling scroll.
-const tickPlayer = createAudioPlayer(require('../../../assets/sounds/tick.wav'));
-
-function tick(volume: number) {
-  tickPlayer.volume = volume;
-  tickPlayer.seekTo(0);
-  tickPlayer.play();
+  /**
+   * Which dates the date-change calendar allows, and the message shown for
+   * why — see @utils/validationRules. Defaults to `pastOrTodayDateRule`
+   * (today or earlier — right for logging something that already happened).
+   * Pass a different rule for contexts with a different valid range, e.g.
+   * `planGenerationDateRule` (today/tomorrow only) for Generate Plan's
+   * start-time picker.
+   */
+  dateRule?: DateRule;
 }
 
 interface WheelItemProps {
@@ -132,7 +126,6 @@ interface WheelColumnProps {
   width: number;
   fontSize: number;
   textColor: string;
-  /** Loops past both ends instead of stopping — used for the hour/minute wheels. */
   infinite?: boolean;
 }
 
@@ -154,11 +147,7 @@ function WheelColumn({ values, selectedIndex, onSelect, width, fontSize, textCol
   const initialExpandedIndex = infinite ? MIDDLE_COPY * len + selectedIndex : selectedIndex;
 
   const scrollY = useSharedValue(initialExpandedIndex * ITEM_HEIGHT);
-  const lastTicked = useSharedValue(initialExpandedIndex);
   const lastExpandedIndex = useSharedValue(initialExpandedIndex);
-  const prevScrollY = useSharedValue(initialExpandedIndex * ITEM_HEIGHT);
-  const prevScrollT = useSharedValue(0);
-  const lastTickTime = useSharedValue(0);
 
   // Distinguishes "parent echoed our own scroll" (skip re-scroll — may rest
   // in any buffer copy) from a real external change. `null` forces one
@@ -180,28 +169,6 @@ function WheelColumn({ values, selectedIndex, onSelect, width, fontSize, textCol
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (e) => {
       scrollY.value = e.contentOffset.y;
-      const idx = Math.round(e.contentOffset.y / ITEM_HEIGHT);
-      if (idx !== lastTicked.value) {
-        lastTicked.value = idx;
-
-        // Faster scroll → louder tick. Computed here (not the native
-        // `velocity` field) since that's unreliable on Android.
-        const now = performance.now();
-        const dt = now - prevScrollT.value;
-        const dy = e.contentOffset.y - prevScrollY.value;
-        const velocity = dt > 0 ? Math.abs(dy / dt) : 0;
-        prevScrollY.value = e.contentOffset.y;
-        prevScrollT.value = now;
-        const volume = interpolate(velocity, [0, 2.5], [0.35, 1], Extrapolation.CLAMP);
-
-        // Cap the tick rate (~25/sec) so a fast fling never queues up more
-        // JS-thread audio calls than can be drained in real time — otherwise
-        // the backlog keeps clicking after the wheel has already stopped.
-        if (now - lastTickTime.value >= MIN_TICK_INTERVAL_MS) {
-          lastTickTime.value = now;
-          // scheduleOnRN(tick, volume);
-        }
-      }
     },
     onMomentumEnd: (e) => {
       const rawIndex = Math.round(e.contentOffset.y / ITEM_HEIGHT);
@@ -283,7 +250,8 @@ export default function TimerSelectMenu({
   onDurationSelect,
   title,
   embedded = false,
-  allowDateChange = false,
+  allowDateChange = true,
+  dateRule = pastOrTodayDateRule,
 }: TimerSelectMenuProps) {
   const isDuration = mode === 'duration';
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -508,7 +476,7 @@ export default function TimerSelectMenu({
           setDatePickerOpen(false);
         }}
         getDayState={(dateStr) => ({
-          disabled: dateStr > toLocalDateStr(new Date()),
+          disabled: !dateRule.isAllowed(dateStr),
           selected: dateStr === toLocalDateStr(dayDate),
         })}
       />

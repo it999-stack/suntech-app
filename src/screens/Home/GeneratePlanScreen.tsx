@@ -27,7 +27,7 @@ import StartTimeStep from '@components/plan/generate/steps/StartTimeStep';
 import LocationSelectStep from '@components/plan/generate/steps/LocationSelectStep';
 import MachineSelectStep from '@components/plan/generate/steps/MachineSelectStep';
 import PileAssignStep from '@components/plan/generate/steps/PileAssignStep';
-import ResumeConfirmStep from '@components/plan/generate/steps/ResumeConfirmStep';
+import ResumeConfirmStep, { type ResumeConfirmStepHandle } from '@components/plan/generate/steps/ResumeConfirmStep';
 import TeamAssignStep, { type TeamAssignStepHandle } from '@components/plan/generate/steps/TeamAssignStep';
 import StepSelectStep from '@components/plan/generate/steps/StepSelectStep';
 import PreviewStep from '@components/plan/generate/steps/PreviewStep';
@@ -38,7 +38,7 @@ import { findResumeWorkForPiles, type ResumeWorkInfo } from '@/services/resumeWo
 import { defaultPlanDraft, planEndTime, type PlanDraft } from '@/types/plan';
 import { getPrimaryShiftType, combineDateAndTime } from '@/utils/shiftHelpers';
 import { toLocalDateStr } from '@/utils/formatTime';
-import { isShiftTeamComplete } from '@/utils/personnelRoles';
+import { isShiftTeamComplete, findOrphanedTeamMachines, type OrphanedTeamMachine } from '@/utils/personnelRoles';
 import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
 
 import { useGeneratePlanData } from './generatePlan/useGeneratePlanData';
@@ -119,6 +119,45 @@ export default function GeneratePlanScreen() {
     [piles, draft.selectedPileIds],
   );
 
+  // The rig/crane ids that will actually appear on the submitted piles[] —
+  // same source handleGenerate uses to build pilesInput, so this can never
+  // drift from what's actually sent. Used to catch Team-step assignments
+  // for a machine that ended up with zero piles before it becomes a 400
+  // from the server (see findOrphanedTeamMachines).
+  const pileAssignedRigIds = useMemo(
+    () => new Set(draft.selectedPileIds.map((id) => draft.assignments[id]?.rig).filter(Boolean) as string[]),
+    [draft.selectedPileIds, draft.assignments],
+  );
+  const pileAssignedCraneIds = useMemo(
+    () => new Set(draft.selectedPileIds.map((id) => draft.assignments[id]?.crane).filter(Boolean) as string[]),
+    [draft.selectedPileIds, draft.assignments],
+  );
+  const orphanedTeamMachines = useMemo(
+    () => findOrphanedTeamMachines(draft.checklistPersonnel, pileAssignedRigIds, pileAssignedCraneIds),
+    [draft.checklistPersonnel, pileAssignedRigIds, pileAssignedCraneIds],
+  );
+  const orphanedTeamMachinesMessage = useMemo(() => {
+    if (orphanedTeamMachines.length === 0) return null;
+    const machineNoFor = (id: string) =>
+      rigs.find((r) => r.id === id)?.machineNo ?? cranes.find((c) => c.id === id)?.machineNo ?? id;
+    const roleLabel: Record<OrphanedTeamMachine['role'], string> = {
+      ENGINEER: 'Engineer',
+      SUPERVISOR: 'Supervisor',
+      MACHINE_OPERATOR: 'Operator',
+    };
+    const byMachine = new Map<string, string[]>();
+    for (const o of orphanedTeamMachines) {
+      const label = `${roleLabel[o.role]}, shift ${o.shiftSlot}`;
+      const existing = byMachine.get(o.machineId) ?? [];
+      existing.push(label);
+      byMachine.set(o.machineId, existing);
+    }
+    const lines = [...byMachine.entries()].map(
+      ([machineId, labels]) => `${machineNoFor(machineId)} has an assigned team (${labels.join('; ')}) but no piles in this plan.`,
+    );
+    return `${lines.join(' ')} Go back to Piles and assign it a pile, or remove it in Machines.`;
+  }, [orphanedTeamMachines, rigs, cranes]);
+
   const [pendingWorkItems, setPendingWorkItems] = useState<ResumeWorkInfo[]>([]);
   const [completedPileIds, setCompletedPileIds] = useState<Set<string>>(new Set());
 
@@ -167,12 +206,18 @@ export default function GeneratePlanScreen() {
 
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
   const teamStepRef = useRef<TeamAssignStepHandle>(null);
+  const resumeStepRef = useRef<ResumeConfirmStepHandle>(null);
   const { scrollViewRef, scrollYRef, onScroll, scrollEventThrottle } = useTrackedScrollView();
 
   function goNext() {
     if (step === 'team') {
       const teamComplete = teamStepRef.current ? teamStepRef.current.focusFirstMissing() : canContinue;
       if (!teamComplete) return;
+    }
+
+    if (step === 'resume') {
+      const resumeComplete = resumeStepRef.current ? resumeStepRef.current.focusFirstMissing() : canContinue;
+      if (!resumeComplete) return;
     }
 
     if (step === 'preview') {
@@ -214,10 +259,7 @@ export default function GeneratePlanScreen() {
   const canContinue = useMemo(() => {
     switch (step) {
       case 'start':
-        return (
-          !!draft.checklistPersonnel.projectManagerId &&
-          !!draft.checklistPersonnel.planningEngineerId
-        );
+        return !!draft.checklistPersonnel.projectManagerId;
       case 'location':
         return draft.locationIds.length > 0;
       case 'machines': {
@@ -231,27 +273,35 @@ export default function GeneratePlanScreen() {
         );
       }
       case 'piles':
+        // Crane is optional — a rig can perform any CRANE-track step, never
+        // the reverse — so only a rig assignment is required per pile.
         return (
           draft.selectedPileIds.length > 0 &&
-          draft.selectedPileIds.every(
-            (id) => draft.assignments[id]?.rig && draft.assignments[id]?.crane,
-          )
+          draft.selectedPileIds.every((id) => !!draft.assignments[id]?.rig)
         );
       case 'resume':
         return !draft.selectedPileIds.some((id) => pileNeedsResumeConfirm(draft.resumeWorkByPileId, id));
       case 'steps':
         return draft.selectedStepIds.length > 0;
       case 'preview':
-        // No uncommitted tile picks (debounce above hasn't auto-committed yet), and no
-        // piles stuck on the default 60m duration — those need a Head Office fix first.
-        return pendingTrackOverrides === draft.stepTrackOverrides && previewWarningPileIds.length === 0;
+        // No uncommitted tile picks (debounce above hasn't auto-committed yet), no
+        // piles stuck on the default 60m duration — those need a Head Office fix
+        // first — and no Team-assigned machine left with zero piles (would be
+        // rejected by the server's exact-coverage check; see
+        // findOrphanedTeamMachines).
+        return (
+          pendingTrackOverrides === draft.stepTrackOverrides &&
+          previewWarningPileIds.length === 0 &&
+          orphanedTeamMachines.length === 0
+        );
       default:
         return true;
     }
-  }, [step, draft, pendingTrackOverrides, previewWarningPileIds]);
+  }, [step, draft, pendingTrackOverrides, previewWarningPileIds, orphanedTeamMachines]);
 
   async function handleGenerate() {
     if (!siteId) return;
+    if (orphanedTeamMachines.length > 0) return;
 
     const selectedPiles = selectedPlanPiles;
     const pilesInput: PileAssignmentInput[] = selectedPiles.map((p) => ({
@@ -300,7 +350,7 @@ export default function GeneratePlanScreen() {
   const {
     builtPreviewPiles, setEditingMachineId, editingMachine,
     pilesForMachine, handleReorderMachine,
-  } = usePreviewReorder({ draft, updateDraft, selectedPlanPiles, rigs, cranes, activeRigs, activeCranes });
+  } = usePreviewReorder({ draft, updateDraft, selectedPlanPiles, activeRigs, activeCranes });
 
   // Shaped/derived views of otherwise-stable data, memoized so PreviewStep (and the
   // memoized PilePreviewPage rows beneath it) see the same prop reference across
@@ -349,7 +399,7 @@ export default function GeneratePlanScreen() {
           onBack={goToPrevStep}
           backDisabled={STEP_ORDER.indexOf(step) === 0}
           onNext={goNext}
-          nextDisabled={step === 'team' ? isGenerating : (!canContinue || isGenerating)}
+          nextDisabled={(step === 'team' || step === 'resume') ? isGenerating : (!canContinue || isGenerating)}
         />
 
         {/* Piles and Resume steps own their own FlatList — must NOT be inside a ScrollView */}
@@ -368,6 +418,7 @@ export default function GeneratePlanScreen() {
               />
             ) : (
               <ResumeConfirmStep
+                ref={resumeStepRef}
                 draft={draft}
                 onUpdate={updateDraft}
                 piles={assignablePiles}
@@ -375,7 +426,7 @@ export default function GeneratePlanScreen() {
                 activeCranes={activeCranes}
                 effectiveDayStart={effectiveDayStart}
                 onContinue={goNext}
-                continueDisabled={!canContinue || isGenerating}
+                continueDisabled={isGenerating}
               />
             )}
             {planError ? <Text style={styles.errorText}>{planError}</Text> : null}
@@ -459,6 +510,10 @@ export default function GeneratePlanScreen() {
                 siteId={siteId}
               />
             )}
+
+            {step === 'preview' && orphanedTeamMachinesMessage ? (
+              <Text style={styles.errorText}>{orphanedTeamMachinesMessage}</Text>
+            ) : null}
 
             {planError ? (
               <Text style={styles.errorText}>{planError}</Text>

@@ -18,7 +18,7 @@ interface BulkAssignBarProps {
   rigId: string | null;
   craneId: string | null;
   onSelectRig: (id: string) => void;
-  onSelectCrane: (id: string) => void;
+  onSelectCrane: (id: string | null) => void;
   onApply: () => void;
   onUnassign: () => void;
   unassignDisabled: boolean;
@@ -61,11 +61,18 @@ export default function BulkAssignBar({
         position="center"
       >
         <MachineSelect label="Rig" kind="rig" options={rigs} valueId={rigId} onSelect={onSelectRig} />
-        <MachineSelect label="Crane" kind="crane" options={cranes} valueId={craneId} onSelect={onSelectCrane} />
+        <MachineSelect
+          label="Crane (optional)"
+          kind="crane"
+          options={cranes}
+          valueId={craneId}
+          onSelect={onSelectCrane}
+          onClear={() => onSelectCrane(null)}
+        />
         <Pressable
-          style={[styles.applyButton, (!rigId || !craneId) && styles.applyButtonDisabled]}
+          style={[styles.applyButton, !rigId && styles.applyButtonDisabled]}
           onPress={onApply}
-          disabled={!rigId || !craneId}
+          disabled={!rigId}
         >
           <Text style={styles.applyButtonText}>Apply to {selectedCount}</Text>
         </Pressable>

@@ -329,7 +329,10 @@ export const pilingChecklistPiles = sqliteTable('pil_checklist_piles', {
   pileId: text('pile_id').notNull(),
   seqNo: integer('seq_no').notNull(),
   rigId: text('rig_id').notNull(),
-  craneId: text('crane_id').notNull(),
+  // Optional — a pile can be planned with a rig alone (a rig can perform any
+  // CRANE-track step, never the reverse). Mirrors core/models/piling.py's
+  // PilingChecklistPile.crane_id.
+  craneId: text('crane_id'),
   status: text('status')
     .notNull()
     .default('NOT_STARTED')

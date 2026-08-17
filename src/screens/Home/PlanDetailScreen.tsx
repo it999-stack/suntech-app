@@ -114,7 +114,9 @@ export default function PlanDetailScreen() {
     const builtPiles: PreviewPile[] = cpList.map((cp) => {
       const pile = pileMap.get(cp.pileId);
       const rigNo = rigs.find((m) => m.id === cp.rigId)?.machineNo ?? '—';
-      const craneNo = cranes.find((m) => m.id === cp.craneId)?.machineNo ?? '—';
+      // Undefined (not '—') when no crane is assigned at all — a genuinely
+      // rig-only pile — so TrackChoiceTiles hides the Crane tile for it.
+      const craneNo = cp.craneId ? (cranes.find((m) => m.id === cp.craneId)?.machineNo ?? '—') : undefined;
       return {
         id: cp.pileId,
         checklistPileId: cp.id,
@@ -124,7 +126,7 @@ export default function PlanDetailScreen() {
         rigMachineNo: rigNo,
         craneMachineNo: craneNo,
         rigId: cp.rigId,
-        craneId: cp.craneId,
+        craneId: cp.craneId ?? undefined,
       };
     });
     setDetailPiles(builtPiles);

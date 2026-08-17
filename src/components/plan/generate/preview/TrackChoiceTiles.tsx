@@ -29,7 +29,10 @@ const TILE_META = {
   CRANE: { icon: Forklift, color: colors.machines.crane.color, soft: colors.machines.crane.soft },
 } as const;
 
-function Tile({
+/** The single square icon tile — exported so read-only callers that just need to
+ * show "which machine" (no RIG/CRANE choice) can render the exact same tile,
+ * e.g. CoreTeamAccordion's per-machine header. */
+export function MachineTrackTile({
   track,
   machineNo,
   selected,
@@ -68,14 +71,14 @@ function TrackChoiceTiles({
 }: TrackChoiceTilesProps) {
   return (
     <View style={styles.row}>
-      <Tile
+      <MachineTrackTile
         track="RIG"
         machineNo={rigMachineNo}
         selected={selected === 'RIG'}
         onPress={onSelect ? () => onSelect('RIG') : undefined}
       />
       {craneMachineNo !== undefined && (
-        <Tile
+        <MachineTrackTile
           track="CRANE"
           machineNo={craneMachineNo}
           selected={selected === 'CRANE'}

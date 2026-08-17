@@ -1,5 +1,4 @@
 // src/services/pilingPlannerService.ts
-// Local plan generation — ported from server's pilingPlannerService.js.
 //
 // Generates pile_plan_steps for a checklist entirely from local SQLite data.
 // No server calls needed — all required data is already synced locally:

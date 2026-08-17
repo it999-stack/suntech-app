@@ -94,7 +94,8 @@ export function computeTotalDuration(steps: PlanStepWithMeta[]): number {
 /** Sum of durationMinutes + bufferMinutes for steps assigned to a specific machine — the
  * time that machine is actually occupied on this pile. Buffer time is included since it's
  * genuinely reserved on the machine's timeline, not idle. */
-export function computeMachineOccupancyMinutes(steps: PlanStepWithMeta[], machineId: string): number {
+export function computeMachineOccupancyMinutes(steps: PlanStepWithMeta[], machineId?: string): number {
+  if (!machineId) return 0;
   return steps
     .filter((s) => s.assignedMachineId === machineId)
     .reduce((sum, s) => sum + (s.durationMinutes ?? 0) + (s.bufferMinutes ?? 0), 0);

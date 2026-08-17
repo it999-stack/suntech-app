@@ -45,6 +45,8 @@ interface ProgressHeaderProps {
   nextDisabled?: boolean;
 }
 
+const TAP_TARGET = 44;
+
 export default function ProgressHeader({
   step,
   onClose,
@@ -64,31 +66,28 @@ export default function ProgressHeader({
         <View style={styles.topRow}>
           <Pressable
             onPress={onClose}
-            hitSlop={12}
-            style={styles.closeBtn}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.closeBtn,
+              pressed && styles.btnPressed,
+            ]}
           >
-            <X size={18} color={colors.textPrimary} />
+            <X size={20} color={colors.textPrimary} />
           </Pressable>
-
-          <Text
-            style={styles.titleText}
-            numberOfLines={1}
-          >
-            {STEP_LABEL[step]}
-          </Text>
 
           <View style={styles.chevronGroup}>
             <Pressable
               onPress={onBack}
               disabled={backDisabled}
-              hitSlop={8}
-              style={[
+              hitSlop={4}
+              style={({ pressed }) => [
                 styles.chevronBtn,
                 backDisabled && styles.chevronBtnDisabled,
+                pressed && !backDisabled && styles.btnPressed,
               ]}
             >
               <ChevronLeft
-                size={18}
+                size={22}
                 color={
                   backDisabled
                     ? colors.textSecondary
@@ -97,18 +96,26 @@ export default function ProgressHeader({
               />
             </Pressable>
 
+            <Text
+              style={styles.titleText}
+              numberOfLines={1}
+            >
+              {STEP_LABEL[step]}
+            </Text>
+
             {!isLastStep ? (
               <Pressable
                 onPress={onNext}
                 disabled={nextInactive}
-                hitSlop={8}
-                style={[
+                hitSlop={4}
+                style={({ pressed }) => [
                   styles.chevronBtn,
                   nextInactive && styles.chevronBtnDisabled,
+                  pressed && !nextInactive && styles.btnPressed,
                 ]}
               >
                 <ChevronRight
-                  size={18}
+                  size={22}
                   color={
                     nextInactive
                       ? colors.textSecondary
@@ -120,6 +127,8 @@ export default function ProgressHeader({
               <View style={styles.chevronBtnPlaceholder} />
             )}
           </View>
+
+          <View style={styles.closeBtnPlaceholder} />
         </View>
 
         {/* Progress */}
@@ -147,7 +156,7 @@ export default function ProgressHeader({
 const styles = StyleSheet.create({
   headerArea: {
     paddingHorizontal: spacing.md,
-    marginTop: spacing.xs
+    marginTop: spacing.xs,
   },
 
   card: {
@@ -161,11 +170,15 @@ const styles = StyleSheet.create({
   },
 
   closeBtn: {
-    width: 32,
-    height: 32,
+    width: TAP_TARGET,
+    height: TAP_TARGET,
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  closeBtnPlaceholder: {
+    width: TAP_TARGET,
   },
 
   titleText: {
@@ -174,24 +187,37 @@ const styles = StyleSheet.create({
     ...typography.h2,
     fontWeight: '700',
     color: colors.textPrimary,
+    paddingHorizontal: spacing.xs,
   },
 
   chevronGroup: {
     flexDirection: 'row',
+    flex: 1,
     alignItems: 'center',
+    marginLeft: spacing.sm,
   },
 
   chevronBtn: {
-    padding: 4,
+    width: TAP_TARGET,
+    height: TAP_TARGET,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(28,28,46,0.05)',
   },
 
   chevronBtnDisabled: {
     opacity: 0.35,
+    backgroundColor: 'transparent',
+  },
+
+  btnPressed: {
+    backgroundColor: 'rgba(28,28,46,0.10)',
   },
 
   chevronBtnPlaceholder: {
-    width: 22,
-    padding: 4,
+    width: TAP_TARGET,
+    height: TAP_TARGET,
   },
 
   progressSection: {

@@ -30,7 +30,7 @@ interface AddPileModalProps {
   rigs: PilingMachine[];
   cranes: PilingMachine[];
   isSaving: boolean;
-  onConfirm: (input: { pileId: string; rigId: string; craneId: string }) => void;
+  onConfirm: (input: { pileId: string; rigId: string; craneId?: string }) => void;
 }
 
 export default function AddPileModal({
@@ -161,10 +161,16 @@ export default function AddPileModal({
     onClose();
   }
 
+  // Rig is mandatory, crane is optional. When the locked machine is the rig,
+  // otherMachineId (the crane) may stay unset — the pile is added rig-only.
+  // When the locked machine is the crane, otherMachineId (the rig) is
+  // required, since a pile can never be added without one.
+  const canConfirm = !!pendingPile && !isSaving && (lockedMachine.kind === 'rig' || !!otherMachineId);
+
   function confirm() {
-    if (!pendingPile || !otherMachineId || isSaving) return;
-    const rigId = lockedMachine.kind === 'rig' ? lockedMachine.machine.id : otherMachineId;
-    const craneId = lockedMachine.kind === 'crane' ? lockedMachine.machine.id : otherMachineId;
+    if (!canConfirm || !pendingPile) return;
+    const rigId = lockedMachine.kind === 'rig' ? lockedMachine.machine.id : otherMachineId!;
+    const craneId = lockedMachine.kind === 'crane' ? lockedMachine.machine.id : (otherMachineId ?? undefined);
     onConfirm({ pileId: pendingPile.id, rigId, craneId });
   }
 
@@ -253,17 +259,18 @@ export default function AddPileModal({
                 onSelect={lockedMachine.kind === 'rig' ? () => {} : setOtherMachineId}
               />
               <MachineSelect
-                label="Crane"
+                label={lockedMachine.kind === 'rig' ? 'Crane (optional)' : 'Crane'}
                 kind="crane"
                 options={lockedMachine.kind === 'crane' ? [lockedMachine.machine] : cranes}
                 valueId={lockedMachine.kind === 'crane' ? lockedMachine.machine.id : otherMachineId}
                 onSelect={lockedMachine.kind === 'crane' ? () => {} : setOtherMachineId}
+                onClear={lockedMachine.kind === 'rig' ? () => setOtherMachineId(null) : undefined}
               />
             </View>
             <Pressable
               onPress={confirm}
-              disabled={!otherMachineId || isSaving}
-              style={[styles.saveBtn, (!otherMachineId || isSaving) && styles.saveBtnDisabled]}
+              disabled={!canConfirm}
+              style={[styles.saveBtn, !canConfirm && styles.saveBtnDisabled]}
             >
               <Text style={styles.saveBtnText}>{isSaving ? 'Adding…' : 'Add to plan'}</Text>
             </Pressable>

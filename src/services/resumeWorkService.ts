@@ -24,10 +24,25 @@ import {
 import { getChecklistsBySite, getChecklistPiles } from '@repositories/checklistRepository';
 import {
   getActualStepsForChecklist,
+  getPlanStepsForChecklist,
   upsertActualStep,
   type ActualStepWithMeta,
 } from '@repositories/planRepository';
 import { generateId } from '@utils/helpers';
+
+/** One step already completed (actualEnd set) on the pile's most recent past
+ * checklist — carries both plan and actual times so callers (Preview, Log
+ * Actuals) can display a real historical record instead of just a name. */
+export interface CompletedStepInfo {
+  stepId: string;
+  stepName: string;
+  track: string;
+  sequenceOrder: number;
+  plannedStart: string | null;
+  plannedEnd: string | null;
+  actualStart: string | null;
+  actualEnd: string | null;
+}
 
 export interface ResumeWorkInfo {
   pileId: string;
@@ -43,6 +58,14 @@ export interface ResumeWorkInfo {
   pastActualStart: string | null;
   /** Names of steps already completed on the pile's most recent checklist, for display context. */
   completedStepNames: string[];
+  /** Same steps as completedStepNames, with plan + actual times — for Preview/Log Actuals display. */
+  completedSteps: CompletedStepInfo[];
+  /** The step immediately after the in-progress one, if any — used when the
+   * supervisor confirms the in-progress step was actually fully completed
+   * yesterday: the resume point advances here (fresh, full duration) instead
+   * of re-planning the already-finished step. Null when firstIncomplete was
+   * the last applicable step (pile is then fully done in that case). */
+  nextStep: { stepId: string; stepName: string; remainingMinutes: number } | null;
   /** The historical checklist this pending work belongs to, and its date —
    * lets a caller (e.g. HomeScreen's "pending from previous day" card) link
    * straight back to that day's Fill Actuals screen. */
@@ -88,15 +111,23 @@ export async function findResumeWorkForPiles(
 
   const checklistDateById = new Map(checklists.map((c) => [c.id, c.date]));
 
-  // Fetch actual steps once per distinct checklist involved.
+  // Fetch actual + plan steps once per distinct checklist involved.
   const checklistIds = new Set([...latestCpByPile.values()].map((cp) => cp.checklistId));
   const actualStepsByCpId = new Map<string, ActualStepWithMeta[]>();
+  const planStepByCpAndStepId = new Map<string, Map<string, { plannedStart: string; plannedEnd: string | null }>>();
   for (const checklistId of checklistIds) {
     const actualSteps = await getActualStepsForChecklist(checklistId);
     for (const a of actualSteps) {
       const list = actualStepsByCpId.get(a.checklistPileId) ?? [];
       list.push(a);
       actualStepsByCpId.set(a.checklistPileId, list);
+    }
+
+    const planSteps = await getPlanStepsForChecklist(checklistId);
+    for (const p of planSteps) {
+      const map = planStepByCpAndStepId.get(p.checklistPileId) ?? new Map();
+      map.set(p.stepId, { plannedStart: p.plannedStart, plannedEnd: p.plannedEnd });
+      planStepByCpAndStepId.set(p.checklistPileId, map);
     }
   }
 
@@ -153,6 +184,38 @@ export async function findResumeWorkForPiles(
       .filter((s) => actualByStepId.get(s.id)?.actualEnd)
       .map((s) => s.stepName);
 
+    const planStepsForCp = planStepByCpAndStepId.get(cp.id);
+    const completedSteps: CompletedStepInfo[] = referenceSteps
+      .filter((s) => actualByStepId.get(s.id)?.actualEnd)
+      .map((s) => {
+        const a = actualByStepId.get(s.id)!;
+        const p = planStepsForCp?.get(s.id);
+        return {
+          stepId: s.id,
+          stepName: s.stepName,
+          track: s.track,
+          sequenceOrder: s.sequenceOrder,
+          plannedStart: p?.plannedStart ?? null,
+          plannedEnd: p?.plannedEnd ?? null,
+          actualStart: a.actualStart,
+          actualEnd: a.actualEnd,
+        };
+      });
+
+    // The step right after the in-progress one — used if the supervisor later
+    // confirms firstIncomplete was actually fully finished yesterday, so the
+    // resume point can advance instead of re-planning a finished step.
+    const nextIdx = referenceSteps.findIndex((s) => s.id === firstIncomplete.id) + 1;
+    const nextStepDef = nextIdx > 0 ? referenceSteps[nextIdx] : undefined;
+    const nextStep = nextStepDef
+      ? {
+          stepId: nextStepDef.id,
+          stepName: nextStepDef.stepName,
+          remainingMinutes:
+            (dimensionId ? templateMap.get(`${dimensionId}|${nextStepDef.id}`) : undefined) ?? 60,
+        }
+      : null;
+
     pendingWorkItems.push({
       pileId,
       stepId: firstIncomplete.id,
@@ -164,6 +227,8 @@ export async function findResumeWorkForPiles(
       pastChecklistPileId: cp.id,
       pastActualStart: actualStep?.actualStart ?? null,
       completedStepNames,
+      completedSteps,
+      nextStep,
       checklistId: cp.checklistId,
       checklistDate: checklistDateById.get(cp.checklistId) ?? beforeDate,
     });
@@ -173,22 +238,25 @@ export async function findResumeWorkForPiles(
 }
 
 /**
- * Persist a user-entered remarks note onto the historical (paused) actual-step
- * row a pile is resuming from — reuses pile_actual_steps.remarks rather than
- * inventing new schema for "why this step was paused."
+ * Close out the historical (paused) actual-step row a pile is resuming from,
+ * writing the real time it stopped (partially completed) or finished (fully
+ * completed) yesterday, plus an optional remarks note. `pastActualStart` must
+ * be passed through unchanged — upsertActualStep overwrites actualStart/
+ * actualEnd/remarks together, not a partial patch.
  */
-export async function saveResumeRemarks(
+export async function closeOutResumeStep(
   pastChecklistPileId: string,
   stepId: string,
   pastActualStart: string | null,
-  remarks: string,
+  actualEnd: string,
+  remarks?: string,
 ): Promise<void> {
   await upsertActualStep({
     id: generateId(),
     checklistPileId: pastChecklistPileId,
     stepId,
     actualStart: pastActualStart,
-    actualEnd: null,
-    remarks,
+    actualEnd,
+    remarks: remarks || null,
   });
 }

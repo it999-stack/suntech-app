@@ -367,6 +367,9 @@ export default function MachineEventsModal({
         visible={timePickerOpen}
         onClose={() => setTimePickerOpen(false)}
         initialDate={occurredAt}
+        // This modal has its own separate "Date" field + AppCalendar below —
+        // TimerSelectMenu only ever picks the time-of-day here.
+        allowDateChange={false}
         onConfirm={(d) => {
           setOccurredAt((prev) => {
             const next = new Date(prev);

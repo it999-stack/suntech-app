@@ -5,7 +5,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { NotebookPen, Settings, Sparkles, Pencil, Cylinder } from 'lucide-react-native';
+import { NotebookPen, Sparkles, Pencil, Cylinder, Truck, Users } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import ProgressRing from '@components/shared/ProgressRing';
 import GradientTile from '@components/shared/GradientTile';
@@ -27,6 +27,13 @@ function getDateParts(dateStr: string): { day: string; month: string } {
     day: d.toLocaleDateString('en-IN', { day: '2-digit' }),
     month: d.toLocaleDateString('en-IN', { month: 'short' }).toUpperCase(),
   };
+}
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function DateBadge({ dateStr, onPress }: { dateStr: string; onPress: () => void }) {
@@ -56,17 +63,23 @@ function HeaderArea({
 }) {
   return (
     <View style={styles.headerRow}>
-      <View style={styles.greetingBlock}>
-        <Text style={styles.helloText}>Hello, {userName}</Text>
-        <Text style={styles.siteText}>{siteName}</Text>
+      <View style={styles.greetingRow}>
+        <View style={styles.avatarCircle}>
+          <Text style={styles.avatarText}>{getInitials(userName)}</Text>
+        </View>
+        <View style={styles.greetingBlock}>
+          <Text style={styles.helloText}>Hello, {userName}</Text>
+          <Text style={styles.siteText}>{siteName}</Text>
+        </View>
       </View>
+
       <View style={styles.headerRightCol}>
-        <Pressable hitSlop={10} onPress={onSettingsPress}>
-          <View style={styles.settingsBtn}>
-            <Settings size={18} color={colors.textSecondary} />
-          </View>
+        <Pressable
+          hitSlop={10}
+          onPress={onSettingsPress}
+        >
+          <DateBadge dateStr={workingDate} onPress={onDatePress} />
         </Pressable>
-        <DateBadge dateStr={workingDate} onPress={onDatePress} />
       </View>
     </View>
   );
@@ -151,20 +164,49 @@ function ActivePlanCard({
   );
 }
 
+// TODO: wired with dummy values for now — replace with real counts once the
+// machines/crew repositories are hooked up (likely siteEquipmentRepository
+// and getPersonnelBySite filtered by today's shift assignments).
+function SiteSnapshotRow() {
+  return (
+    <View style={styles.snapshotSection}>
+      <Text style={styles.sectionLabel}>Site snapshot</Text>
+      <View style={styles.snapshotRow}>
+        <View style={styles.snapshotCard}>
+          <View style={[styles.snapshotIconCircle, { backgroundColor: colors.accent }]}>
+            <Truck size={15} color={colors.white} />
+          </View>
+          <View>
+            <Text style={styles.snapshotValue}>6</Text>
+            <Text style={styles.snapshotLabel}>Machines</Text>
+          </View>
+        </View>
+        <View style={styles.snapshotCard}>
+          <View style={[styles.snapshotIconCircle, { backgroundColor: colors.accentPink }]}>
+            <Users size={15} color={colors.white} />
+          </View>
+          <View>
+            <Text style={styles.snapshotValue}>18</Text>
+            <Text style={styles.snapshotLabel}>Crew today</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
   const { checklist, planStatus, actualSteps, planSteps, checklistPiles, loadChecklist, isLoading } = usePlan();
   const workingDate = useWorkingDate();
 
-  // Load the working date's checklist on mount (or whenever the working date changes)
   useEffect(() => {
     if (user?.siteId) {
       loadChecklist(user.siteId, workingDate);
     }
   }, [user?.siteId, workingDate, loadChecklist]);
 
-  // Load personnel to resolve supervisor names
   const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
   useEffect(() => {
     if (user?.siteId) {
@@ -172,9 +214,6 @@ export default function HomeScreen() {
     }
   }, [user?.siteId]);
 
-  // Load this checklist's role assignments, to resolve the Shift Incharge
-  // (Shift 1) name shown on the home card — the closest equivalent to what
-  // "supervisor" used to mean before the multi-role system replaced it.
   const [checklistPersonnel, setChecklistPersonnel] = useState<PilingChecklistPersonnel[]>([]);
   useEffect(() => {
     if (checklist) {
@@ -191,13 +230,11 @@ export default function HomeScreen() {
     return p?.name ?? 'Shift Incharge';
   }, [checklistPersonnel, personnel]);
 
-  // Completed-step count for the plan card's progress ring.
   const completedSteps = useMemo(
     () => actualSteps.filter((a) => a.actualEnd).length,
     [actualSteps],
   );
 
-  // Active count shown on the "Piles in progress" quick-action tile.
   const pilesInProgressCount = useMemo(() => {
     if (planStatus === 'none') return 0;
     return checklistPiles.filter((cp) => {
@@ -213,7 +250,6 @@ export default function HomeScreen() {
   const [calendarSheetVisible, setCalendarSheetVisible] = useState(false);
   const [workingDateSheetVisible, setWorkingDateSheetVisible] = useState(false);
 
-  // ── Loading state ────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
@@ -252,6 +288,7 @@ export default function HomeScreen() {
             />
           )}
 
+          <Text style={styles.sectionLabel}>Quick access</Text>
           <View style={styles.quickRow}>
             <GradientTile
               style={styles.quickCard}
@@ -273,6 +310,8 @@ export default function HomeScreen() {
               iconAlign="right"
             />
           </View>
+
+          <SiteSnapshotRow />
         </ScrollView>
       </SafeAreaView>
 
@@ -298,7 +337,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  space: { paddingVertical: spacing.sm},
+  space: { paddingVertical: spacing.sm },
   center: { justifyContent: 'center', alignItems: 'center' },
   loadingText: { ...typography.body, color: colors.textSecondary },
 
@@ -311,25 +350,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    marginTop: spacing.lg,
   },
-  headerRightCol: {
-    alignItems: 'flex-end',
+  greetingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
+    flexShrink: 1,
   },
-  settingsBtn: {
-    width: 36,
-    height: 36,
+  avatarCircle: {
+    width: 44,
+    height: 44,
     borderRadius: radius.pill,
-    backgroundColor: colors.glassFillStrong,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
+    backgroundColor: colors.textPrimary,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
+  },
+  avatarText: {
+    color: colors.white,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  headerRightCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexShrink: 0,
   },
 
   dateBadge: {
-    width: 50,
-    height: 54,
+    width: 48,
+    height: 52,
     borderRadius: radius.lg,
     backgroundColor: colors.white,
     borderWidth: 1,
@@ -339,7 +391,7 @@ const styles = StyleSheet.create({
     ...shadow.soft,
   },
   dateBadgeDay: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: colors.textPrimary,
     lineHeight: 20,
@@ -358,7 +410,7 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
   },
 
-  greetingBlock: {},
+  greetingBlock: { flexShrink: 1 },
   helloText: {
     ...typography.h1,
     color: colors.textPrimary,
@@ -463,10 +515,54 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
 
-  // ── Quick action row — two uniform GradientTile tiles ────────────────────
+  sectionLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: spacing.sm,
+    marginTop: -spacing.xs,
+  },
+
   quickRow: {
     flexDirection: 'row',
     gap: spacing.md,
   },
   quickCard: { flex: 1 },
+
+  snapshotSection: {},
+  snapshotRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  snapshotCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.white,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    padding: spacing.md,
+    ...shadow.soft,
+  },
+  snapshotIconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  snapshotValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    lineHeight: 20,
+  },
+  snapshotLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
 });

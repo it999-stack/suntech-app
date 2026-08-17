@@ -152,7 +152,6 @@ export default function StepTimeControl({
         <TimerSelectMenu
           visible={pickerOpen}
           onClose={() => setPickerOpen(false)}
-          allowDateChange
           onTimeSelect={(date) => {
             const m = date.getHours() * 60 + date.getMinutes();
             setDraftMinutes(m);

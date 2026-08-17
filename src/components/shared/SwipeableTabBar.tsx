@@ -6,7 +6,7 @@
 // `items` and a `renderPage` function.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, type LayoutChangeEvent } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import PagerView from 'react-native-pager-view';
 import { colors, spacing, radius } from '@theme/theme';
@@ -88,6 +88,10 @@ export interface SwipeableTabBarProps<T extends string = string> {
    *             padding, 1px border, 13/500 text). Opt-in; other callers unaffected.
    */
   pillVariant?: 'default' | 'piles';
+  /** Extra style applied to the 'dots' variant's divider line (e.g. more
+   * breathing room above it before the content below). Omitted by default;
+   * existing callers are unaffected. */
+  dividerStyle?: ViewStyle;
 }
 
 const FALLBACK_PAGE_HEIGHT = 120;
@@ -102,6 +106,7 @@ export default function SwipeableTabBar<T extends string = string>({
   fadeToColor = colors.backdropEnd,
   trailingAccessory,
   pillVariant = 'default',
+  dividerStyle,
 }: SwipeableTabBarProps<T>) {
   const pagerRef = useRef<PagerView>(null);
   const [pageHeights, setPageHeights] = useState<Record<number, number>>({});
@@ -206,7 +211,7 @@ export default function SwipeableTabBar<T extends string = string>({
       {scrollHint === 'dots' && (
         <>
           <PaginationDots total={items.length} activeIndex={activeIndex} />
-          <Divider />
+          <Divider style={dividerStyle} />
         </>
       )}
 

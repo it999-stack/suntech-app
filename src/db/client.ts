@@ -307,6 +307,35 @@ export async function initDb() {
       WHERE machine_id IS NOT NULL;
   `);
 
+  // Migration: relax crane_id to nullable (a pile can now be planned with a
+  // rig alone). SQLite can't ALTER a column's NOT NULL in place, so an
+  // already-installed DB whose table still has the old constraint gets
+  // rebuilt here before the CREATE TABLE IF NOT EXISTS below (a no-op once
+  // this has run, or on any DB that never had the old constraint).
+  const craneIdColumn = await sqlite.getFirstAsync<{ notnull: number }>(
+    `SELECT "notnull" FROM pragma_table_info('pil_checklist_piles') WHERE name = 'crane_id';`,
+  );
+  if (craneIdColumn?.notnull === 1) {
+    await sqlite.execAsync(`
+      ALTER TABLE pil_checklist_piles RENAME TO pil_checklist_piles_pre_optional_crane;
+      CREATE TABLE pil_checklist_piles (
+        id           TEXT PRIMARY KEY NOT NULL,
+        checklist_id TEXT NOT NULL,
+        pile_id      TEXT NOT NULL,
+        seq_no       INTEGER NOT NULL,
+        rig_id       TEXT NOT NULL,
+        crane_id     TEXT,
+        status       TEXT NOT NULL DEFAULT 'NOT_STARTED',
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER,
+        server_updated_at TEXT,
+        deleted_at   INTEGER
+      );
+      INSERT INTO pil_checklist_piles SELECT * FROM pil_checklist_piles_pre_optional_crane;
+      DROP TABLE pil_checklist_piles_pre_optional_crane;
+    `);
+  }
+
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_checklist_piles (
       id           TEXT PRIMARY KEY NOT NULL,
@@ -314,7 +343,7 @@ export async function initDb() {
       pile_id      TEXT NOT NULL,
       seq_no       INTEGER NOT NULL,
       rig_id       TEXT NOT NULL,
-      crane_id     TEXT NOT NULL,
+      crane_id     TEXT,
       status       TEXT NOT NULL DEFAULT 'NOT_STARTED',
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER,

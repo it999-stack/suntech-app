@@ -18,6 +18,7 @@ import GlassCard from '@components/shared/GlassCard';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { useAuthStore } from '@store/authStore';
 import type { PilingSitePersonnel } from '@db/schema';
+import { formatDesignation } from '@/utils/personnelRoles';
 
 function PersonnelCard({ person }: { person: PilingSitePersonnel }) {
   const isActive = person.isActive;
@@ -41,7 +42,7 @@ function PersonnelCard({ person }: { person: PilingSitePersonnel }) {
         </Text>
 
         <View style={[styles.badge, { backgroundColor: colors.accentSoft }]}>
-          <Text style={styles.badgeText}>{person.designation}</Text>
+          <Text style={styles.badgeText}>{formatDesignation(person.designation)}</Text>
         </View>
 
         <View style={styles.statusRow}>

@@ -8,7 +8,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Check, Drill, Forklift, Wind, type LucideIcon } from 'lucide-react-native';
+import { Check, Drill, Forklift, Wind, X, type LucideIcon } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { SimpleMachine } from './types';
 
@@ -20,6 +20,11 @@ interface MachineSelectProps {
   options: SimpleMachine[];
   valueId: string | null;
   onSelect: (id: string) => void;
+  /** Shows an unassign ("X") button on the active row instead of the usual
+   * check mark — same pattern as PersonnelPickerList's onUnassign. Only
+   * meaningful for an optional field (e.g. Crane), never passed for a
+   * mandatory Rig picker. */
+  onClear?: () => void;
 }
 
 const MACHINE_ICON: Record<MachineSelectKind, LucideIcon> = {
@@ -28,7 +33,7 @@ const MACHINE_ICON: Record<MachineSelectKind, LucideIcon> = {
   compressor: Wind,
 };
 
-export default function MachineSelect({ label, kind, options, valueId, onSelect }: MachineSelectProps) {
+export default function MachineSelect({ label, kind, options, valueId, onSelect, onClear }: MachineSelectProps) {
   const Icon = MACHINE_ICON[kind];
   const kindColor = colors.machines[kind].color;
   const kindSoft = colors.machines[kind].soft;
@@ -58,7 +63,15 @@ export default function MachineSelect({ label, kind, options, valueId, onSelect 
                 >
                   {o.machineNo}
                 </Text>
-                {active && <Check size={18} color={kindColor} />}
+                {active && (
+                  onClear ? (
+                    <Pressable hitSlop={10} style={styles.unassignBtn} onPress={onClear}>
+                      <X size={16} color={colors.danger} />
+                    </Pressable>
+                  ) : (
+                    <Check size={18} color={kindColor} />
+                  )
+                )}
               </Pressable>
             );
           })}
@@ -82,15 +95,20 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
   },
   rowInactive: {
-    borderColor: colors.border,
-    backgroundColor: colors.glassFill,
-    opacity: 0.55,
+    borderColor: 'rgba(28,28,46,0.15)',
+    backgroundColor: 'rgba(28,28,46,0.05)',
+    borderStyle: 'dashed',
   },
-  // borderColor/backgroundColor are set inline per row from colors.machines[kind]
-  // (rig/crane/compressor each have their own identity color, matching the
-  // same badges used in PilesAccordion.tsx and pileTableColumns.tsx).
   rowActive: {},
   rowText: { ...typography.body, fontSize: 13, fontWeight: '700', flex: 1 },
   rowTextInactive: { color: colors.textSecondary },
+  unassignBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.dangerSoft,
+  },
   emptyText: { ...typography.caption, color: colors.textSecondary, fontStyle: 'italic' },
 });

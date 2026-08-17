@@ -8,6 +8,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Layers, Coffee } from 'lucide-react-native';
 import Accordion from '@components/shared/Accordion';
+import MachineBadge from '@components/shared/MachineBadge';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import StepTimelineRow from './StepTimelineRow';
 import type { TrackChoice } from './TrackChoiceTiles';
@@ -91,20 +92,24 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
   // row (added below) never tries to look one up.
   const scheduledIndexByStepId = new Map(steps.map((s, idx) => [s.stepId, idx]));
 
-  // Full applicable-step set for this pile — every selected step, from the
-  // resume point onward if resuming — so a step that didn't get scheduled
-  // (cut off by the plan-window limit) still shows, faded, instead of vanishing.
-  // Falls back to just `steps` (today's behavior) when the caller doesn't pass
-  // allSteps (e.g. PlanDetailScreen, which has no selectedStepIds/resume concept).
+  // Steps already completed on this pile's most recent past checklist —
+  // shown as completed rows (with real historical times) instead of being
+  // dropped from the list entirely.
+  const historicalCompletedByStepId = new Map(
+    (resumeWork?.completedSteps ?? []).map((c) => [c.stepId, c]),
+  );
+
+  // Full applicable-step set for this pile — every selected step, including
+  // ones already completed before the resume point — so a step that didn't
+  // get scheduled (cut off by the plan-window limit) still shows, faded,
+  // instead of vanishing. Falls back to just `steps` (today's behavior) when
+  // the caller doesn't pass allSteps (e.g. PlanDetailScreen, which has no
+  // selectedStepIds/resume concept).
   let displaySteps: PlanStepWithMeta[] = steps;
   if (allSteps.length > 0) {
     const selectedStepIdSet = new Set(selectedStepIds);
-    const resumeOrder = resumeWork
-      ? allSteps.find((s) => s.id === resumeWork.stepId)?.sequenceOrder
-      : undefined;
     const applicableSteps = allSteps
       .filter((s) => selectedStepIdSet.has(s.id))
-      .filter((s) => resumeOrder === undefined || s.sequenceOrder >= resumeOrder)
       .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
     const scheduledByStepId = new Map(steps.map((s) => [s.stepId, s]));
     displaySteps = applicableSteps.map(
@@ -138,26 +143,16 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
         <Text style={styles.pileDuration}>{totalDuration}</Text>
       </View>
       <View style={styles.pileMachinesRow}>
-        <View
-          style={[
-            styles.machineBadge,
-            { backgroundColor: colors.machines.rig.soft, borderColor: colors.machines.rig.color },
-          ]}
-        >
-          <Text style={[styles.machineBadgeText, { color: colors.machines.rig.color }]}>
-            Rig - ({pile.rigMachineNo} · {rigOccupancy})
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.machineBadge,
-            { backgroundColor: colors.machines.crane.soft, borderColor: colors.machines.crane.color },
-          ]}
-        >
-          <Text style={[styles.machineBadgeText, { color: colors.machines.crane.color }]}>
-            Crane - ({pile.craneMachineNo} · {craneOccupancy})
-          </Text>
-        </View>
+        <MachineBadge track="RIG" label={`Rig - (${pile.rigMachineNo} · ${rigOccupancy})`} showIcon={false} />
+        {pile.craneMachineNo ? (
+          <MachineBadge
+            track="CRANE"
+            label={`Crane - (${pile.craneMachineNo} · ${craneOccupancy})`}
+            showIcon={false}
+          />
+        ) : (
+          <MachineBadge track="RIG" label="Rig only" showIcon={false} muted />
+        )}
       </View>
 
       <View style={styles.stepsContainer}>
@@ -165,9 +160,12 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
           <Text style={styles.noSteps}>No plan steps generated for this pile.</Text>
         ) : (
           displaySteps.map((s, idx) => {
-            const isPlanned = s.plannedStart !== '';
+            const historical = historicalCompletedByStepId.get(s.stepId);
+            const isPlanned = s.plannedStart !== '' || !!historical;
             const scheduledIdx = scheduledIndexByStepId.get(s.stepId);
-            const isCompleted = !!actualByStepId.get(s.stepId)?.actualEnd;
+            const isCompleted = !!actualByStepId.get(s.stepId)?.actualEnd || !!historical;
+            const completedStartIso = actualByStepId.get(s.stepId)?.actualStart ?? historical?.actualStart ?? undefined;
+            const completedEndIso = actualByStepId.get(s.stepId)?.actualEnd ?? historical?.actualEnd ?? undefined;
             // Eligibility is the step's nominal (business) track, not the currently-displayed
             // one — once overridden, `s.track` reads as 'RIG', but the tiles must stay offered
             // so it can be toggled back. Falls back to `s.track` where businessTrack isn't
@@ -178,9 +176,16 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
             // because this pile's own Rig is out of room — overriding to Rig is exactly the
             // escape hatch for that case.
             const isCraneEligible = !!onToggleTrack && (s.businessTrack ?? s.track) === 'CRANE';
+            // A rig-only pile has no crane to choose between — it auto-runs on the
+            // rig (see resolveStepExecution) whether or not the step id happens to
+            // be in the explicit override list, so the tile must show Rig selected
+            // either way, not just when the user manually toggled it.
             const trackChoice = isCraneEligible
               ? {
-                  selected: overriddenStepIds.includes(s.stepId) ? ('RIG' as TrackChoice) : ('CRANE' as TrackChoice),
+                  selected:
+                    overriddenStepIds.includes(s.stepId) || !pile.craneId
+                      ? ('RIG' as TrackChoice)
+                      : ('CRANE' as TrackChoice),
                   onSelect: (track: TrackChoice) => onToggleTrack!(pile.checklistPileId, s.stepId, track),
                 }
               : undefined;
@@ -236,6 +241,8 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
                     isLast={isLastDisplayedStep}
                     isPlanned={isPlanned}
                     isCompleted={isCompleted}
+                    completedStartIso={completedStartIso}
+                    completedEndIso={completedEndIso}
                     rigMachineNo={pile.rigMachineNo}
                     craneMachineNo={pile.craneMachineNo}
                     trackChoice={trackChoice}
@@ -330,7 +337,7 @@ export default function PilesAccordion({
           <View>
             <Text style={styles.title}>Piles</Text>
             <Text style={styles.subtitle}>
-              {piles.length} pile{piles.length === 1 ? '' : 's'} in plan
+              Tap a pile to view its steps.
             </Text>
           </View>
         </View>
@@ -398,17 +405,6 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingHorizontal: spacing.sm,
     marginTop: spacing.xs,
-  },
-  machineBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  machineBadgeText: {
-    ...typography.caption,
-    fontWeight: '700',
   },
   stepsContainer: {
     paddingHorizontal: spacing.md,

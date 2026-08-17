@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { CheckCircle2 } from 'lucide-react-native';
-import { formatTime, formatDurationMinutes } from '@/utils/formatTime';
+import { formatTimeWithDay, formatDurationMinutes } from '@/utils/formatTime';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { isContinuingStep, stepWorkStart } from '@utils/helpers';
@@ -21,8 +21,14 @@ interface StepTimelineRowProps {
    * get a scheduled time (cut off by the plan-window limit) — rendered
    * faded, with "–" instead of a time range. Defaults to true. */
   isPlanned?: boolean;
+  /** Real historical actual start/end for a completed step, when known (either
+   * today's actualSteps, e.g. PlanDetailScreen, or a previous day's completed
+   * step carried into a resuming pile's list) — shown next to "Completed"
+   * instead of the bare label. */
+  completedStartIso?: string;
+  completedEndIso?: string;
   rigMachineNo: string;
-  craneMachineNo: string;
+  craneMachineNo?: string;
   /** Only provided for CRANE-track steps in an editable (not-yet-confirmed) plan preview —
    * lets the tiles reflect a pending selection and respond to taps. Omitted everywhere else
    * (RIG-track steps, which have no alternative to offer, and read-only screens), where the
@@ -38,6 +44,8 @@ function StepTimelineRow({
   isLast,
   isCompleted,
   isPlanned = true,
+  completedStartIso,
+  completedEndIso,
   rigMachineNo,
   craneMachineNo,
   trackChoice,
@@ -66,15 +74,22 @@ function StepTimelineRow({
         {!isPlanned ? (
           <Text style={styles.stepTimes}>–</Text>
         ) : isCompleted ? (
-          <View style={styles.completedRow}>
-            <CheckCircle2 size={12} color={colors.success} />
-            <Text style={styles.completedText}>Completed</Text>
+          <View style={styles.completedWrap}>
+            <View style={styles.completedRow}>
+              <CheckCircle2 size={12} color={colors.success} />
+              <Text style={styles.completedText}>Completed</Text>
+            </View>
+            {completedStartIso && completedEndIso && (
+              <Text style={styles.completedTimes}>
+                {formatTimeWithDay(completedStartIso)} → {formatTimeWithDay(completedEndIso)}
+              </Text>
+            )}
           </View>
         ) : (
           <Text style={styles.stepTimes}>
-            {step.plannedStart ? formatTime(stepWorkStart(step)) : '—'}
+            {step.plannedStart ? formatTimeWithDay(stepWorkStart(step)) : '—'}
             {' → '}
-            {isContinuingStep(step) ? 'To be continued' : step.plannedEnd ? formatTime(step.plannedEnd) : '—'}
+            {isContinuingStep(step) ? 'To be continued' : step.plannedEnd ? formatTimeWithDay(step.plannedEnd) : '—'}
           </Text>
         )}
       </View>
@@ -128,16 +143,24 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 1,
   },
+  completedWrap: { marginTop: 1 },
   completedRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 1,
   },
   completedText: {
     ...typography.caption,
     color: colors.success,
     fontWeight: '700',
+  },
+  // Muted, same weight as the regular stepTimes text — on its own line below
+  // the "Completed" label so a long (date-inclusive) range wraps cleanly
+  // instead of fighting the checkmark icon for vertical alignment.
+  completedTimes: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 1,
   },
   stepDuration: {
     ...typography.caption,

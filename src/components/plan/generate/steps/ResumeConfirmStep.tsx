@@ -4,10 +4,14 @@
 // lightweight, read-only preview of every assigned pile (code + rig/crane,
 // same as the Piles step) and flags any pile with a step still in progress
 // from a previous day (actualStart set, no actualEnd) that hasn't had its
-// plan finish time confirmed yet. Progression is blocked (see
-// GeneratePlanScreen's canContinue) until every flagged pile is confirmed —
-// this is the single place that owns resume-confirm UI; PileAssignStep is
-// pure assignment and no longer touches any of this.
+// plan finish time confirmed yet. The Continue button is never disabled for
+// this — GeneratePlanScreen.goNext() calls this component's exposed
+// focusFirstMissing() instead (same pattern as TeamAssignStep), which
+// scrolls to the first unconfirmed pile and returns false to block
+// navigation; each unconfirmed pile also carries a persistent required-style
+// left border (see StartTimeStep.tsx's PM/PE cards) the whole time it's
+// unconfirmed. This is the single place that owns resume-confirm UI;
+// PileAssignStep is pure assignment and no longer touches any of this.
 //
 // Cards, not a table: this row needs to fit a pile code, two machine badges,
 // AND a status pill — a 3-column IndexTable squeezes the pile-code column to
@@ -15,10 +19,11 @@
 // Stacking vertically inside one full-width card (mirrors PileProgressCard's
 // layout) gives every element the room it needs.
 
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, FlatList } from 'react-native';
 import { Clock, PencilLine } from 'lucide-react-native';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import MachineBadge from '@components/shared/MachineBadge';
 import type { PlanDraft } from '@/types/plan';
 import GlassCard from '@components/shared/GlassCard';
 import ResumeTimeConfirmModal from './resume-confirm/ResumeTimeConfirmModal';
@@ -28,6 +33,16 @@ import type { EligiblePile, MachineKind, SimpleMachine } from './pile-assign/typ
 // Solid form of colors.accentSoft's base rgb — same indigo, full opacity, for the
 // confirmed status pill's icon/text (accentSoft alone is too faint at text weight).
 const ACCENT_SOLID = '#5B5FEF';
+
+
+export interface ResumeConfirmStepHandle {
+  /**
+   * True if every pile is confirmed. If not, scrolls to and (via the card's
+   * always-on required border) highlights the first one that still needs
+   * confirmation, and returns false.
+   */
+  focusFirstMissing: () => boolean;
+}
 
 interface ResumeConfirmStepProps {
   draft: PlanDraft;
@@ -42,11 +57,12 @@ interface ResumeConfirmStepProps {
   continueDisabled: boolean;
 }
 
-export default function ResumeConfirmStep({
+const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepProps>(function ResumeConfirmStep({
   draft, onUpdate, piles = [], activeRigs = [], activeCranes = [],
   effectiveDayStart, onContinue, continueDisabled,
-}: ResumeConfirmStepProps) {
+}, ref) {
   const resumeConfirm = useResumeConfirmQueue(draft, onUpdate);
+  const flatListRef = useRef<FlatList<EligiblePile>>(null);
 
   function machineLabel(kind: MachineKind, machineId: string): string {
     return (kind === 'rig' ? activeRigs : activeCranes).find((m) => m.id === machineId)?.machineNo ?? '—';
@@ -54,6 +70,15 @@ export default function ResumeConfirmStep({
 
   const flaggedPileIds = useMemo(
     () => draft.selectedPileIds.filter((id) => pileNeedsResumeConfirm(draft.resumeWorkByPileId, id)),
+    [draft.selectedPileIds, draft.resumeWorkByPileId],
+  );
+
+  // Every selected pile carrying a genuinely in-progress prior-day step —
+  // flagged (not yet confirmed) or already confirmed — for the section's
+  // progress count. Distinct from flaggedPileIds, which only ever counts
+  // the not-yet-confirmed ones.
+  const resumingPileIds = useMemo(
+    () => draft.selectedPileIds.filter((id) => !!draft.resumeWorkByPileId[id]?.wasStarted),
     [draft.selectedPileIds, draft.resumeWorkByPileId],
   );
 
@@ -78,13 +103,45 @@ export default function ResumeConfirmStep({
       });
   }, [draft.selectedPileIds, piles, flaggedPileIds]);
 
+  useImperativeHandle(ref, () => ({
+    focusFirstMissing() {
+      if (flaggedPileIds.length === 0) return true;
+      const index = rows.findIndex((p) => p.id === flaggedPileIds[0]);
+      if (index >= 0) {
+        flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
+      }
+      return false;
+    },
+  }), [flaggedPileIds, rows]);
+
   return (
     <View style={styles.root}>
       <View style={styles.listSection}>
         <FlatList
+          ref={flatListRef}
           data={rows}
           keyExtractor={(p) => p.id}
           contentContainerStyle={styles.listContent}
+          onScrollToIndexFailed={(info) => {
+            setTimeout(() => {
+              flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true });
+            }, 50);
+          }}
+          ListHeaderComponent={
+            <View style={styles.section}>
+              <Text style={styles.title}>Planned piles</Text>
+              <Text style={styles.description}>
+                {flaggedPileIds.length > 0
+                  ? "Piles with a step still in progress from a previous day need their status confirmed before today's plan is generated. Tap a flagged pile to confirm."
+                  : 'Review every pile going into today\'s plan.'}
+              </Text>
+              {resumingPileIds.length > 0 && (
+                <Text style={styles.countText}>
+                  {resumingPileIds.length - flaggedPileIds.length} of {resumingPileIds.length} confirmed
+                </Text>
+              )}
+            </View>
+          }
           ListEmptyComponent={<Text style={styles.emptyText}>No piles selected.</Text>}
           renderItem={({ item: p }) => {
             const asgn = draft.assignments[p.id];
@@ -103,15 +160,11 @@ export default function ResumeConfirmStep({
                     <Text style={styles.spec}>Ø{p.dia}mm · {p.depth}m</Text>
                   </View>
                   <View style={styles.machineRow}>
-                    {rigLabel && (
-                      <View style={[styles.machineBadge, { backgroundColor: colors.machines.rig.soft, borderColor: colors.machines.rig.color }]}>
-                        <Text style={[styles.machineBadgeText, { color: colors.machines.rig.color }]}>RIG · {rigLabel}</Text>
-                      </View>
-                    )}
-                    {craneLabel && (
-                      <View style={[styles.machineBadge, { backgroundColor: colors.machines.crane.soft, borderColor: colors.machines.crane.color }]}>
-                        <Text style={[styles.machineBadgeText, { color: colors.machines.crane.color }]}>CRANE · {craneLabel}</Text>
-                      </View>
+                    {rigLabel && <MachineBadge track="RIG" label={rigLabel} />}
+                    {craneLabel ? (
+                      <MachineBadge track="CRANE" label={craneLabel} />
+                    ) : (
+                      rigLabel && <MachineBadge track="RIG" label="Rig only" muted />
                     )}
                   </View>
                 </View>
@@ -157,19 +210,38 @@ export default function ResumeConfirmStep({
             pileCode={confirmPile.code}
             resumeWork={confirmResumeWork}
             effectiveStart={effectiveDayStart}
-            onConfirm={resumeConfirm.confirm}
+            onConfirmPartial={resumeConfirm.confirmPartial}
+            onConfirmFull={resumeConfirm.confirmFull}
             onClose={resumeConfirm.cancel}
           />
         ) : null;
       })()}
     </View>
   );
-}
+});
+
+export default ResumeConfirmStep;
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0 },
   listSection: { flex: 1, minHeight: 0 },
   listContent: { gap: spacing.sm, paddingBottom: spacing.md },
+  section: { marginBottom: spacing.md },
+  title: {
+    ...typography.pageTitle,
+    color: colors.textPrimary,
+  },
+  description: {
+    ...typography.body,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+  },
+  countText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.accent,
+    marginTop: spacing.sm,
+  },
   emptyText: {
     ...typography.caption,
     color: colors.textSecondary,
@@ -188,15 +260,7 @@ const styles = StyleSheet.create({
   pileInfo: { flex: 1 },
   code: { ...typography.cardTitle, color: colors.textPrimary },
   spec: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  machineRow: { flexDirection: 'column', alignItems: 'flex-end', gap: spacing.xs, flexShrink: 0 },
-  machineBadge: {
-    alignSelf: 'flex-end',
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  machineBadgeText: { ...typography.caption, fontWeight: '700' },
+  machineRow: { flexDirection: 'column', alignItems: 'flex-start', gap: spacing.xs, flexShrink: 0 },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -205,7 +269,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm + 2,
     marginTop: spacing.sm,
   },
-  statusPillPending: { backgroundColor: 'rgba(28,28,46,0.05)' },
+  statusPillPending: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.warning },
   statusPillConfirmed: { backgroundColor: colors.accentSoft },
   statusPillIcon: { marginRight: spacing.xs + 2 },
   statusPillText: { ...typography.caption, fontWeight: '600', flex: 1 },

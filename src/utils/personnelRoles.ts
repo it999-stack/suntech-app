@@ -53,6 +53,23 @@ export function matchesRoleDesignation(
 }
 
 /**
+ * Humanizes a raw designation string for display — DB values are typically
+ * SCREAMING_SNAKE_CASE (e.g. "SHIFT_INCHARGE") but the UI should show
+ * "Shift Incharge". Generic word-split + title-case rather than a lookup
+ * table, since `designation` is free text, not a strict enum (see
+ * matchesRoleDesignation above) — this also leaves already-nice strings
+ * ("Rig Operator") unchanged.
+ */
+export function formatDesignation(designation: string): string {
+  return designation
+    .trim()
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+/**
  * Fuzzy match for Machine Operator candidates, since real designations are
  * inconsistently named in practice ("Rig Operator" / "Crane Operator" /
  * generic "Machine Operator"). A RIG machine accepts designations containing
@@ -175,6 +192,47 @@ export function isShiftTeamComplete(
   activeCraneIds: string[],
 ): boolean {
   return findFirstMissingTeamField(team, activeRigIds, activeCraneIds) === null;
+}
+
+export interface OrphanedTeamMachine {
+  role: 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR';
+  machineId: string;
+  shiftSlot: 1 | 2;
+}
+
+/**
+ * Team-assigned rig/crane rows whose machine has zero piles actually
+ * assigned to it in this plan. The Team step is filled in before the Piles
+ * step (see STEP_ORDER in ProgressHeader.tsx), against `activeRigIds`/
+ * `activeCraneIds` from the earlier Machines step — so a machine can be
+ * fully staffed here and still end up with no piles later. The server
+ * derives its own "active machine" set strictly from the submitted piles[]
+ * (see checklist_personnel_service.py's validate_checklist_personnel) and
+ * rejects any personnel row for a machine outside that set, so this must be
+ * checked against `pileAssignedRigIds`/`pileAssignedCraneIds` — the actual
+ * piles about to be submitted — not the Machines-step toggle, to catch the
+ * mismatch before it becomes a 400 from the server.
+ */
+export function findOrphanedTeamMachines(
+  cp: ChecklistPersonnelAssignment,
+  pileAssignedRigIds: Set<string>,
+  pileAssignedCraneIds: Set<string>,
+): OrphanedTeamMachine[] {
+  const orphaned: OrphanedTeamMachine[] = [];
+  for (const [slot, team] of [[1, cp.shift1], [2, cp.shift2]] as const) {
+    for (const machineId of Object.keys(team.engineerByMachineId)) {
+      if (!pileAssignedRigIds.has(machineId)) orphaned.push({ role: 'ENGINEER', machineId, shiftSlot: slot });
+    }
+    for (const machineId of Object.keys(team.supervisorByMachineId)) {
+      if (!pileAssignedRigIds.has(machineId)) orphaned.push({ role: 'SUPERVISOR', machineId, shiftSlot: slot });
+    }
+    for (const machineId of Object.keys(team.operatorByMachineId)) {
+      if (!pileAssignedRigIds.has(machineId) && !pileAssignedCraneIds.has(machineId)) {
+        orphaned.push({ role: 'MACHINE_OPERATOR', machineId, shiftSlot: slot });
+      }
+    }
+  }
+  return orphaned;
 }
 
 /** One row of the `checklist_personnel` array sent to POST /plans/generate. */

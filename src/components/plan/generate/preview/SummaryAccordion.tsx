@@ -17,9 +17,7 @@ interface SummaryAccordionProps {
   title: string;
   summary: string;
   tone?: 'default' | 'warning';
-  /** If provided, shows an "Edit" pill that jumps back to that wizard step. */
   onEdit?: () => void;
-  /** Whether to start open. Defaults to false (matches Accordion's own default). */
   defaultOpen?: boolean;
   children: React.ReactNode;
 }

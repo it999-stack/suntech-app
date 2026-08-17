@@ -268,7 +268,7 @@ export async function hydrateChecklistFromServer(serverChecklist: {
     status: string;
     pile: { id: string };
     rig: { id: string };
-    crane: { id: string };
+    crane: { id: string } | null;
     // The server's own updated_at — echoed back verbatim on the next push as
     // the optimistic-concurrency version (see pilingChecklistPiles.serverUpdatedAt).
     updated_at?: string | null;
@@ -363,7 +363,7 @@ export async function hydrateChecklistFromServer(serverChecklist: {
             pileId: cp.pile.id,
             seqNo: cp.seq_no,
             rigId: cp.rig.id,
-            craneId: cp.crane.id,
+            craneId: cp.crane?.id ?? null,
             status: cp.status as NewPilingChecklistPile['status'],
             createdAt: now,
             serverUpdatedAt: cp.updated_at ?? null,

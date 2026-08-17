@@ -40,7 +40,7 @@ export function useEditModeSeed(args: {
       const ids = checklistPiles.map((cp) => cp.pileId);
       const assignments: PlanDraft['assignments'] = {};
       checklistPiles.forEach((cp) => {
-        assignments[cp.pileId] = { rig: cp.rigId, crane: cp.craneId };
+        assignments[cp.pileId] = { rig: cp.rigId, crane: cp.craneId ?? undefined };
       });
 
       // Locations aren't stored on the checklist itself — recover them from
@@ -106,7 +106,9 @@ export function useEditModeSeed(args: {
         date: checklist.date,
         planStartTime: checklist.planStartTime ?? defaultPlanDraft(checklist.date).planStartTime,
         activeRigIds: [...new Set(checklistPiles.map((cp) => cp.rigId))],
-        activeCraneIds: [...new Set(checklistPiles.map((cp) => cp.craneId))],
+        activeCraneIds: [...new Set(
+          checklistPiles.map((cp) => cp.craneId).filter((id): id is string => !!id),
+        )],
         selectedPileIds: ids,
         locationIds,
         selectedStepIds: steps.map((s) => s.id),

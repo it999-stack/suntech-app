@@ -22,13 +22,18 @@ function machineForTrack(pile: PreviewPileInput, track: string): string | undefi
  * coincide unless overridden. This is the ONLY place override logic — and the only caller
  * of machineForTrack() — lives: everything past Pass 1 below reads the already-resolved
  * assignedMachineId/executionTrack and never re-derives them.
+ *
+ * A rig-only pile (no craneId) auto-runs every CRANE-track step on its rig —
+ * there's no crane to choose between, so there's nothing to ask the user. A
+ * pile WITH a crane keeps today's explicit opt-in per-step override.
  */
 export function resolveStepExecution(
   pile: PreviewPileInput,
   step: { id: string; track: string },
 ): { businessTrack: string; executionTrack: string; assignedMachineId: string | undefined } {
+  const noCrane = !pile.craneId;
   const executionTrack =
-    step.track === 'CRANE' && pile.stepTrackOverrides?.includes(step.id) ? 'RIG' : step.track;
+    step.track === 'CRANE' && (pile.stepTrackOverrides?.includes(step.id) || noCrane) ? 'RIG' : step.track;
   return {
     businessTrack: step.track,
     executionTrack,

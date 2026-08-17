@@ -248,6 +248,10 @@ export default function PileStepsModal({
         const isCurrent = step.stepId === currentStepId;
         const isLocked = !isDone && !isCurrent;
         const isBlockedByIdle = isCurrent && !!currentStepBlockedByIdle;
+        // Completed on a *previous* day's checklist (see FillActualScreen) — a
+        // frozen historical record, shown faded with no edit/remarks/machine-
+        // event controls since there's no local row here to attach edits to.
+        const isHistorical = !!step.isHistorical;
         const lateMinutes =
           isDone && step.plannedEndIso != null
             ? durationMinutes(step.actualStartIso!, step.actualEndIso!) -
@@ -257,8 +261,11 @@ export default function PileStepsModal({
 
         return (
           <View
-            key={step.stepId}
-            style={[modalStyles.card, (isLocked || isBlockedByIdle) && modalStyles.cardLocked]}
+            // A continuing step can appear twice — once as yesterday's faded
+            // historical row, once as today's live one — both share stepId,
+            // so isHistorical must be part of the key or React sees a clash.
+            key={`${isHistorical ? 'hist' : 'cur'}-${step.stepId}`}
+            style={[modalStyles.card, (isLocked || isBlockedByIdle || isHistorical) && modalStyles.cardLocked]}
           >
             <View style={modalStyles.headerRow}>
               <View style={modalStyles.headerLeft}>
@@ -285,7 +292,7 @@ export default function PileStepsModal({
                 </View>
               </View>
 
-              {(isStarted || isDone || isCurrent) && (
+              {(isStarted || isDone || isCurrent) && !isHistorical && (
                 <View style={modalStyles.headerActions}>
                   <Pressable
                     style={modalStyles.iconBtn}
@@ -362,24 +369,26 @@ export default function PileStepsModal({
                 <View style={modalStyles.fieldRow}>
                   <Text style={modalStyles.fieldLabel}>Start</Text>
                   <Text style={modalStyles.fieldValue}>{formatTimeWithDay(step.actualStartIso)}</Text>
-                  <View style={modalStyles.fieldActions}>
-                    <EditTimeButton
-                      minutes={step.actualStart!}
-                      label="start time"
-                      minMinutes={idx > 0 ? steps[idx - 1].actualEnd : undefined}
-                      minMinutesLabel="the previous step's end time"
-                      machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
-                      maxMinutes={step.actualEnd}
-                      maxMinutesLabel="this step's own finish time"
-                      onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualStart', mins, explicitDate)}
-                      anchorIso={step.startAnchorIso}
-                    />
-                    <DeleteTimeButton
-                      label="start time"
-                      cascadeWarning="This will also clear the finish time."
-                      onConfirm={() => onClearActualTime(step.stepId, 'actualStart')}
-                    />
-                  </View>
+                  {!isHistorical && (
+                    <View style={modalStyles.fieldActions}>
+                      <EditTimeButton
+                        minutes={step.actualStart!}
+                        label="start time"
+                        minMinutes={idx > 0 ? steps[idx - 1].actualEnd : undefined}
+                        minMinutesLabel="the previous step's end time"
+                        machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
+                        maxMinutes={step.actualEnd}
+                        maxMinutesLabel="this step's own finish time"
+                        onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualStart', mins, explicitDate)}
+                        anchorIso={step.startAnchorIso}
+                      />
+                      <DeleteTimeButton
+                        label="start time"
+                        cascadeWarning="This will also clear the finish time."
+                        onConfirm={() => onClearActualTime(step.stepId, 'actualStart')}
+                      />
+                    </View>
+                  )}
                 </View>
 
                 <View style={modalStyles.fieldRow}>
@@ -387,27 +396,29 @@ export default function PileStepsModal({
                   <Text style={[modalStyles.fieldValue, isLate && modalStyles.lateText]}>
                     {formatTimeWithDay(step.actualEndIso)}
                   </Text>
-                  <View style={modalStyles.fieldActions}>
-                    <EditTimeButton
-                      minutes={step.actualEnd!}
-                      label="finish time"
-                      minMinutes={step.actualStart}
-                      minMinutesLabel="this step's start time"
-                      machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
-                      maxMinutes={
-                        idx < steps.length - 1 && steps[idx + 1].actualStart !== undefined
-                          ? steps[idx + 1].actualStart
-                          : undefined
-                      }
-                      maxMinutesLabel="the next step's start time"
-                      onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualEnd', mins, explicitDate)}
-                      anchorIso={step.endAnchorIso}
-                    />
-                    <DeleteTimeButton
-                      label="finish time"
-                      onConfirm={() => onClearActualTime(step.stepId, 'actualEnd')}
-                    />
-                  </View>
+                  {!isHistorical && (
+                    <View style={modalStyles.fieldActions}>
+                      <EditTimeButton
+                        minutes={step.actualEnd!}
+                        label="finish time"
+                        minMinutes={step.actualStart}
+                        minMinutesLabel="this step's start time"
+                        machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
+                        maxMinutes={
+                          idx < steps.length - 1 && steps[idx + 1].actualStart !== undefined
+                            ? steps[idx + 1].actualStart
+                            : undefined
+                        }
+                        maxMinutesLabel="the next step's start time"
+                        onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualEnd', mins, explicitDate)}
+                        anchorIso={step.endAnchorIso}
+                      />
+                      <DeleteTimeButton
+                        label="finish time"
+                        onConfirm={() => onClearActualTime(step.stepId, 'actualEnd')}
+                      />
+                    </View>
+                  )}
                 </View>
               </>
             )}
@@ -439,14 +450,16 @@ export default function PileStepsModal({
                 <MessageSquarePlus size={14} color={colors.textSecondary} style={modalStyles.remarkIcon} />
                 <Text style={modalStyles.remarkText}>
                   {step.remarks}{' '}
-                  <Text
-                    style={modalStyles.remarkEdit}
-                    onPress={() =>
-                      setRemarksFor({ stepId: step.stepId, stepName: step.stepName, remarks: step.remarks })
-                    }
-                  >
-                    Edit
-                  </Text>
+                  {!isHistorical && (
+                    <Text
+                      style={modalStyles.remarkEdit}
+                      onPress={() =>
+                        setRemarksFor({ stepId: step.stepId, stepName: step.stepName, remarks: step.remarks })
+                      }
+                    >
+                      Edit
+                    </Text>
+                  )}
                 </Text>
               </View>
             )}

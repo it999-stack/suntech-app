@@ -3,10 +3,24 @@
 
 import { toLocalIsoString } from '@utils/formatTime';
 
-/** Assignment of rig + crane to a single pile. */
+/** Assignment of rig (+ optional crane) to a single pile. A rig alone is a
+ * valid plan — a rig can perform any CRANE-track step, never the reverse. */
 export type PileAssignment = {
-  rig: string;   // pilingMachines.id (type=RIG)
-  crane: string; // pilingMachines.id (type=CRANE)
+  rig: string;      // pilingMachines.id (type=RIG)
+  crane?: string;   // pilingMachines.id (type=CRANE) — optional
+};
+
+/** A step already completed (actualEnd set) on the pile's most recent past
+ * checklist — plan + actual times, for display in Preview/Log Actuals. */
+export type CompletedStepInfo = {
+  stepId: string;
+  stepName: string;
+  track: string;
+  sequenceOrder: number;
+  plannedStart: string | null;
+  plannedEnd: string | null;
+  actualStart: string | null;
+  actualEnd: string | null;
 };
 
 /** A per-pile override used when an unfinished step continues on a new day. */
@@ -26,6 +40,15 @@ export type ResumeWork = {
   pastChecklistPileId?: string;
   pastActualStart?: string | null;
   completedStepNames?: string[];
+  /** Same steps as completedStepNames, with plan + actual times. */
+  completedSteps?: CompletedStepInfo[];
+  /** The step after the in-progress one, if any — used when the supervisor
+   * confirms the in-progress step was actually fully completed yesterday. */
+  nextStep?: { stepId: string; stepName: string; remainingMinutes: number } | null;
+  /** The historical checklist this resume work came from, and its date —
+   * lets the confirm modal anchor its "yesterday" time pickers correctly. */
+  checklistId?: string;
+  checklistDate?: string;
 };
 
 /**
@@ -141,6 +164,10 @@ export type ActualEntry = {
    * column for it. Explains why plannedEndIso is later than the step's pure
    * work duration would suggest. Undefined/empty when nothing overlapped. */
   planBreaks?: { label: string; start: string; end: string }[];
+  /** True for a synthetic, read-only row representing a step completed on a
+   * *previous* day's checklist — rendered faded, with no edit/remarks/
+   * machine-event controls (see FillActualScreen/PileStepsModal). */
+  isHistorical?: boolean;
 };
 
 /** Shape expected by PileProgressCard and PileStepsModal — one pile's steps
@@ -150,9 +177,9 @@ export type PileGroup = {
   pileId: string;
   pileCode: string;
   rig: string;
-  crane: string;
+  crane?: string;
   rigId: string;
-  craneId: string;
+  craneId?: string;
   steps: ActualEntry[];
   /** True when a not-yet-done step's assigned machine has status BREAKDOWN. */
   hasBreakdownWarning: boolean;

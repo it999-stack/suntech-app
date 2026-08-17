@@ -18,6 +18,7 @@ import { type PlanDraft, planEndTime } from '@/types/plan';
 import type { TimelineStop } from '@/types/timeline';
 import { matchesRoleDesignation } from '@/utils/personnelRoles';
 import { formatTime, toLocalIsoString, toLocalDateStr, formatRelativeDayLabel } from '@/utils/formatTime';
+import { planGenerationDateRule } from '@/utils/validationRules';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,16 +39,18 @@ function RolePickerCard({
   personnel,
   selectedId,
   onSelect,
+  allowNone = false,
 }: {
   icon: React.ReactNode;
   label: string;
   personnel: SimplePersonnel[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  allowNone?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selected = personnel.find((p) => p.id === selectedId);
-  const isRequired = !selected;
+  const isRequired = !selected && !allowNone;
 
   return (
     <>
@@ -88,7 +91,7 @@ function RolePickerCard({
             onSelect(id);
             setOpen(false);
           }}
-          allowNone={false}
+          allowNone={allowNone}
         />
       </AppModal>
     </>
@@ -178,6 +181,7 @@ export default function StartTimeStep({ draft, onUpdate, personnel }: StartTimeS
         onSelect={(id) =>
           onUpdate({ checklistPersonnel: { ...draft.checklistPersonnel, planningEngineerId: id } })
         }
+        allowNone
       />
 
       {/* Uses the same stop-log component and card treatment as the machine timeline. */}
@@ -199,6 +203,7 @@ export default function StartTimeStep({ draft, onUpdate, personnel }: StartTimeS
         onClose={() => setTimePickerOpen(false)}
         onTimeSelect={handleTimeChange}
         initialDate={new Date(draft.planStartTime)}
+        dateRule={planGenerationDateRule}
       />
     </>
   );

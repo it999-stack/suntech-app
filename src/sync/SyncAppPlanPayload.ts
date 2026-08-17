@@ -45,7 +45,7 @@ export interface SyncChecklistPile {
   pile_id: string;
   seq_no: number;
   rig_id: string;
-  crane_id: string;
+  crane_id: string | null;
   status: string;
   /**
    * Optimistic-concurrency base version — the server's own `updated_at`,

@@ -29,6 +29,10 @@ function toResumeWork(item: ResumeWorkInfo): ResumeWork {
     pastChecklistPileId: item.pastChecklistPileId,
     pastActualStart: item.pastActualStart,
     completedStepNames: item.completedStepNames,
+    completedSteps: item.completedSteps,
+    nextStep: item.nextStep,
+    checklistId: item.checklistId,
+    checklistDate: item.checklistDate,
   };
 }
 
@@ -88,10 +92,12 @@ export function buildResumePreselection({
 
     const rigActive = item.lastRigId != null && activeRigSet.has(item.lastRigId);
     const craneActive = item.lastCraneId != null && activeCraneSet.has(item.lastCraneId);
-    if (rigActive && craneActive) {
+    // Crane is optional — re-assign whenever the rig alone is still active,
+    // carrying the crane along only if it's also still active.
+    if (rigActive) {
       assignments[item.pileId] = {
         rig: item.lastRigId!,
-        crane: item.lastCraneId!,
+        crane: craneActive ? item.lastCraneId! : undefined,
       };
     }
   }

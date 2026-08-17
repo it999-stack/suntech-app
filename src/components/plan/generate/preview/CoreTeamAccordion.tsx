@@ -6,14 +6,15 @@
 // open a picker modal there) and PlanDetailScreen (read-only — `onPressRole`
 // omitted, so rows render as static, non-interactive).
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Users, Drill, Forklift } from 'lucide-react-native';
+import { Users } from 'lucide-react-native';
 import SummaryAccordion from './SummaryAccordion';
 import Avatar from '@components/shared/Avatar';
 import Divider from '@components/shared/Divider';
+import MachineBadge from '@components/shared/MachineBadge';
 import { colors, spacing, radius, typography } from '@/theme/theme';
-import { getMachineColor, buildTypeIndexById, hexToRgba } from '@/utils/helpers';
+import { formatDesignation } from '@/utils/personnelRoles';
 
 export interface LeadershipDetail {
   pmName: string | null;
@@ -62,12 +63,14 @@ interface CoreTeamAccordionProps {
 function TeamPersonRow({
   name,
   designation,
+  label,
   tone,
   badgeText,
   onPress,
 }: {
   name: string | null;
   designation: string | null;
+  label: string;
   tone: 'neutral' | 'day' | 'night';
   badgeText?: string;
   onPress?: () => void;
@@ -87,7 +90,11 @@ function TeamPersonRow({
         <Text style={[styles.personName, !assigned && styles.personNameEmpty]}>
           {assigned ? name : 'None assigned'}
         </Text>
-        {assigned && designation ? <Text style={styles.personDesignation}>{designation}</Text> : null}
+        {assigned && designation ? (
+          <Text style={styles.personDesignation}>{formatDesignation(designation)}</Text>
+        ) : (
+          <Text style={styles.personDesignation}>{label}</Text>
+        )}
       </View>
       {badgeText ? (
         <View style={[styles.personBadge, tone === 'night' ? styles.personBadgeNight : styles.personBadgeDay]}>
@@ -102,45 +109,6 @@ function TeamPersonRow({
   );
 }
 
-function MachineRoleAvatar({
-  label,
-  name,
-  avatarColor,
-  shiftLabel,
-  onPress,
-}: {
-  label: string;
-  name: string | null;
-  avatarColor?: string;
-  shiftLabel?: string;
-  onPress?: () => void;
-}) {
-  const assigned = !!name;
-
-  return (
-    <Pressable style={styles.roleSlot} onPress={onPress} disabled={!onPress}>
-      {shiftLabel ? <Text style={styles.shiftSubHeader}>{shiftLabel}</Text> : null}
-      <Avatar
-        name={name}
-        size={36}
-        variant={avatarColor ? 'filled' : 'outline'}
-        backgroundColor={avatarColor && hexToRgba(avatarColor, 0.12)}
-        borderColor={avatarColor}
-        textColor={avatarColor}
-      />
-
-      <Text
-        style={[styles.roleSlotName, !assigned && styles.roleSlotNameEmpty]}
-        numberOfLines={1}
-      >
-        {assigned ? name : 'Not assigned'}
-      </Text>
-
-      <Text style={styles.roleSlotLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
 // ─── Main component ─────────────────────────────────────────────────────────
 
 export default function CoreTeamAccordion({
@@ -150,18 +118,11 @@ export default function CoreTeamAccordion({
   defaultOpen,
   onPressRole,
 }: CoreTeamAccordionProps) {
-  const typeIndexById = useMemo(() => buildTypeIndexById(machineTeams), [machineTeams]);
-
-  const summary =
-    [leadership.pmName, leadership.peName, shiftIncharge.shift1Name, shiftIncharge.shift2Name]
-      .filter(Boolean)
-      .join(' · ') || 'None assigned';
-
   return (
     <SummaryAccordion
       icon={<Users size={18} color={colors.accent} />}
       title="Core Team"
-      summary={summary}
+      summary="Team members assigned to today's plan"
       defaultOpen={defaultOpen}
     >
       <View style={styles.sectionHeader}>
@@ -170,17 +131,19 @@ export default function CoreTeamAccordion({
       <TeamPersonRow
         name={leadership.pmName}
         designation={leadership.pmDesignation}
+        label="Project Manager"
         tone="neutral"
         onPress={onPressRole ? () => onPressRole({ role: 'PROJECT_MANAGER' }) : undefined}
       />
       <TeamPersonRow
         name={leadership.peName}
         designation={leadership.peDesignation}
+        label="Planning Engineer"
         tone="neutral"
         onPress={onPressRole ? () => onPressRole({ role: 'PLANNING_ENGINEER' }) : undefined}
       />
 
-      <Divider marginVertical={spacing.sm} />
+      <Divider marginVertical={spacing.md} />
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionHeaderText}>Shift Incharge</Text>
@@ -188,6 +151,7 @@ export default function CoreTeamAccordion({
       <TeamPersonRow
         name={shiftIncharge.shift1Name}
         designation={shiftIncharge.shift1Designation}
+        label="Shift Incharge"
         tone="day"
         badgeText="Day"
         onPress={onPressRole ? () => onPressRole({ role: 'SHIFT_INCHARGE', slot: 1 }) : undefined}
@@ -195,12 +159,13 @@ export default function CoreTeamAccordion({
       <TeamPersonRow
         name={shiftIncharge.shift2Name}
         designation={shiftIncharge.shift2Designation}
+        label="Shift Incharge"
         tone="night"
         badgeText="Night"
         onPress={onPressRole ? () => onPressRole({ role: 'SHIFT_INCHARGE', slot: 2 }) : undefined}
       />
 
-      <Divider marginVertical={spacing.sm} />
+      <Divider marginVertical={spacing.md} />
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionHeaderText}>Machine Teams</Text>
@@ -209,62 +174,40 @@ export default function CoreTeamAccordion({
         <Text style={styles.emptyText}>No active machines.</Text>
       ) : (
         machineTeams.map((m) => {
-          const avatarColor = getMachineColor(m, typeIndexById[m.id] ?? 0);
+          const operatorLabel =
+            m.type === 'RIG' ? 'Rig Operator' : m.type === 'CRANE' ? 'Crane Operator' : 'Compressor Operator';
+          const roles = m.type === 'RIG'
+            ? [
+                { role: 'ENGINEER' as const, label: 'Engineer', name1: m.engineerName1, name2: m.engineerName2 },
+                { role: 'SUPERVISOR' as const, label: 'Supervisor', name1: m.supervisorName1, name2: m.supervisorName2 },
+                { role: 'MACHINE_OPERATOR' as const, label: operatorLabel, name1: m.operatorName1, name2: m.operatorName2 },
+              ]
+            : [{ role: 'MACHINE_OPERATOR' as const, label: operatorLabel, name1: m.operatorName1, name2: m.operatorName2 }];
+
           return (
             <View key={m.id} style={styles.machineBlock}>
               <View style={styles.machineHeader}>
-                {m.type === 'RIG' ? (
-                  <Drill size={14} color={avatarColor} />
-                ) : (
-                  <Forklift size={14} color={avatarColor} />
-                )}
-                <Text style={styles.machineTitle}>{m.machineNo}</Text>
+                <MachineBadge track={m.type} label={m.machineNo} />
               </View>
 
-              {m.type === 'RIG' ? (
-                ([1, 2] as const).map((slot) => (
-                  <View key={slot}>
-                    <Text style={styles.shiftSubHeader}>{slot === 1 ? 'Day' : 'Night'}</Text>
-                    <View style={styles.machineRolesRow}>
-                      <MachineRoleAvatar
-                        label="Engineer"
-                        name={slot === 1 ? m.engineerName1 : m.engineerName2}
-                        avatarColor={avatarColor}
-                        onPress={onPressRole ? () => onPressRole({ role: 'ENGINEER', machineId: m.id, slot }) : undefined}
-                      />
-                      <MachineRoleAvatar
-                        label="Supervisor"
-                        name={slot === 1 ? m.supervisorName1 : m.supervisorName2}
-                        avatarColor={avatarColor}
-                        onPress={onPressRole ? () => onPressRole({ role: 'SUPERVISOR', machineId: m.id, slot }) : undefined}
-                      />
-                      <MachineRoleAvatar
-                        label="Operator"
-                        name={slot === 1 ? m.operatorName1 : m.operatorName2}
-                        avatarColor={avatarColor}
-                        onPress={onPressRole ? () => onPressRole({ role: 'MACHINE_OPERATOR', machineId: m.id, slot }) : undefined}
-                      />
-                    </View>
-                  </View>
-                ))
-              ) : (
-                <View style={styles.machineRolesRow}>
-                  <MachineRoleAvatar
-                    label="Operator"
-                    shiftLabel="Day"
-                    name={m.operatorName1}
-                    avatarColor={avatarColor}
-                    onPress={onPressRole ? () => onPressRole({ role: 'MACHINE_OPERATOR', machineId: m.id, slot: 1 }) : undefined}
-                  />
-                  <MachineRoleAvatar
-                    label="Operator"
-                    shiftLabel="Night"
-                    name={m.operatorName2}
-                    avatarColor={avatarColor}
-                    onPress={onPressRole ? () => onPressRole({ role: 'MACHINE_OPERATOR', machineId: m.id, slot: 2 }) : undefined}
-                  />
-                </View>
-              )}
+              {([1, 2] as const).map((slot) => (
+                <React.Fragment key={slot}>
+                  {slot === 2 ? (
+                    <Divider style={{ marginTop: spacing.md - spacing.sm, marginBottom: spacing.md }} />
+                  ) : null}
+                  {roles.map((r) => (
+                    <TeamPersonRow
+                      key={r.role}
+                      name={slot === 1 ? r.name1 : r.name2}
+                      designation={null}
+                      label={r.label}
+                      tone={slot === 1 ? 'day' : 'night'}
+                      badgeText={slot === 1 ? 'Day' : 'Night'}
+                      onPress={onPressRole ? () => onPressRole({ role: r.role, machineId: m.id, slot }) : undefined}
+                    />
+                  ))}
+                </React.Fragment>
+              ))}
             </View>
           )
         }
@@ -336,46 +279,10 @@ const styles = StyleSheet.create({
 
   // Machine Teams
   machineBlock: { marginBottom: spacing.md },
-  shiftSubHeader: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
   machineHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.sm,
     marginBottom: spacing.sm,
-  },
-  machineTitle: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  machineRolesRow: {
-    flexDirection: 'row',
-    marginBottom: spacing.sm,
-  },
-  roleSlot: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: spacing.xs,
-  },
-  roleSlotName: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  roleSlotNameEmpty: { color: colors.textSecondary, fontStyle: 'italic', fontWeight: '400' },
-  roleSlotLabel: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
   },
 });

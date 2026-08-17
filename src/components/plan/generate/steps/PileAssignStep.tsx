@@ -32,17 +32,38 @@ interface PileAssignStepProps {
   continueDisabled: boolean;
 }
 
-function mostCommonPair(assignments: PlanDraft['assignments']): { rig: string; crane: string } | null {
+// Crane is intentionally NOT tracked here — pre-filling it into a later bulk
+// assignment silently carried a stale/unintended crane onto piles the user
+// meant to leave rig-only. Only the rig (always mandatory) is worth
+// remembering as a convenience default.
+function mostCommonRigId(assignments: PlanDraft['assignments']): string | null {
   const counts = new Map<string, number>();
   Object.values(assignments).forEach((a) => {
-    if (!a?.rig || !a?.crane) return;
-    const key = `${a.rig}|${a.crane}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (!a?.rig) return;
+    counts.set(a.rig, (counts.get(a.rig) ?? 0) + 1);
   });
   const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (!best) return null;
-  const [rig, crane] = best[0].split('|');
-  return { rig, crane };
+  return best ? best[0] : null;
+}
+
+// The single rig/crane already shared by every one of the given piles' CURRENT
+// assignment, or null if they disagree (or none is set) — this is what lets
+// reopening the bulk panel for an already-assigned selection reflect what's
+// really there, without resurrecting the old "carries over from an unrelated
+// prior bulk-assign" bug (that read from a global last-used value instead of
+// the current selection itself).
+function commonAssignedValue(
+  assignments: PlanDraft['assignments'],
+  pileIds: string[],
+  pick: (a?: PlanDraft['assignments'][string]) => string | undefined,
+): string | null {
+  let common: string | null = null;
+  for (let i = 0; i < pileIds.length; i++) {
+    const v = pick(assignments[pileIds[i]]) || null;
+    if (i === 0) common = v;
+    else if (common !== v) return null;
+  }
+  return common;
 }
 
 export default function PileAssignStep({
@@ -56,25 +77,27 @@ export default function PileAssignStep({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkRigId, setBulkRigId] = useState<string | null>(null);
   const [bulkCraneId, setBulkCraneId] = useState<string | null>(null);
-  const [lastUsedPair, setLastUsedPair] = useState(() => mostCommonPair(draft.assignments));
+  const [lastUsedRigId, setLastUsedRigId] = useState(() => mostCommonRigId(draft.assignments));
 
   function machineLabel(kind: MachineKind, machineId: string): string {
     return (kind === 'rig' ? activeRigs : activeCranes).find((m) => m.id === machineId)?.machineNo ?? '—';
   }
   function isPileFullyAssigned(pileId: string): boolean {
+    // Crane is optional — a rig can perform any CRANE-track step, never the
+    // reverse — so a pile only needs a rig to count as "assigned".
     const a = draft.assignments[pileId];
-    return !!a?.rig && !!a?.crane;
+    return !!a?.rig;
   }
 
-  function commitAssignment(rigId: string, craneId: string, pileIds: string[]): void {
+  function commitAssignment(rigId: string, craneId: string | null, pileIds: string[]): void {
     const newAssignments = { ...draft.assignments };
     const newSelectedPileIds = [...draft.selectedPileIds];
     pileIds.forEach((id) => {
-      newAssignments[id] = { rig: rigId, crane: craneId };
+      newAssignments[id] = { rig: rigId, crane: craneId ?? undefined };
       if (!newSelectedPileIds.includes(id)) newSelectedPileIds.push(id);
     });
     onUpdate({ assignments: newAssignments, selectedPileIds: newSelectedPileIds });
-    setLastUsedPair({ rig: rigId, crane: craneId });
+    setLastUsedRigId(rigId);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setSelectedIds(new Set());
     setBulkOpen(false);
@@ -128,10 +151,17 @@ export default function PileAssignStep({
   }
 
   function openBulkPanel(): void {
-    const pair = lastUsedPair ?? (activeRigs.length === 1 && activeCranes.length === 1
-      ? { rig: activeRigs[0].id, crane: activeCranes[0].id } : null);
-    setBulkRigId(pair?.rig ?? null);
-    setBulkCraneId(pair?.crane ?? null);
+    const ids = [...selectedIds];
+    const commonRig = commonAssignedValue(draft.assignments, ids, (a) => a?.rig);
+    const commonCrane = commonAssignedValue(draft.assignments, ids, (a) => a?.crane);
+    // Rig: reflect what the selection already shares; otherwise fall back to
+    // the last-used/only-active-rig convenience default for a fresh selection.
+    setBulkRigId(commonRig ?? lastUsedRigId ?? (activeRigs.length === 1 ? activeRigs[0].id : null));
+    // Crane: ONLY reflects what this selection already shares right now —
+    // never a "last used" global memory, which is what let a crane silently
+    // leak onto an unrelated later selection. No consensus (mixed, or simply
+    // unset) means the panel starts at Rig only, same as before.
+    setBulkCraneId(commonCrane);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setBulkOpen(true);
   }
@@ -141,7 +171,7 @@ export default function PileAssignStep({
   }
 
   function applyBulkAssign(): void {
-    if (!bulkRigId || !bulkCraneId || selectedIds.size === 0) return;
+    if (!bulkRigId || selectedIds.size === 0) return;
     commitAssignment(bulkRigId, bulkCraneId, [...selectedIds]);
   }
 
@@ -149,7 +179,7 @@ export default function PileAssignStep({
     const pileIds = [...selectedIds];
     if (pileIds.length === 0) return;
     const newAssignments = { ...draft.assignments };
-    pileIds.forEach((id) => { newAssignments[id] = { rig: '', crane: '' }; });
+    pileIds.forEach((id) => { newAssignments[id] = { rig: '', crane: undefined }; });
     onUpdate({
       assignments: newAssignments,
       selectedPileIds: draft.selectedPileIds.filter((id) => !pileIds.includes(id)),

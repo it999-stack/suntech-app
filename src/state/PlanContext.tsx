@@ -66,7 +66,7 @@ export type PileAssignmentInput = {
   pileCode: string;
   dimensionId: string; // pilingDimensions.id - used for duration template lookup
   rigId: string;       // pilingMachines.id (type=RIG)
-  craneId: string;     // pilingMachines.id (type=CRANE)
+  craneId?: string;    // pilingMachines.id (type=CRANE) — optional, a rig can plan solo
   resumeWork?: ResumeWork;
   /** Step ids whose CRANE-track step should run on the Rig instead for this pile —
    * one-off per plan generation, chosen in the Preview step. */
@@ -106,7 +106,7 @@ export type GeneratePlanInput = {
 export type EditPlanPileInput = {
   pileId: string;
   rigId: string;
-  craneId: string;
+  craneId?: string;
 };
 
 /** What changed as a result of editPlanMidDay — shown to the user before/after
@@ -315,7 +315,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           piles: input.piles.map((p) => ({
             pile_id: p.pileId,
             rig_id: p.rigId,
-            crane_id: p.craneId,
+            crane_id: p.craneId ?? null,
             resume_work: p.resumeWork
               ? {
                   step_id: p.resumeWork.stepId,
@@ -366,7 +366,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             piles: piles.map((p) => ({
               pile_id: p.pileId,
               rig_id: p.rigId,
-              crane_id: p.craneId,
+              crane_id: p.craneId ?? null,
             })),
           },
         );

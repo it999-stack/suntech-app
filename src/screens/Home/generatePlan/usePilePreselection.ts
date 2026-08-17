@@ -62,9 +62,11 @@ export function usePilePreselection(args: {
       const manualIds = prev.selectedPileIds.filter(
         (id) => !preselection.selectedPileIds.includes(id),
       );
+      // Crane is optional — a rig-only assignment still counts as "confirmed"
+      // and must not be dropped just because it has no crane.
       const manualAssignments = Object.fromEntries(
         manualIds
-          .filter((id) => prev.assignments[id]?.rig && prev.assignments[id]?.crane)
+          .filter((id) => prev.assignments[id]?.rig)
           .map((id) => [id, prev.assignments[id]]),
       );
 

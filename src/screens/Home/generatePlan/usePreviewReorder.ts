@@ -14,8 +14,6 @@ export function usePreviewReorder(args: {
   draft: PlanDraft;
   updateDraft: (patch: Partial<PlanDraft>) => void;
   selectedPlanPiles: EligiblePile[];
-  rigs: SimpleMachine[];
-  cranes: SimpleMachine[];
   activeRigs: SimpleMachine[];
   activeCranes: SimpleMachine[];
 }): {
@@ -26,7 +24,7 @@ export function usePreviewReorder(args: {
   pilesForMachine: (m: MachineInfo) => { id: string; label: string }[];
   handleReorderMachine: (newSubsetOrder: string[]) => void;
 } {
-  const { draft, updateDraft, selectedPlanPiles, rigs, cranes, activeRigs, activeCranes } = args;
+  const { draft, updateDraft, selectedPlanPiles, activeRigs, activeCranes } = args;
 
   // Build preview piles (already-assigned piles with machine labels)
   const builtPreviewPiles: PreviewPile[] = useMemo(() => {
@@ -35,8 +33,17 @@ export function usePreviewReorder(args: {
       if (!pile) return [];
       const asgn = draft.assignments[id];
       if (!asgn) return [];
-      const rigNo = rigs.find((r) => r.id === asgn.rig)?.machineNo ?? '—';
-      const craneNo = cranes.find((c) => c.id === asgn.crane)?.machineNo ?? '—';
+      // Resolved against the ACTIVE machine lists (not the full site list) —
+      // matching PileAssignStep/ResumeConfirmStep exactly, so a stale
+      // assignment left pointing at a since-deactivated machine degrades to
+      // the same "—"/unassigned fallback everywhere instead of Preview alone
+      // still showing a real (but no-longer-active) machine name.
+      const rigNo = activeRigs.find((r) => r.id === asgn.rig)?.machineNo ?? '—';
+      // Undefined (not '—') when no crane is assigned at all — a genuinely
+      // rig-only pile — vs. a real crane id that just failed to resolve to a
+      // label, which still shows the placeholder. This distinction is what
+      // lets TrackChoiceTiles hide the Crane tile for rig-only piles.
+      const craneNo = asgn.crane ? (activeCranes.find((c) => c.id === asgn.crane)?.machineNo ?? '—') : undefined;
       return [{
         id: pile.id,
         checklistPileId: pile.id,
@@ -49,7 +56,7 @@ export function usePreviewReorder(args: {
         craneId: asgn.crane,
       }];
     });
-  }, [draft.selectedPileIds, draft.assignments, selectedPlanPiles, rigs, cranes]);
+  }, [draft.selectedPileIds, draft.assignments, selectedPlanPiles, activeRigs, activeCranes]);
 
   function handleReorderPiles(newOrder: string[]) {
     updateDraft({ selectedPileIds: newOrder });

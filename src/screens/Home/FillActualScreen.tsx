@@ -14,7 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { HomeStackParamList } from '@app-types/navigation';
-import { ChevronLeft, PencilLine, Drill, Forklift, Coffee } from 'lucide-react-native';
+import { ChevronLeft, ArrowDownUp, Drill, Forklift, Coffee } from 'lucide-react-native';
 import { colors, spacing, typography, radius } from '@theme/theme';
 import { toLocalIsoString, resolveOvernightDate, resolveActualTimeAnchor, formatTimeWithDay } from '@utils/formatTime';
 import { stepWorkStart } from '@utils/helpers';
@@ -22,9 +22,10 @@ import { buildMachineFloorIndex, nextFreeTimeOnOrAfter } from '@utils/machineFlo
 import { usePlan, type LogMachineEventInput, type EditPlanPileInput } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
 import { useWorkingDate } from '@store/workingDateStore';
-import PileProgressCard from '@components/plan/actual/PileProgressCard';
 import PileStepsModal from '@components/plan/actual/PileStepsModal';
 import MachineEventsModal from '@components/plan/actual/MachineEventsModal';
+import PileSequenceRow from '@components/plan/actual/PileSequenceRow';
+import GlassCard from '@components/shared/GlassCard';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import ReorderPilesOverlay, { type ReorderPile } from '@components/plan/generate/preview/ReorderPilesOverlay';
 import AddPileModal from '@components/plan/actual/AddPileModal';
@@ -36,6 +37,7 @@ import { getChecklistPersonnel } from '@repositories/checklistRepository';
 import { getMachineEventsForChecklist } from '@repositories/machineEventsRepository';
 import { getNonWorkingWindowsByShift } from '@repositories/shiftsRepository';
 import { resolveWindows, type EffectivePlanWindow } from '@/services/pilingPlannerService';
+import { findResumeWorkForPiles, type CompletedStepInfo } from '@/services/resumeWorkService';
 import { splitStepByInternalWindows } from '@components/plan/generate/preview/previewUtils';
 import type { PilingMachine, PilingPile, PilingSitePersonnel, PilMachineEvent, PilingNonWorkingWindow } from '@db/schema';
 import type { ActualEntry, PileGroup } from '@app-types/plan';
@@ -81,63 +83,112 @@ function MachineIdleTile({ since, notes, onPress }: OpenIdleSession & { onPress:
   );
 }
 
+/** Machine availability, worded for this screen ("Online" reads better here
+ * than the fleet screen's "Active" for a machine currently being worked). */
+function pileScreenStatusMeta(status: string | undefined): { label: string; color: string } {
+  if (status === 'ACTIVE') return { label: 'Online', color: colors.success };
+  if (status === 'BREAKDOWN') return { label: 'Reported Down', color: colors.danger };
+  if (status === 'IDLE') return { label: 'Idle', color: colors.warning };
+  return { label: 'Inactive', color: colors.textSecondary };
+}
+
+/** Replaces the old top-bar pencil icon — shows which machine this page belongs
+ * to, its live status, and the entry point into ReorderPilesOverlay. */
+function MachineInfoCard({
+  machine,
+  status,
+  onEditSequence,
+}: {
+  machine: MachineBadge;
+  status: string | undefined;
+  onEditSequence: () => void;
+}) {
+  const meta = machine.type === 'RIG' ? colors.machines.rig : colors.machines.crane;
+  const Icon = machine.type === 'RIG' ? Drill : Forklift;
+  const statusMeta = pileScreenStatusMeta(status);
+
+  return (
+    <GlassCard style={styles.machineInfoCard} innerStyle={styles.machineInfoCardInner}>
+      <View style={styles.machineInfoLeft}>
+        <View style={[styles.machineIconWrap, { backgroundColor: meta.soft }]}>
+          <Icon size={18} color={meta.color} />
+        </View>
+        <View>
+          <Text style={styles.machineInfoTitle} numberOfLines={1}>
+            {machine.type === 'RIG' ? 'Rig' : 'Crane'}: {machine.machineNo}
+          </Text>
+          <View style={styles.machineStatusRow}>
+            <View style={[styles.statusDot, { backgroundColor: statusMeta.color }]} />
+            <Text style={[styles.machineStatusText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+          </View>
+        </View>
+      </View>
+      <Pressable style={styles.editSequenceBtn} onPress={onEditSequence} hitSlop={spacing.sm}>
+        <ArrowDownUp size={16} color={colors.textPrimary} />
+        <Text style={styles.editSequenceText}>Reorder</Text>
+      </Pressable>
+    </GlassCard>
+  );
+}
+
 interface MachinePilesPageProps {
+  machine: MachineBadge;
+  status: string | undefined;
+  railColor: string;
   activeGroups: PileGroup[];
   upcomingGroups: PileGroup[];
   openIdle?: OpenIdleSession;
   onOpenPile: (checklistPileId: string) => void;
   onEndIdle?: () => void;
+  onEditSequence: () => void;
 }
 
 /** One machine's page inside the badge pager. Memoized because SwipeableTabBar's PagerView
  * mounts every machine's page up front (needed for swipe), so without this every machine
  * would re-render on any unrelated change (e.g. another pile's step being logged). */
 const MachinePilesPage = React.memo(function MachinePilesPage({
+  machine,
+  status,
+  railColor,
   activeGroups,
   upcomingGroups,
   openIdle,
   onOpenPile,
   onEndIdle,
+  onEditSequence,
 }: MachinePilesPageProps) {
+  const sequenceGroups = [...activeGroups, ...upcomingGroups];
+  const hasUpNext = activeGroups.length > 0;
+
   return (
     <View style={styles.machinePage}>
+      <MachineInfoCard machine={machine} status={status} onEditSequence={onEditSequence} />
+
       {openIdle && onEndIdle && (
         <MachineIdleTile since={openIdle.since} notes={openIdle.notes} onPress={onEndIdle} />
       )}
 
-      {activeGroups.length > 0 && (
+      {sequenceGroups.length > 0 && (
         <>
-          <Text style={styles.sectionHeader}>Up Next</Text>
-          {activeGroups.map((group) => (
-            <PileProgressCard
-              key={group.checklistPileId}
-              pileCode={group.pileCode}
-              rig={group.rig}
-              crane={group.crane}
-              steps={group.steps}
-              hasBreakdownWarning={group.hasBreakdownWarning}
-              isBlockedByIdle={group.isBlockedByIdle}
-              onPress={() => onOpenPile(group.checklistPileId)}
-            />
-          ))}
-        </>
-      )}
-
-      {upcomingGroups.length > 0 && (
-        <>
-          {activeGroups.length > 0 && <Text style={styles.sectionHeader}>Remaining Piles</Text>}
-          {upcomingGroups.map((group) => (
-            <PileProgressCard
-              key={group.checklistPileId}
-              pileCode={group.pileCode}
-              rig={group.rig}
-              crane={group.crane}
-              steps={group.steps}
-              hasBreakdownWarning={group.hasBreakdownWarning}
-              isBlockedByIdle={group.isBlockedByIdle}
-              onPress={() => onOpenPile(group.checklistPileId)}
-            />
-          ))}
+          <Text style={styles.sectionHeader}>Pile Sequence</Text>
+          <View style={styles.sequenceList}>
+            {sequenceGroups.map((group, i) => (
+              <PileSequenceRow
+                key={group.checklistPileId}
+                index={i + 1}
+                pileCode={group.pileCode}
+                rig={group.rig}
+                crane={group.crane}
+                steps={group.steps}
+                hasBreakdownWarning={group.hasBreakdownWarning}
+                isBlockedByIdle={group.isBlockedByIdle}
+                circleVariant={hasUpNext && i === 0 ? 'upNext' : 'rail'}
+                railColor={railColor}
+                isLast={i === sequenceGroups.length - 1}
+                onPress={() => onOpenPile(group.checklistPileId)}
+              />
+            ))}
+          </View>
         </>
       )}
     </View>
@@ -280,6 +331,25 @@ export default function FillActualsScreen() {
     [checklistPiles],
   );
 
+  // ── Steps completed on a previous checklist, for piles resuming into this
+  // one — shown as faded, read-only rows alongside today's own plan+actual
+  // rows (see pileGroups below) instead of being invisible on this screen.
+  const [completedStepsByPileId, setCompletedStepsByPileId] = useState<Map<string, CompletedStepInfo[]>>(new Map());
+  useEffect(() => {
+    if (!siteId || !checklist || !checklistPiles.length) {
+      setCompletedStepsByPileId(new Map());
+      return;
+    }
+    let cancelled = false;
+    findResumeWorkForPiles(siteId, checklistPiles.map((cp) => cp.pileId), checklist.date).then((result) => {
+      if (cancelled) return;
+      setCompletedStepsByPileId(new Map(result.pendingWorkItems.map((item) => [item.pileId, item.completedSteps])));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [siteId, checklist, checklistPiles]);
+
   // ── Non-working windows (lunch, shift change, etc.) for break labels ────
   // Re-derived here rather than persisted at generation time — see
   // splitStepByInternalWindows below; this is the same overlap logic the
@@ -325,7 +395,29 @@ export default function FillActualsScreen() {
         .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
       const cpActualSteps = actualSteps.filter((a) => a.checklistPileId === cp.id);
 
-      const steps: ActualEntry[] = cpPlanSteps.map((ps, idx) => {
+      // Steps completed on a *previous* checklist for this pile — read-only,
+      // faded rows (see PileStepsModal) shown alongside today's own steps
+      // instead of vanishing just because they predate this checklist.
+      const historicalSteps: ActualEntry[] = (completedStepsByPileId.get(cp.pileId) ?? []).map((c) => ({
+        stepId: c.stepId,
+        pileId: cp.pileId,
+        pileCode: pile?.pileIdCode ?? cp.pileId,
+        stepName: c.stepName,
+        track: c.track as 'RIG' | 'CRANE' | 'COMPRESSOR',
+        sequenceOrder: c.sequenceOrder,
+        plannedStart: isoToMinutes(c.plannedStart) ?? 0,
+        plannedEnd: isoToMinutes(c.plannedEnd),
+        actualStart: isoToMinutes(c.actualStart),
+        actualEnd: isoToMinutes(c.actualEnd),
+        plannedStartIso: c.plannedStart ?? undefined,
+        plannedEndIso: c.plannedEnd ?? undefined,
+        actualStartIso: c.actualStart ?? undefined,
+        actualEndIso: c.actualEnd ?? undefined,
+        bufferMinutes: 0,
+        isHistorical: true,
+      }));
+
+      const steps: ActualEntry[] = [...historicalSteps, ...cpPlanSteps.map((ps, idx) => {
         const actual = cpActualSteps.find((a) => a.stepId === ps.stepId);
         const prevPlan = idx > 0 ? cpPlanSteps[idx - 1] : null;
         const prevActual = prevPlan ? cpActualSteps.find((a) => a.stepId === prevPlan.stepId) : null;
@@ -364,7 +456,7 @@ export default function FillActualsScreen() {
           ),
           endAnchorIso: resolveActualTimeAnchor('actualEnd', anchorStep, null, checklist?.planStartTime),
         };
-      });
+      })];
 
       // Machine events (breakdown reporting) only apply to the current step —
       // the one step actively being worked, regardless of track — so the
@@ -390,15 +482,15 @@ export default function FillActualsScreen() {
         pileId: cp.pileId,
         pileCode: pile?.pileIdCode ?? cp.pileId,
         rig: machineMap.get(cp.rigId) ?? cp.rigId,
-        crane: machineMap.get(cp.craneId) ?? cp.craneId,
+        crane: cp.craneId ? (machineMap.get(cp.craneId) ?? cp.craneId) : undefined,
         rigId: cp.rigId,
-        craneId: cp.craneId,
+        craneId: cp.craneId ?? undefined,
         steps,
         hasBreakdownWarning,
         isBlockedByIdle,
       };
     });
-  }, [checklistPiles, planSteps, actualSteps, pileMap, machineMap, machineStatusById, checklist?.planStartTime, windowsByMachineId]);
+  }, [checklistPiles, planSteps, actualSteps, pileMap, machineMap, machineStatusById, checklist?.planStartTime, windowsByMachineId, completedStepsByPileId]);
 
   // ── Cross-pile machine floor ─────────────────────────────────────────────
   // A machine works one pile at a time, but a checklist has many piles — the
@@ -439,24 +531,29 @@ export default function FillActualsScreen() {
     const byMachineNo = (a: string, b: string) =>
       (machineMap.get(a) ?? a).localeCompare(machineMap.get(b) ?? b);
     const rigIds = Array.from(new Set(checklistPiles.map((cp) => cp.rigId))).sort(byMachineNo);
-    const craneIds = Array.from(new Set(checklistPiles.map((cp) => cp.craneId))).sort(byMachineNo);
+    const craneIds = Array.from(
+      new Set(checklistPiles.map((cp) => cp.craneId).filter((id): id is string => !!id)),
+    ).sort(byMachineNo);
     return [
       ...rigIds.map((id) => ({ id, machineNo: machineMap.get(id) ?? id, type: 'RIG' as const })),
       ...craneIds.map((id) => ({ id, machineNo: machineMap.get(id) ?? id, type: 'CRANE' as const })),
     ];
   }, [checklistPiles, machineMap]);
 
-  // ── Piles bucketed by machine — every pile has both a rig and a crane, so
-  // it naturally appears (unchanged) on both its rig's page and its crane's page ─
+  // ── Piles bucketed by machine — every pile has a rig, and a crane if one was
+  // assigned, so it naturally appears (unchanged) on its rig's page and (if
+  // any) its crane's page ─
   const pileGroupsByMachineId = useMemo(() => {
     const map = new Map<string, PileGroup[]>();
     for (const g of pileGroups) {
       const rigList = map.get(g.rigId);
       if (rigList) rigList.push(g);
       else map.set(g.rigId, [g]);
-      const craneList = map.get(g.craneId);
-      if (craneList) craneList.push(g);
-      else map.set(g.craneId, [g]);
+      if (g.craneId) {
+        const craneList = map.get(g.craneId);
+        if (craneList) craneList.push(g);
+        else map.set(g.craneId, [g]);
+      }
     }
     return map;
   }, [pileGroups]);
@@ -555,7 +652,7 @@ export default function FillActualsScreen() {
   const [isSavingSequence, setIsSavingSequence] = useState(false);
 
   function openSequenceModal() {
-    setDraftRows(checklistPiles.map((cp) => ({ pileId: cp.pileId, rigId: cp.rigId, craneId: cp.craneId })));
+    setDraftRows(checklistPiles.map((cp) => ({ pileId: cp.pileId, rigId: cp.rigId, craneId: cp.craneId ?? undefined })));
     setSequenceModalOpen(true);
   }
 
@@ -792,28 +889,25 @@ export default function FillActualsScreen() {
               onChange={setSelectedMachineId}
               scrollHint="dots"
               pillVariant="piles"
-              trailingAccessory={
-                <Pressable
-                  style={styles.sequenceBtn}
-                  onPress={openSequenceModal}
-                  hitSlop={spacing.sm}
-                >
-                  <PencilLine size={16} color={colors.textSecondary} />
-                </Pressable>
-              }
+              dividerStyle={{ marginTop: spacing.md }}
               renderPage={(item) => {
                 const page = machinePagesById.get(item.value) ?? {
                   activeGroups: EMPTY_PILE_GROUPS,
                   upcomingGroups: EMPTY_PILE_GROUPS,
                 };
                 const machine = activeMachines.find((m) => m.id === item.value);
+                if (!machine) return null;
                 return (
                   <MachinePilesPage
+                    machine={machine}
+                    status={machineStatusById.get(machine.id)}
+                    railColor={machine.type === 'RIG' ? colors.machines.rig.color : colors.machines.crane.color}
                     activeGroups={page.activeGroups}
                     upcomingGroups={page.upcomingGroups}
                     openIdle={idleSessionByMachineId.get(item.value)}
                     onOpenPile={setOpenCpId}
-                    onEndIdle={machine ? () => handleOpenEndIdle(machine.id, machine.type) : undefined}
+                    onEndIdle={() => handleOpenEndIdle(machine.id, machine.type)}
+                    onEditSequence={openSequenceModal}
                   />
                 );
               }}
@@ -926,6 +1020,7 @@ const styles = StyleSheet.create({
   },
   machinePage: {
     gap: spacing.md,
+    marginTop: spacing.md,
   },
   idleTile: {
     flexDirection: 'row',
@@ -950,14 +1045,66 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
-  sequenceBtn: {
-    paddingHorizontal: spacing.sm,
-    aspectRatio: 1,
-    borderRadius: radius.sm,
-    backgroundColor: colors.glassFillStrong,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
+  machineInfoCard: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  machineInfoCardInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  machineInfoLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexShrink: 1,
+  },
+  machineIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  machineInfoTitle: {
+    ...typography.cardTitle,
+    color: colors.textPrimary,
+  },
+  machineStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: radius.pill,
+  },
+  machineStatusText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  editSequenceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.glassFillStrong,
+  },
+  editSequenceText: {
+    ...typography.label,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  sequenceList: {
+    gap: 0,
   },
 });

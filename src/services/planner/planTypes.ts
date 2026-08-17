@@ -14,7 +14,9 @@ export interface PreviewPileInput {
   /** FK into piling_dimensions — dia/depth are looked up from here, not carried separately. */
   dimensionId: string;
   rigId: string;
-  craneId: string;
+  /** Optional — a pile can be planned with a rig alone. A rig can perform any
+   * CRANE-track step, never the reverse; see stepTrackOverrides. */
+  craneId?: string;
   /** Optional third track's machine. Undefined until compressor assignment UI exists. */
   compressorId?: string;
   resumeWork?: { stepId: string; remainingMinutes: number; bufferMinutes?: number };

@@ -25,7 +25,6 @@ import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { PreviewPile } from '@app-types/previewTypes';
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import type { PilingStep } from '@/db/schema';
-import SummaryAccordion from '../preview/SummaryAccordion';
 import DurationWarningCard from '../preview/DurationWarningCard';
 import CoreTeamAccordion, { type RoleTarget } from '../preview/CoreTeamAccordion';
 import MachineTimelineAccordion from '../preview/MachineTimelineAccordion';
@@ -270,7 +269,7 @@ export default function PreviewStep({
           title: 'Planning Engineer',
           personnel: peCandidates,
           selectedId: cp.planningEngineerId,
-          allowNone: false,
+          allowNone: true,
           onSelect: (id: string | null) => updatePersonnel({ planningEngineerId: id }),
         };
       case 'SHIFT_INCHARGE':
@@ -368,6 +367,9 @@ export default function PreviewStep({
       {/* ── Main card ─────────────────────────────────────────────────────── */}
       <PlanWindowBar startLabel={fmtPlanTime(draft.planStartTime)} endLabel={fmtPlanTime(endIso)} />
 
+      {/* ── Duration warnings ───────────────────────────────────────────── */}
+      <DurationWarningCard pileCodes={warningPileCodes} siteId={siteId} />
+
       {/* ── Core Team (Leadership / Shift Incharge / Machine Teams) ──────── */}
       <CoreTeamAccordion
         leadership={leadershipDetail}
@@ -388,9 +390,6 @@ export default function PreviewStep({
         onEditMachine={onEditMachine}
         windowsByMachineId={windowsByMachineId}
       />
-
-      {/* ── Duration warnings ───────────────────────────────────────────── */}
-      <DurationWarningCard pileCodes={warningPileCodes} siteId={siteId} />
 
       {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
       <View style={styles.pilesWrap}>

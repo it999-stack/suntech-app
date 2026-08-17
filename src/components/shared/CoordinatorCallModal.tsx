@@ -1,9 +1,4 @@
 // src/components/shared/CoordinatorCallModal.tsx
-//
-// "Pick who to call" list, shown inside an AppModal — shared between
-// DurationWarningCard's "Connect Head Office" action and ProfileScreen's
-// "Need help and support" card. Both surface the same underlying
-// pil_site_coordinators data; this is just the picker UI they both need.
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';

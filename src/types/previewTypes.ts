@@ -10,7 +10,7 @@ export interface PreviewPile {
   dia: number;
   depth: number;
   rigMachineNo: string;
-  craneMachineNo: string;
+  craneMachineNo?: string;
   rigId: string;
-  craneId: string;
+  craneId?: string;
 }

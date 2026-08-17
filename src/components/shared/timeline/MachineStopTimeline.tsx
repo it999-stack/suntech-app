@@ -7,7 +7,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { Drill, Forklift, Pencil } from 'lucide-react-native';
+import { Drill, Forklift, PencilLine } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { formatTime, formatDurationMinutes } from '@/utils/formatTime';
 import { getMachineColor, buildTypeIndexById } from '@/utils/helpers';
@@ -189,7 +189,7 @@ export default function MachineStopTimeline({
                   hitSlop={10}
                   style={styles.editBtn}
                 >
-                  <Pencil size={14} color={colors.textSecondary} />
+                  <PencilLine size={18} color={colors.white} />
                 </Pressable>
               ) : null}
             </View>
@@ -251,13 +251,14 @@ const styles = StyleSheet.create({
   },
   selDayText: { fontSize: 10.5, fontWeight: '700', color: colors.textSecondary },
   editBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: radius.pill,
-    backgroundColor: 'rgba(28,28,46,0.06)',
+    borderRadius: radius.sm,
+    backgroundColor: colors.textSecondary,
+    borderWidth: 1,
+    borderColor: colors.textSecondary,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    padding: spacing.xs,
   },
   logScroll: { maxHeight: 520 },
   logItem: { flexDirection: 'row', gap: spacing.sm },
