@@ -14,9 +14,6 @@
 // PileAssignStep is pure assignment and no longer touches any of this.
 //
 // Cards, not a table: this row needs to fit a pile code, two machine badges,
-// AND a status pill — a 3-column IndexTable squeezes the pile-code column to
-// near-zero on a phone width and wraps every character onto its own line.
-// Stacking vertically inside one full-width card (mirrors PileProgressCard's
 // layout) gives every element the room it needs.
 
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';

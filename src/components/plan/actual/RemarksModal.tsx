@@ -1,8 +1,9 @@
 // src/components/plan/actual/RemarksModal.tsx
 
 import React, { useState, useEffect } from 'react';
-import { Text, TextInput, Pressable, StyleSheet, Keyboard, View, Alert } from 'react-native';
+import { Text, TextInput, Pressable, StyleSheet, Keyboard, View } from 'react-native';
 import AppModal from '@components/shared/AppModal';
+import { notify } from '@utils/notify';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
 interface Props {
@@ -47,10 +48,9 @@ export default function RemarksModal({ visible, stepName, initialValue, onClose,
               await onSave(text.trim());
               onClose();
             } catch (err) {
-              Alert.alert(
-                'Failed to save',
-                err instanceof Error ? err.message : 'Could not save this remark. Please try again.',
-              );
+              notify.error(err instanceof Error ? err.message : 'Could not save this remark. Please try again.', {
+                title: 'Failed to save',
+              });
             } finally {
               setSaving(false);
             }

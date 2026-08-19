@@ -4,10 +4,11 @@
 // Orchestrates smaller components: main card, timeline bar, summary accordions,
 // and per-pile accordions.
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import AppModal from '@components/shared/AppModal';
 import PersonnelPickerList from '@components/shared/PersonnelPickerList';
+import MachineAssignPanel from './pile-assign/MachineAssignPanel';
 import { colors, spacing, typography, radius } from '@/theme/theme';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import {
@@ -117,6 +118,20 @@ export default function PreviewStep({
   shifts = [],
 }: PreviewStepProps) {
   const [rolePickerTarget, setRolePickerTarget] = useState<RoleTarget | null>(null);
+  const [machinePickerPileId, setMachinePickerPileId] = useState<string | null>(null);
+  const [pendingRigId, setPendingRigId] = useState<string | null>(null);
+  const [pendingCraneId, setPendingCraneId] = useState<string | null>(null);
+  // True from Apply until the recompute it triggered finishes — the panel shows a
+  // spinner and the modal stays open for this whole span.
+  const [isApplyingMachine, setIsApplyingMachine] = useState(false);
+  const appliedMachinePickerRef = useRef(false);
+
+  useEffect(() => {
+    if (!appliedMachinePickerRef.current) return;
+    appliedMachinePickerRef.current = false;
+    setIsApplyingMachine(false);
+    setMachinePickerPileId(null);
+  }, [planSteps]);
 
   const endIso = planEndTime(draft.planStartTime);
 
@@ -140,6 +155,20 @@ export default function PreviewStep({
       });
     },
     [onPendingTrackOverridesChange],
+  );
+
+  // Stable except when draft.assignments itself changes — passed straight into
+  // PilesAccordion for the same reason as handleToggleTrack above: PagerView mounts
+  // every pile's page up front, so an unstable callback here would break every
+  // memoized pile page's React.memo, not just the one being edited.
+  const openMachinePicker = useCallback(
+    (pileId: string) => {
+      const current = draft.assignments[pileId];
+      setPendingRigId(current?.rig ?? null);
+      setPendingCraneId(current?.crane ?? null);
+      setMachinePickerPileId(pileId);
+    },
+    [draft.assignments],
   );
 
   const cp = draft.checklistPersonnel;
@@ -229,6 +258,20 @@ export default function PreviewStep({
 
   function updatePersonnel(patch: Partial<PlanDraft['checklistPersonnel']>) {
     onUpdate({ checklistPersonnel: { ...cp, ...patch } });
+  }
+
+  // Apply stays open (spinner shown via isApplyingMachine) until the effect above
+  // observes planSteps actually refresh, instead of closing immediately.
+  function commitMachinePicker() {
+    if (!machinePickerPileId || !pendingRigId) return;
+    appliedMachinePickerRef.current = true;
+    setIsApplyingMachine(true);
+    onUpdate({
+      assignments: {
+        ...draft.assignments,
+        [machinePickerPileId]: { rig: pendingRigId, crane: pendingCraneId ?? undefined },
+      },
+    });
   }
 
   function machineNoFor(machineId: string): string {
@@ -402,6 +445,7 @@ export default function PreviewStep({
           allSteps={allSteps}
           selectedStepIds={draft.selectedStepIds}
           resumeWorkByPileId={draft.resumeWorkByPileId}
+          onPressMachineBadge={openMachinePicker}
         />
         {/* A recompute after the first load (e.g. a track reassignment) fades this
             section with an overlay spinner instead of blanking the whole screen —
@@ -433,6 +477,26 @@ export default function PreviewStep({
             }}
           />
         ) : null}
+      </AppModal>
+
+      {/* ── Machine reassignment picker (Rig/Crane rows in PilesAccordion) ── */}
+      <AppModal
+        visible={!!machinePickerPileId}
+        onClose={isApplyingMachine ? () => {} : () => setMachinePickerPileId(null)}
+        title="Assign machines"
+        position="center"
+      >
+        <MachineAssignPanel
+          rigs={activeRigs}
+          cranes={activeCranes}
+          rigId={pendingRigId}
+          craneId={pendingCraneId}
+          onSelectRig={setPendingRigId}
+          onSelectCrane={setPendingCraneId}
+          onApply={commitMachinePicker}
+          applyLabel="Apply"
+          isApplying={isApplyingMachine}
+        />
       </AppModal>
     </>
   );

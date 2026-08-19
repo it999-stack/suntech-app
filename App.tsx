@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Modal, Platform } from 'react-native';
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Toaster } from 'sonner-native';
 
 import RootNavigator from './src/navigation/RootNavigator';
 import { initDb } from './src/db/client';
@@ -13,6 +14,22 @@ import { PlanProvider } from './src/state/PlanContext';
 import { SiteSettingsProvider } from './src/state/SiteSettingsContext';
 import { DrizzleStudioDevTools } from './src/devtools/DrizzleStudioDevTools';
 import { initSyncManager } from './src/sync/SyncManager';
+
+function AndroidToastOverlay({ children }: { children: React.ReactNode }) {
+  return (
+    <Modal transparent visible animationType="none" statusBarTranslucent>
+      {/* Matches AppModal's own fix: RN's Modal renders into its own native
+          root, which the app-level GestureHandlerRootView above doesn't
+          extend into — without this, the toast's swipe-to-dismiss gesture
+          would silently stop working whenever this overlay is active. */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={{ flex: 1 }} pointerEvents="box-none">
+          {children}
+        </View>
+      </GestureHandlerRootView>
+    </Modal>
+  );
+}
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
@@ -50,6 +67,11 @@ export default function App() {
               <PlanProvider>
                 <SiteSettingsProvider>
                     <RootNavigator />
+                    <Toaster
+                      position="top-center"
+                      swipeToDismissDirection="up"
+                      ToasterOverlayWrapper={Platform.OS === 'android' ? AndroidToastOverlay : undefined}
+                    />
                     <StatusBar style="auto" />
                     {__DEV__ && <DrizzleStudioDevTools />}
                 </SiteSettingsProvider>

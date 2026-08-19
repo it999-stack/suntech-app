@@ -14,7 +14,7 @@ import { setCursor } from '@repositories/syncCursorRepository';
 // (today's pull) are excluded: their failure doesn't strand data behind an
 // advanced cursor.
 const CURSOR_GATING_STEPS = new Set([
-  'appConfig', 'locations', 'dimensions', 'shifts', 'machines',
+  'appConfig', 'locations', 'dimensions', 'shifts', 'machines', 'contractors',
   'personnel', 'roleDefaults', 'steps', 'checklistHistory',
 ]);
 

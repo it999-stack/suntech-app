@@ -30,12 +30,14 @@ export class SyncStepsStep implements ISyncStep {
       const templates: NewPilingStepDurationTemplate[] = [];
 
       for (const step of data as any[]) {
-        // Steps with no templates for this site aren't configured here — skip
-        // so the local cache only ever holds this site's steps/durations.
-        if (!step.templates?.length) continue;
-
+        // The server now returns exactly this site's chosen/ordered steps
+        // (pil_site_steps), not the full global catalog — no client-side
+        // filtering needed anymore. `step.id` here is the pil_site_steps id;
+        // the local pilingSteps.id PK must be `step.step_id` (the catalog
+        // id), since that's what duration templates and plan/actual step
+        // rows join against, matching the server-side FK target.
         steps.push({
-          id: step.id,
+          id: step.step_id,
           stepName: step.step_name,
           sequenceOrder: step.sequence_order,
           track: step.track,
@@ -45,7 +47,7 @@ export class SyncStepsStep implements ISyncStep {
         for (const t of step.templates) {
           templates.push({
             id: t.id,
-            stepId: step.id,
+            stepId: step.step_id,
             dimensionId: t.dimension_id,
             durationMinutes: t.duration_minutes,
             bufferBeforeMinutes: t.buffer_before_minutes ?? 0,

@@ -10,17 +10,24 @@ import {
   AlertTriangle,
   MessageSquarePlus,
   Coffee,
+  PencilLine,
 } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import StepTimeControl from '@components/plan/actual/StepTimeControl';
 import EditTimeButton from '@components/plan/actual/EditTimeButton';
 import DeleteTimeButton from '@components/plan/actual/DeleteTimeButton';
 import RemarksModal from '@components/plan/actual/RemarksModal';
-import MachineEventsModal from '@components/plan/actual/MachineEventsModal';
+import MachineDownModal from '@components/plan/actual/MachineDownModal';
+import MachineIdleModal from '@components/plan/actual/MachineIdleModal';
+import MachineReplaceModal from '@components/plan/actual/MachineReplaceModal';
+import MeasurementFieldsModal, {
+  type MeasurementFieldConfig,
+} from '@components/plan/actual/MeasurementFieldsModal';
 import { getMachineEventsForChecklistPile } from '@repositories/machineEventsRepository';
-import type { PilingMachine, PilMachineEvent } from '@db/schema';
-import type { ActualEntry, PileGroup } from '@app-types/plan';
+import type { PilingMachine, PilMachineEvent, PilContractor } from '@db/schema';
+import type { ActualEntry, PileGroup, PileMeasurementFields } from '@app-types/plan';
 import type { LogMachineEventInput } from '@state/PlanContext';
+import { findMeasurementTrigger, getMeasurementFieldsForStep } from '@utils/pileMeasurementTriggers';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import {
   formatMinutes12,
@@ -28,15 +35,8 @@ import {
   formatTimeWithDay,
   formatDuration,
   durationMinutes,
-  addMinutes,
-  toLocalIsoString,
 } from '@utils/formatTime';
-import {
-  getMachineConflict,
-  nextFreeTimeOnOrAfter,
-  type MachineFloorIndex,
-  type MachineConflictInfo,
-} from '@utils/machineFloor';
+import { hasMachineConflict, hasPileStepConflict, type MachineFloorIndex } from '@utils/machineFloor';
 
 function trackColors(track: ActualEntry['track']): { bg: string; fg: string } {
   if (track === 'RIG') return { bg: colors.accentSoft, fg: colors.accent };
@@ -67,43 +67,13 @@ function getCurrentMachineIdByTrack(steps: ActualEntry[]): Partial<Record<Actual
   return result;
 }
 
-/** Default start time for a step's first "Fill start time" entry: starting from
- * today's existing same-pile default (prevStep.actualEnd ?? plannedStart), skip
- * forward past any other pile's already-recorded busy interval on this same
- * machine (see nextFreeTimeOnOrAfter), then add step.bufferMinutes on top — so
- * the suggested default never opens the picker on a value that would
- * immediately conflict. This is only ever a suggestion: the user can still
- * confirm any time that doesn't genuinely overlap another interval, buffer or
- * not — see getMachineConflict, the actual hard validation. */
-function resolveStartDefault(
-  step: ActualEntry,
-  prevStep: ActualEntry | undefined,
-  machineFloorIndex: MachineFloorIndex,
-): { defaultMinutes: number; anchorIso?: string } {
-  const samePileDefaultMinutes = prevStep?.actualEnd ?? step.plannedStart;
-  const samePileDefaultIso = prevStep?.actualEndIso ?? step.plannedStartIso;
-  if (!step.assignedMachineId || !samePileDefaultIso) {
-    return { defaultMinutes: samePileDefaultMinutes, anchorIso: step.startAnchorIso };
-  }
-
-  const nextFree = nextFreeTimeOnOrAfter(
-    machineFloorIndex,
-    step.assignedMachineId,
-    step.stepId,
-    new Date(samePileDefaultIso),
-  );
-  const buffered = addMinutes(nextFree, step.bufferMinutes);
-
-  return {
-    defaultMinutes: buffered.getHours() * 60 + buffered.getMinutes(),
-    anchorIso: toLocalIsoString(buffered),
-  };
-}
-
 interface Props {
   group: PileGroup;
   machines: PilingMachine[];
   machineFloorIndex: MachineFloorIndex;
+  /** Site-scoped contractor master list — backs the "Name of Pile
+   * Contractor" / "Name of Cage Contractor" measurement fields. */
+  contractors: PilContractor[];
   onClose: () => void;
   onSetActualTime: (
     stepId: string,
@@ -114,17 +84,22 @@ interface Props {
   onClearActualTime: (stepId: string, field: 'actualStart' | 'actualEnd') => Promise<void>;
   onSaveRemarks: (stepId: string, text: string) => Promise<void>;
   onLogMachineEvent: (stepId: string, input: LogMachineEventInput) => Promise<void>;
+  /** Upserts a partial patch of one-time engineering measurements for this
+   * pile — see MeasurementFieldsModal.tsx / pileMeasurementTriggers.ts. */
+  onSaveMeasurements: (patch: Partial<PileMeasurementFields>) => Promise<void>;
 }
 
 export default function PileStepsModal({
   group,
   machines,
   machineFloorIndex,
+  contractors,
   onClose,
   onSetActualTime,
   onClearActualTime,
   onSaveRemarks,
   onLogMachineEvent,
+  onSaveMeasurements,
 }: Props) {
   const steps = [...group.steps].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
   const currentStepId = steps.find((s) => s.actualEnd === undefined)?.stepId;
@@ -135,7 +110,38 @@ export default function PileStepsModal({
     stepName: string;
     remarks?: string;
   } | null>(null);
+  const [measurementModal, setMeasurementModal] = useState<{
+    title: string;
+    fields: MeasurementFieldConfig[];
+  } | null>(null);
+
+  // Wraps onSetActualTime: once the actual start/end for this step is
+  // recorded, checks whether that (stepName, field) pair is one of the five
+  // measurement trigger points (see pileMeasurementTriggers.ts) and, if so,
+  // opens the low-friction measurement popup right after — never a hard
+  // gate on the time entry itself, which has already been saved by the time
+  // this fires.
+  const handleSetActualTime = async (
+    step: ActualEntry,
+    field: 'actualStart' | 'actualEnd',
+    minutes: number,
+    explicitDate?: Date,
+  ) => {
+    await onSetActualTime(step.stepId, field, minutes, explicitDate);
+    const trigger = findMeasurementTrigger(step.stepName, field);
+    if (trigger) setMeasurementModal({ title: trigger.title, fields: trigger.fields });
+  };
+
+  // "Edit measurements" on a step's own Measurements summary — covers every
+  // field the step is responsible for (both its start and end triggers, if
+  // any), not just whichever one most recently fired.
+  const openStepMeasurements = (step: ActualEntry) => {
+    const fields = getMeasurementFieldsForStep(step.stepName);
+    if (fields.length === 0) return;
+    setMeasurementModal({ title: `${step.stepName} Measurements`, fields });
+  };
   const [machineEventFor, setMachineEventFor] = useState<{
+    kind: 'down' | 'idle' | 'replace';
     stepId: string;
     stepName: string;
     track: ActualEntry['track'];
@@ -165,23 +171,45 @@ export default function PileStepsModal({
   // both the first-time-fill controls (StepTimeControl) and the edit-existing-
   // value controls (EditTimeButton) for this step.
   const machineConflictChecksByStepId = useMemo(() => {
-    const map = new Map<
-      string,
-      { forStart: (c: Date) => MachineConflictInfo | undefined; forFinish: (c: Date) => MachineConflictInfo | undefined }
-    >();
+    const map = new Map<string, { forStart: (c: Date) => boolean; forFinish: (c: Date) => boolean }>();
     for (const step of steps) {
       if (!step.assignedMachineId) continue;
       const machineId = step.assignedMachineId;
       const ownStart = step.actualStartIso ? new Date(step.actualStartIso) : undefined;
       const ownEnd = step.actualEndIso ? new Date(step.actualEndIso) : undefined;
       map.set(step.stepId, {
-        forStart: (candidate) => getMachineConflict(machineFloorIndex, machineId, step.stepId, candidate, ownEnd),
+        forStart: (candidate) =>
+          hasMachineConflict(machineFloorIndex, machineId, group.checklistPileId, step.stepId, candidate, ownEnd),
         forFinish: (candidate) =>
-          getMachineConflict(machineFloorIndex, machineId, step.stepId, ownStart ?? candidate, candidate),
+          hasMachineConflict(
+            machineFloorIndex,
+            machineId,
+            group.checklistPileId,
+            step.stepId,
+            ownStart ?? candidate,
+            candidate,
+          ),
       });
     }
     return map;
-  }, [steps, machineFloorIndex]);
+  }, [steps, machineFloorIndex, group.checklistPileId]);
+
+  // Within-pile "does this candidate time overlap another step's already-
+  // recorded interval on this same pile" checkers — the pile-sequence
+  // counterpart to machineConflictChecksByStepId above, regardless of which
+  // machine each step is assigned to. See src/utils/machineFloor.ts.
+  const pileConflictChecksByStepId = useMemo(() => {
+    const map = new Map<string, { forStart: (c: Date) => boolean; forFinish: (c: Date) => boolean }>();
+    for (const step of steps) {
+      const ownStart = step.actualStartIso ? new Date(step.actualStartIso) : undefined;
+      const ownEnd = step.actualEndIso ? new Date(step.actualEndIso) : undefined;
+      map.set(step.stepId, {
+        forStart: (candidate) => hasPileStepConflict(steps, step.stepId, candidate, ownEnd),
+        forFinish: (candidate) => hasPileStepConflict(steps, step.stepId, ownStart ?? candidate, candidate),
+      });
+    }
+    return map;
+  }, [steps]);
 
   const currentStepHasBreakdown =
     group.hasBreakdownWarning &&
@@ -212,6 +240,7 @@ export default function PileStepsModal({
           style={modalStyles.warningBanner}
           onPress={() =>
             setMachineEventFor({
+              kind: 'down',
               stepId: currentStep.stepId,
               stepName: currentStep.stepName,
               track: currentStep.track,
@@ -220,7 +249,7 @@ export default function PileStepsModal({
         >
           <AlertTriangle size={16} color={colors.danger} />
           <Text style={modalStyles.warningBannerText}>
-            Machine reported down — tap to reassign
+            Machine reported down — tap to resolve
           </Text>
         </Pressable>
       )}
@@ -230,6 +259,7 @@ export default function PileStepsModal({
           style={modalStyles.idleBanner}
           onPress={() =>
             setMachineEventFor({
+              kind: 'idle',
               stepId: currentStep.stepId,
               stepName: currentStep.stepName,
               track: currentStep.track,
@@ -243,6 +273,8 @@ export default function PileStepsModal({
       )}
 
       {steps.map((step, idx) => {
+        const prevStep = idx > 0 ? steps[idx - 1] : undefined;
+        const nextStep = idx < steps.length - 1 ? steps[idx + 1] : undefined;
         const isDone = step.actualEnd !== undefined;
         const isStarted = step.actualStart !== undefined;
         const isCurrent = step.stepId === currentStepId;
@@ -261,9 +293,6 @@ export default function PileStepsModal({
 
         return (
           <View
-            // A continuing step can appear twice — once as yesterday's faded
-            // historical row, once as today's live one — both share stepId,
-            // so isHistorical must be part of the key or React sees a clash.
             key={`${isHistorical ? 'hist' : 'cur'}-${step.stepId}`}
             style={[modalStyles.card, (isLocked || isBlockedByIdle || isHistorical) && modalStyles.cardLocked]}
           >
@@ -307,9 +336,14 @@ export default function PileStepsModal({
                   <Pressable
                     style={modalStyles.iconBtn}
                     hitSlop={8}
-                    accessibilityLabel="Machine events"
+                    accessibilityLabel="Replace machine"
                     onPress={() =>
-                      setMachineEventFor({ stepId: step.stepId, stepName: step.stepName, track: step.track })
+                      setMachineEventFor({
+                        kind: 'replace',
+                        stepId: step.stepId,
+                        stepName: step.stepName,
+                        track: step.track,
+                      })
                     }
                   >
                     <MoreHorizontal size={18} color={colors.textSecondary} />
@@ -374,12 +408,11 @@ export default function PileStepsModal({
                       <EditTimeButton
                         minutes={step.actualStart!}
                         label="start time"
-                        minMinutes={idx > 0 ? steps[idx - 1].actualEnd : undefined}
-                        minMinutesLabel="the previous step's end time"
+                        minBoundIso={prevStep?.actualEndIso}
+                        maxBoundIso={step.actualEndIso}
                         machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
-                        maxMinutes={step.actualEnd}
-                        maxMinutesLabel="this step's own finish time"
-                        onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualStart', mins, explicitDate)}
+                        pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
+                        onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
                         anchorIso={step.startAnchorIso}
                       />
                       <DeleteTimeButton
@@ -401,16 +434,11 @@ export default function PileStepsModal({
                       <EditTimeButton
                         minutes={step.actualEnd!}
                         label="finish time"
-                        minMinutes={step.actualStart}
-                        minMinutesLabel="this step's start time"
+                        minBoundIso={step.actualStartIso}
+                        maxBoundIso={nextStep?.actualStartIso}
                         machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
-                        maxMinutes={
-                          idx < steps.length - 1 && steps[idx + 1].actualStart !== undefined
-                            ? steps[idx + 1].actualStart
-                            : undefined
-                        }
-                        maxMinutesLabel="the next step's start time"
-                        onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualEnd', mins, explicitDate)}
+                        pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
+                        onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
                         anchorIso={step.endAnchorIso}
                       />
                       <DeleteTimeButton
@@ -431,10 +459,11 @@ export default function PileStepsModal({
                   <EditTimeButton
                     minutes={step.actualStart!}
                     label="start time"
-                    minMinutes={idx > 0 ? steps[idx - 1].actualEnd : undefined}
-                    minMinutesLabel="the previous step's end time"
+                    minBoundIso={prevStep?.actualEndIso}
+                    maxBoundIso={step.actualEndIso}
                     machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
-                    onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualStart', mins, explicitDate)}
+                    pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
+                    onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
                     anchorIso={step.startAnchorIso}
                   />
                   <DeleteTimeButton
@@ -464,40 +493,88 @@ export default function PileStepsModal({
               </View>
             )}
 
-            {isCurrent && !isStarted && !isBlockedByIdle && (() => {
-              const prevStep = idx > 0 ? steps[idx - 1] : undefined;
-              const { defaultMinutes, anchorIso } = resolveStartDefault(step, prevStep, machineFloorIndex);
+            {(isStarted || isDone) && (() => {
+              const applicableFields = getMeasurementFieldsForStep(step.stepName);
+              if (applicableFields.length === 0) return null;
+              const measurements = group.measurements;
+              const filledCount = applicableFields.filter((f) => measurements?.[f.key] != null).length;
               return (
-                <StepTimeControl
-                  mode="start"
-                  stepName={step.stepName}
-                  defaultMinutes={defaultMinutes}
-                  onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualStart', mins, explicitDate)}
-                  minMinutes={prevStep?.actualEnd}
-                  minMinutesLabel="the previous step's end time"
-                  machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
-                  anchorIso={anchorIso}
-                />
+                <>
+                  <View style={modalStyles.divider} />
+                  <View style={modalStyles.actualHeaderRow}>
+                    <Text style={modalStyles.actualLabel}>MEASUREMENTS</Text>
+                    <View style={[modalStyles.statusPill, { backgroundColor: colors.accentSoft }]}>
+                      <Text style={[modalStyles.statusPillText, { color: colors.accent }]}>
+                        {filledCount}/{applicableFields.length} filled
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={modalStyles.measurementsGrid}>
+                    {applicableFields.map((field) => {
+                      const value = measurements?.[field.key];
+                      const display =
+                        field.type === 'contractor'
+                          ? contractors.find((c) => c.id === value)?.name ?? '-'
+                          : value == null
+                            ? '-'
+                            : `${value} ${field.unit}`;
+                      // Strip a trailing "(Full Name)" gloss for the compact
+                      // grid — e.g. "E.G.L. (Existing Ground Level)" -> "E.G.L."
+                      const shortLabel = field.label.replace(/\s*\([^)]*\)\s*$/, '');
+                      return (
+                        <View key={field.key} style={modalStyles.measurementCell}>
+                          <Text style={modalStyles.measurementLabel}>{shortLabel}</Text>
+                          <Text
+                            style={[
+                              modalStyles.measurementValue,
+                              value == null && modalStyles.measurementValueEmpty,
+                            ]}
+                          >
+                            {display}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                  {!isHistorical && (
+                    <Pressable
+                      style={modalStyles.editMeasurementsBtn}
+                      onPress={() => openStepMeasurements(step)}
+                    >
+                      <PencilLine size={14} color={colors.accent} />
+                      <Text style={modalStyles.editMeasurementsBtnText}>Edit measurements</Text>
+                    </Pressable>
+                  )}
+                </>
               );
             })()}
+
+            {isCurrent && !isStarted && !isBlockedByIdle && (
+              <StepTimeControl
+                mode="start"
+                stepName={step.stepName}
+                defaultMinutes={prevStep?.actualEnd ?? step.plannedStart}
+                onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
+                machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
+                pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
+                minBoundIso={prevStep?.actualEndIso}
+                anchorIso={step.startAnchorIso}
+              />
+            )}
 
             {isCurrent && isStarted && !isDone && !isBlockedByIdle && (
               <StepTimeControl
                 mode="finish"
                 stepName={step.stepName}
-                // Only trust plannedEnd as a default if it's still after the
-                // actual start — if the step started late, the original plan
-                // window may have already passed, so defaulting to it would
-                // just get rejected by minMinutes. Fall back to now instead.
                 defaultMinutes={
                   step.plannedEnd != null && step.plannedEnd > step.actualStart!
                     ? step.plannedEnd
                     : nowMinutes()
                 }
-                onConfirm={(mins, explicitDate) => onSetActualTime(step.stepId, 'actualEnd', mins, explicitDate)}
-                minMinutes={step.actualStart}
-                minMinutesLabel="this step's start time"
+                onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
                 machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
+                pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
+                minBoundIso={step.actualStartIso}
                 anchorIso={step.endAnchorIso}
               />
             )}
@@ -532,13 +609,54 @@ export default function PileStepsModal({
         />
       )}
 
-      {machineEventFor && (
-        <MachineEventsModal
+      {measurementModal && (
+        <MeasurementFieldsModal
+          visible
+          title={measurementModal.title}
+          fields={measurementModal.fields}
+          initialValues={group.measurements}
+          contractors={contractors}
+          onClose={() => setMeasurementModal(null)}
+          onSave={onSaveMeasurements}
+        />
+      )}
+
+      {machineEventFor?.kind === 'down' && (
+        <MachineDownModal
           visible
           pileCode={group.pileCode}
           stepName={machineEventFor.stepName}
           defaultTrack={machineEventFor.track}
-          initialEventType={machineEventFor.initialEventType}
+          initialEventType={machineEventFor.initialEventType as 'BREAKDOWN' | 'RESUMED' | undefined}
+          machines={machines}
+          currentMachineIdByTrack={currentMachineIdByTrack}
+          history={history}
+          onClose={() => setMachineEventFor(null)}
+          onLogMachineEvent={(input) => onLogMachineEvent(machineEventFor.stepId, input)}
+        />
+      )}
+
+      {machineEventFor?.kind === 'idle' && (
+        <MachineIdleModal
+          visible
+          pileCode={group.pileCode}
+          stepName={machineEventFor.stepName}
+          defaultTrack={machineEventFor.track}
+          initialEventType={machineEventFor.initialEventType as 'IDLE_START' | 'IDLE_END' | undefined}
+          machines={machines}
+          currentMachineIdByTrack={currentMachineIdByTrack}
+          history={history}
+          onClose={() => setMachineEventFor(null)}
+          onLogMachineEvent={(input) => onLogMachineEvent(machineEventFor.stepId, input)}
+        />
+      )}
+
+      {machineEventFor?.kind === 'replace' && (
+        <MachineReplaceModal
+          visible
+          pileCode={group.pileCode}
+          stepName={machineEventFor.stepName}
+          defaultTrack={machineEventFor.track}
           machines={machines}
           currentMachineIdByTrack={currentMachineIdByTrack}
           history={history}
@@ -704,6 +822,46 @@ const modalStyles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: spacing.sm,
     fontStyle: 'italic',
+  },
+  measurementsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.sm,
+    marginHorizontal: -spacing.xs,
+  },
+  measurementCell: {
+    width: '50%',
+    paddingHorizontal: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  measurementLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: 2,
+  },
+  measurementValue: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  measurementValueEmpty: {
+    fontWeight: '400',
+    color: colors.textSecondary,
+  },
+  editMeasurementsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm,
+  },
+  editMeasurementsBtnText: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.accent,
   },
   allDoneWrap: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
   allDoneText: { ...typography.body, fontWeight: '700', color: colors.textPrimary },

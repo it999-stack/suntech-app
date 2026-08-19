@@ -190,6 +190,20 @@ export function durationMinutes(startIso: string, endIso: string): number {
   return Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
 }
 
+/**
+ * Format a total seconds count as zero-padded "HH:MM:SS" (hours grow past 24
+ * rather than wrapping — for a ticking elapsed-time display, not a clock).
+ * e.g. 252 → "00:04:12"
+ */
+export function formatElapsedHMS(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+}
+
 // ─── 4. Date math utilities ───────────────────────────────────────────────────
 
 /**

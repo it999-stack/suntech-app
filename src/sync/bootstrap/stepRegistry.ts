@@ -9,6 +9,7 @@ import { SyncLocationsStep } from '@/sync/steps/syncLocations';
 import { SyncDimensionsStep } from '@sync/steps/syncDimensions';
 import { SyncShiftsStep } from '@sync/steps/syncShifts';
 import { SyncMachinesStep } from '@sync/steps/syncMachines';
+import { SyncContractorsStep } from '@sync/steps/syncContractors';
 import { SyncPersonnelStep } from '@sync/steps/syncPersonnel';
 import { SyncSiteCoordinatorsStep } from '@sync/steps/syncSiteCoordinators';
 import { SyncRoleDefaultsStep } from '@sync/steps/syncRoleDefaults';
@@ -27,6 +28,7 @@ export const BOOTSTRAP_STEPS: ISyncStep[] = [
   new SyncDimensionsStep(),
   new SyncShiftsStep(),
   new SyncMachinesStep(),
+  new SyncContractorsStep(),
   new SyncPersonnelStep(),
   new SyncSiteCoordinatorsStep(),
   new SyncRoleDefaultsStep(),

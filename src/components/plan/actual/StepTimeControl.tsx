@@ -1,17 +1,17 @@
 // src/components/plan/actual/StepTimeControl.tsx
 
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import ConfirmDialog from '@components/shared/ConfirmDialog';
 import {
   formatMinutes12,
   formatHeaderDate,
-  formatTime,
   resolveOvernightDate,
   toLocalDateStr,
   toLocalIsoString,
 } from '@utils/formatTime';
-import type { MachineConflictInfo } from '@utils/machineFloor';
+import { notify } from '@utils/notify';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
 type Mode = 'start' | 'finish';
@@ -28,21 +28,30 @@ interface Props {
    * inference (see resolveOvernightDate).
    */
   onConfirm: (minutes: number, explicitDate?: Date) => void | Promise<void>;
-  /** Earliest minutes-since-midnight this time may be set to (inclusive). Omit for no lower bound. */
-  minMinutes?: number;
-  /** Describes what minMinutes represents, used in the rejection message (e.g. "the previous step's end time"). */
-  minMinutesLabel?: string;
   /**
-   * Cross-pile overlap check for this step's assigned machine — called once the
-   * user picks a candidate time, with the full interval that entry would create
-   * on the machine's timeline (the caller closes over the step's own other bound,
-   * if any — see PileStepsModal.tsx). Returns conflict info if it genuinely
-   * overlaps another pile's already-recorded time on the same machine; undefined
-   * if clear. Independent of minMinutes, checked by real timestamp (not
-   * minutes-of-day) so a conflict on a non-adjacent calendar day still compares
-   * correctly. See src/utils/machineFloor.ts.
+   * Cross-pile overlap check for this step's assigned machine — true if the
+   * candidate time genuinely overlaps another pile's already-recorded
+   * (start-and-end-both-set) interval on the same machine. Checked by real
+   * timestamp (not minutes-of-day) so a conflict on a non-adjacent calendar
+   * day still compares correctly. See src/utils/machineFloor.ts.
    */
-  machineConflictCheck?: (candidate: Date) => MachineConflictInfo | undefined;
+  machineConflictCheck?: (candidate: Date) => boolean;
+  /**
+   * Within-pile overlap check — true if the candidate time genuinely
+   * overlaps another step's already-recorded (start-and-end-both-set)
+   * interval on this same pile, regardless of machine. See
+   * src/utils/machineFloor.ts.
+   */
+  pileConflictCheck?: (candidate: Date) => boolean;
+  /**
+   * Earliest real timestamp this time may land on (inclusive) — e.g. the
+   * previous step's already-recorded end when filling a start, or this
+   * step's own already-recorded start when filling a finish. Neither
+   * conflict check above catches this on its own: it's an ordering
+   * constraint (must not be *earlier* than a specific recorded moment), not
+   * an overlap with a full interval. Omit for no lower bound.
+   */
+  minBoundIso?: string;
   /**
    * ISO timestamp whose calendar date seeds the picker's header — the same
    * anchor handleSetActualTime resolves the final saved day from (see
@@ -58,45 +67,32 @@ export default function StepTimeControl({
   stepName,
   defaultMinutes,
   onConfirm,
-  minMinutes,
-  minMinutesLabel,
   machineConflictCheck,
+  pileConflictCheck,
+  minBoundIso,
   anchorIso,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
   const [saving, setSaving] = useState(false);
-
-  const verb = mode === 'start' ? 'Start' : 'Finish';
+  const [pendingChange, setPendingChange] = useState<{
+    minutes: number;
+    explicitDate?: Date;
+    title: string;
+    message: string;
+  } | null>(null);
 
   function confirm(minutes: number, explicitDate?: Date) {
-    if (machineConflictCheck) {
-      const candidateDate = explicitDate ?? resolveOvernightDate(anchorIso ?? toLocalIsoString(new Date()), minutes);
-      const conflict = machineConflictCheck(candidateDate);
-      if (conflict) {
-        const range = conflict.end
-          ? `${formatTime(conflict.start)} – ${formatTime(conflict.end)}`
-          : `${formatTime(conflict.start)} onward (still in progress)`;
-        Alert.alert(
-          'Invalid time',
-          `${conflict.machineLabel} is already logged busy with ${conflict.reasonLabel} from ${range} — this can't overlap that.`,
-        );
-        return;
-      }
+    const candidateDate = explicitDate ?? resolveOvernightDate(anchorIso ?? toLocalIsoString(new Date()), minutes);
+
+    if (minBoundIso && candidateDate.getTime() < new Date(minBoundIso).getTime()) {
+      notify.error('Invalid time');
+      return;
     }
 
-    if (minMinutes != null) {
-      const invalid =
-        explicitDate && anchorIso
-          ? explicitDate.getTime() < new Date(anchorIso).getTime()
-          : minutes < minMinutes;
-      if (invalid) {
-        Alert.alert(
-          'Invalid time',
-          `${verb} time can't be before ${minMinutesLabel ?? 'the required time'} (${formatMinutes12(minMinutes)}). If this step continues past midnight, tap the date above the time wheel to pick the next day.`,
-        );
-        return;
-      }
+    if (machineConflictCheck?.(candidateDate) || pileConflictCheck?.(candidateDate)) {
+      notify.error('Invalid time');
+      return;
     }
 
     const timeLabel = explicitDate
@@ -109,29 +105,24 @@ export default function StepTimeControl({
         ? `This will log the start time as ${timeLabel}.`
         : `Are you sure this step is complete? This will log the finish time as ${timeLabel}.`;
 
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Confirm',
-        style: 'default',
-        onPress: async () => {
-          setSaving(true);
-          try {
-            await onConfirm(minutes, explicitDate);
-            setPickerOpen(false);
-          } catch (err) {
-            Alert.alert(
-              'Failed to save',
-              err instanceof Error
-                ? err.message
-                : `Could not log the ${mode} time. Please try again.`,
-            );
-          } finally {
-            setSaving(false);
-          }
-        },
-      },
-    ]);
+    setPendingChange({ minutes, explicitDate, title, message });
+  }
+
+  async function handleConfirmChange() {
+    if (!pendingChange) return;
+    const { minutes, explicitDate } = pendingChange;
+    setSaving(true);
+    try {
+      await onConfirm(minutes, explicitDate);
+      setPickerOpen(false);
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : `Could not log the ${mode} time. Please try again.`, {
+        title: 'Failed to save',
+      });
+    } finally {
+      setSaving(false);
+      setPendingChange(null);
+    }
   }
 
   return (
@@ -165,6 +156,16 @@ export default function StepTimeControl({
             d.setHours(Math.floor(defaultMinutes / 60), defaultMinutes % 60, 0, 0);
             return d;
           })()}
+        />
+
+        <ConfirmDialog
+          visible={!!pendingChange}
+          title={pendingChange?.title ?? ''}
+          message={pendingChange?.message ?? ''}
+          confirmLabel="Confirm"
+          confirmDisabled={saving}
+          onConfirm={handleConfirmChange}
+          onCancel={() => setPendingChange(null)}
         />
     </>
   );

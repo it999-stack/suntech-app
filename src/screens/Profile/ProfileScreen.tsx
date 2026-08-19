@@ -1,7 +1,7 @@
 // src/screens/ProfileScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -14,6 +14,8 @@ import {
 
 import GlassCard from '@components/shared/GlassCard';
 import CoordinatorCallModal from '@components/shared/CoordinatorCallModal';
+import ConfirmDialog from '@components/shared/ConfirmDialog';
+import { notify } from '@utils/notify';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
@@ -91,6 +93,7 @@ export default function ProfileScreen() {
   const [pendingCount, setPendingCount] = useState(0);
   const [supportContacts, setSupportContacts] = useState<PilSiteCoordinator[]>([]);
   const [supportPickerVisible, setSupportPickerVisible] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   // Load the site's support contacts for the "Need help and support" card.
   useEffect(() => {
@@ -127,7 +130,7 @@ export default function ProfileScreen() {
 
   const handleSync = async () => {
     if (!user?.siteId) {
-      Alert.alert('No site assigned', 'You are not assigned to any site. Contact your administrator.');
+      notify.error('You are not assigned to any site. Contact your administrator.', { title: 'No site assigned' });
       return;
     }
     try {
@@ -140,22 +143,14 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert(
-      'Log out',
-      'You will need an internet connection to log back in. Are you sure you want to log out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Log out',
-          style: 'destructive',
-          onPress: async () => {
-            await logout();
-            // RootNavigator automatically redirects to Auth stack
-            // once token is cleared from the store.
-          },
-        },
-      ]
-    );
+    setLogoutConfirmOpen(true);
+  };
+
+  const handleConfirmLogout = async () => {
+    await logout();
+    // RootNavigator automatically redirects to Auth stack
+    // once token is cleared from the store.
+    setLogoutConfirmOpen(false);
   };
 
   const syncSubtext = syncError
@@ -265,6 +260,16 @@ export default function ProfileScreen() {
         onClose={() => setSupportPickerVisible(false)}
         title="Need help and support"
         coordinators={supportContacts}
+      />
+
+      <ConfirmDialog
+        visible={logoutConfirmOpen}
+        title="Log out"
+        message="You will need an internet connection to log back in. Are you sure you want to log out?"
+        confirmLabel="Log out"
+        destructive
+        onConfirm={handleConfirmLogout}
+        onCancel={() => setLogoutConfirmOpen(false)}
       />
     </LinearGradient>
   );

@@ -38,6 +38,7 @@ import { findResumeWorkForPiles, type ResumeWorkInfo } from '@/services/resumeWo
 import { defaultPlanDraft, planEndTime, type PlanDraft } from '@/types/plan';
 import { getPrimaryShiftType, combineDateAndTime } from '@/utils/shiftHelpers';
 import { toLocalDateStr } from '@/utils/formatTime';
+import { notify } from '@utils/notify';
 import { isShiftTeamComplete, findOrphanedTeamMachines, type OrphanedTeamMachine } from '@/utils/personnelRoles';
 import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
 
@@ -329,6 +330,7 @@ export default function GeneratePlanScreen() {
 
     try {
       await generatePlan(siteId, input);
+      notify.success(isEditMode ? 'Plan updated successfully' : 'Plan generated successfully');
       setConfirmModalVisible(false);
       navigation.goBack();
     } catch {
@@ -348,7 +350,7 @@ export default function GeneratePlanScreen() {
   );
 
   const {
-    builtPreviewPiles, setEditingMachineId, editingMachine,
+    builtPreviewPiles, setEditingMachineId, editingMachine, isMachineOverlayOpen,
     pilesForMachine, handleReorderMachine,
   } = usePreviewReorder({ draft, updateDraft, selectedPlanPiles, activeRigs, activeCranes });
 
@@ -559,7 +561,7 @@ export default function GeneratePlanScreen() {
 
         {editingMachine ? (
           <ReorderPilesOverlay
-            visible
+            visible={isMachineOverlayOpen}
             onClose={() => setEditingMachineId(undefined)}
             machine={editingMachine}
             piles={pilesForMachine(editingMachine)}

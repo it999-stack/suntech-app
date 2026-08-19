@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import type { LucideIcon } from 'lucide-react-native';
 import { colors } from '@theme/theme';
 import { initials } from '@/utils/helpers';
 
@@ -12,6 +13,8 @@ interface AvatarProps {
   backgroundColor?: string;
   textColor?: string;
   borderColor?: string;
+  /** When provided, renders this icon instead of the name's initials/'—'. */
+  icon?: LucideIcon;
 }
 
 export default function Avatar({
@@ -21,6 +24,7 @@ export default function Avatar({
   backgroundColor,
   textColor,
   borderColor,
+  icon: Icon,
 }: AvatarProps) {
   const assigned = !!name;
   const fontSize = Math.round(size * 0.4);
@@ -50,24 +54,28 @@ export default function Avatar({
           : styles.empty,
       ]}
     >
-      <Text
-        style={[
-          styles.text,
-          { fontSize },
-          assigned
-            ? variant === 'filled'
-              ? [
-                  styles.textFilled,
-                  textColor && {
-                    color: textColor,
-                  },
-                ]
-              : styles.textOutline
-            : styles.textEmpty,
-        ]}
-      >
-        {assigned ? initials(name) : '—'}
-      </Text>
+      {Icon ? (
+        <Icon size={Math.round(fontSize * 1.1)} color={textColor ?? (variant === 'filled' ? colors.white : colors.textSecondary)} />
+      ) : (
+        <Text
+          style={[
+            styles.text,
+            { fontSize },
+            assigned
+              ? variant === 'filled'
+                ? [
+                    styles.textFilled,
+                    textColor && {
+                      color: textColor,
+                    },
+                  ]
+                : styles.textOutline
+              : styles.textEmpty,
+          ]}
+        >
+          {assigned ? initials(name) : '—'}
+        </Text>
+      )}
     </View>
   );
 }

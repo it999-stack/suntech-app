@@ -6,13 +6,15 @@
 // Build the stop log with buildMachineStops() from '@/utils/timeline'.
 
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { Drill, Forklift, PencilLine } from 'lucide-react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { Drill, Forklift, ArrowUpDown } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { formatTime, formatDurationMinutes } from '@/utils/formatTime';
 import { getMachineColor, buildTypeIndexById } from '@/utils/helpers';
 import { type TimelineStop, type MachineInfo } from '@/types/timeline';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
+import InfoRow from '@components/shared/InfoRow';
+import Avatar from '@components/shared/Avatar';
 
 export interface MachineStopTimelineProps {
   /** Machines to choose from, in display order. */
@@ -170,29 +172,23 @@ export default function MachineStopTimeline({
         const stops = stopsByMachineId[machine.id] ?? [];
         return (
           <View>
-            <View style={styles.selHeadRow}>
-              <View style={styles.selLeft}>
-                {machine.type === 'RIG' ? <Drill size={16} color={color} /> : <Forklift size={16} color={color} />}
-                <Text style={[styles.selName, { color }]}>
-                  {machine.machineNo} · {machine.type === 'RIG' ? 'Rig' : 'Crane'}
-                </Text>
-                {dayLabel ? (
-                  <View style={styles.selDayBadge}>
-                    <Text style={styles.selDayText}>{dayLabel}</Text>
-                  </View>
-                ) : null}
-              </View>
-
-              {onEditMachine ? (
-                <Pressable
-                  onPress={() => onEditMachine(machine.id)}
-                  hitSlop={10}
-                  style={styles.editBtn}
-                >
-                  <PencilLine size={18} color={colors.white} />
-                </Pressable>
-              ) : null}
-            </View>
+            <InfoRow
+              leading={
+                <Avatar
+                  name={machine.machineNo}
+                  icon={machine.type === 'RIG' ? Drill : Forklift}
+                  size={40}
+                  backgroundColor={color}
+                  borderColor={color}
+                  textColor={colors.white}
+                />
+              }
+              title={machine.machineNo}
+              caption={`${machine.type === 'RIG' ? 'Rig' : 'Crane'}${dayLabel ? ` · ${dayLabel}` : ''}`}
+              accentColor={color}
+              onPress={onEditMachine ? () => onEditMachine(machine.id) : undefined}
+              trailing={onEditMachine ? <ArrowUpDown size={16} color={color} /> : undefined}
+            />
 
             <ScrollView
               style={styles.logScroll}
@@ -228,38 +224,6 @@ export default function MachineStopTimeline({
 }
 
 const styles = StyleSheet.create({
-  selHeadRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-    paddingHorizontal: spacing.sm,
-    width: '100%',
-  },
-  selLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    flexShrink: 1,
-  },
-  selName: { fontSize: 14, fontWeight: '800' },
-  selDayBadge: {
-    backgroundColor: colors.glassFill,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  selDayText: { fontSize: 10.5, fontWeight: '700', color: colors.textSecondary },
-  editBtn: {
-    borderRadius: radius.sm,
-    backgroundColor: colors.textSecondary,
-    borderWidth: 1,
-    borderColor: colors.textSecondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    padding: spacing.xs,
-  },
   logScroll: { maxHeight: 520 },
   logItem: { flexDirection: 'row', gap: spacing.sm },
   logTime: {

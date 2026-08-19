@@ -38,6 +38,11 @@ import {
 } from '@repositories/planRepository';
 import { insertMachineEvent } from '@repositories/machineEventsRepository';
 import { setMachineStatusLocal } from '@repositories/machinesRepository';
+import {
+  getPileMeasurementsByPileIds,
+  upsertPileMeasurements,
+  type PileMeasurementPatch,
+} from '@repositories/pileMeasurementsRepository';
 import { onBootstrapCompleted } from '@sync/bootstrap/bootstrapSync';
 import { onDeltaSyncComplete } from '@sync/delta/runDeltaSync';
 // pilingPlannerService.ts (local plan generation) is intentionally unused —
@@ -47,8 +52,9 @@ import { onDeltaSyncComplete } from '@sync/delta/runDeltaSync';
 import type {
   PilingDailyChecklist,
   PilingChecklistPile,
+  PilPileMeasurement,
 } from '@db/schema';
-import type { ResumeWork, ChecklistPersonnelAssignment } from '@/types/plan';
+import type { ResumeWork, ChecklistPersonnelAssignment, PileMeasurementFields } from '@/types/plan';
 import { buildChecklistPersonnelPayload } from '@/utils/personnelRoles';
 import { generateId } from '@/utils/helpers';
 import { enqueueChecklistSync } from '@repositories/syncQueueRepository';
@@ -143,6 +149,10 @@ type PlanContextValue = {
   actualSteps: ActualStepWithMeta[];
   /** Checklist-pile entries (ordered by seq_no). */
   checklistPiles: PilingChecklistPile[];
+  /** One-time engineering measurements for the currently loaded checklist's
+   * physical piles, keyed by pileId (not checklistPileId) — see
+   * pilPileMeasurements in db/schema.ts. */
+  pileMeasurementsByPileId: Map<string, PilPileMeasurement>;
   isLoading: boolean;
   isGenerating: boolean;
   error: string | null;
@@ -164,6 +174,11 @@ type PlanContextValue = {
     piles: EditPlanPileInput[],
   ) => Promise<EditPlanSummary>;
   setRemarks: (checklistPileId: string, stepId: string, remarks: string) => Promise<void>;
+  /** Upsert a partial patch of one-time engineering measurement fields for a
+   * physical pile — merges onto whatever's already recorded, never a hard
+   * gate on the actual-time entry that triggered it (see
+   * MeasurementFieldsModal.tsx). */
+  setPileMeasurement: (pileId: string, patch: Partial<PileMeasurementFields>) => Promise<void>;
   /** Record an actual start or end time for a step. */
   setActualTime: (
     checklistPileId: string,
@@ -205,6 +220,9 @@ function checklistStatusToPlanStatus(status: string): PlanStatus {
 export function PlanProvider({ children }: { children: React.ReactNode }) {
   const [checklist, setChecklist] = useState<PilingDailyChecklist | null>(null);
   const [checklistPiles, setChecklistPiles] = useState<PilingChecklistPile[]>([]);
+  const [pileMeasurementsByPileId, setPileMeasurementsByPileId] = useState<Map<string, PilPileMeasurement>>(
+    new Map(),
+  );
   const [planSteps, setPlanSteps] = useState<PlanStepWithMeta[]>([]);
   const [actualSteps, setActualSteps] = useState<ActualStepWithMeta[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -238,10 +256,12 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         setPlanSteps(steps);
         setActualSteps(actuals);
         setChecklistPiles(piles);
+        setPileMeasurementsByPileId(await getPileMeasurementsByPileIds(piles.map((p) => p.pileId)));
       } else {
         setPlanSteps([]);
         setActualSteps([]);
         setChecklistPiles([]);
+        setPileMeasurementsByPileId(new Map());
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load checklist');
@@ -336,7 +356,10 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         // by construction, there's nothing to push.
         await loadChecklist(siteId, input.date);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to generate plan');
+        const message =
+          (err as any)?.response?.data?.detail ||
+          (err instanceof Error ? err.message : 'Failed to generate plan');
+        setError(message);
         throw err;
       } finally {
         setIsGenerating(false);
@@ -382,7 +405,9 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           warningPiles: data.summary.warning_piles,
         };
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to edit plan');
+        const message =
+          (err as any)?.response?.data?.detail || (err instanceof Error ? err.message : 'Failed to edit plan');
+        setError(message);
         throw err;
       } finally {
         setIsGenerating(false);
@@ -492,6 +517,27 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     [actualSteps, checklist],
   );
 
+  // ── One-time engineering measurements (per physical pile) ────────────────
+
+  const setPileMeasurement = useCallback(
+    async (pileId: string, patch: Partial<PileMeasurementFields>) => {
+      setError(null);
+      try {
+        await upsertPileMeasurements(pileId, patch as PileMeasurementPatch);
+
+        if (checklist) {
+          await enqueueChecklistSync(checklist.id);
+          triggerDebounced('new-write');
+        }
+        const refreshed = await getPileMeasurementsByPileIds(checklistPiles.map((cp) => cp.pileId));
+        setPileMeasurementsByPileId(refreshed);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to save measurement');
+        throw err;
+      }
+    },
+    [checklist, checklistPiles],
+  );
 
   // ── Log machine event (breakdown / replacement / resume) ─────────────────
 
@@ -571,6 +617,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       planSteps,
       actualSteps,
       checklistPiles,
+      pileMeasurementsByPileId,
       isLoading,
       isGenerating,
       error,
@@ -582,6 +629,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       setActualTime,
       clearActualTime,
       setRemarks,
+      setPileMeasurement,
       logMachineEvent,
     }),
     [
@@ -590,6 +638,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       planSteps,
       actualSteps,
       checklistPiles,
+      pileMeasurementsByPileId,
       isLoading,
       isGenerating,
       error,
@@ -601,6 +650,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       setActualTime,
       clearActualTime,
       setRemarks,
+      setPileMeasurement,
       logMachineEvent,
     ],
   );

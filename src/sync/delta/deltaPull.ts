@@ -10,7 +10,9 @@ import { saveLocations, deleteLocationsByIds } from '@repositories/locationsRepo
 import { savePiles, deletePilesByIds } from '@repositories/pilesRepository';
 import { saveDimensions, deleteDimensionsByIds } from '@repositories/dimensionsRepository';
 import { saveMachines, deleteMachinesByIds } from '@repositories/machinesRepository';
+import { saveContractors, deleteContractorsByIds } from '@repositories/contractorsRepository';
 import { savePersonnel, deletePersonnelByIds } from '@repositories/personnelRepository';
+import { applyPileMeasurementsPull } from '@sync/steps/syncPileMeasurements';
 import { replaceSiteCoordinators } from '@repositories/siteCoordinatorsRepository';
 import {
   saveShiftTypes,
@@ -19,7 +21,12 @@ import {
   deleteNonWorkingWindowsByIds,
 } from '@repositories/shiftsRepository';
 import { saveDurationTemplates } from '@repositories/durationTemplatesRepository';
-import { hydrateChecklistFromServer, purgeChecklistPilesByIds } from '@repositories/checklistRepository';
+import { saveSteps } from '@repositories/stepsRepository';
+import {
+  hydrateChecklistFromServer,
+  purgeChecklistPilesByIds,
+  purgeChecklistsByIds,
+} from '@repositories/checklistRepository';
 import { getDirtyChecklistIds } from '@repositories/syncQueueRepository';
 
 import type {
@@ -27,9 +34,11 @@ import type {
   NewPilingPile,
   NewPilingDimension,
   NewPilingMachine,
+  NewPilContractor,
   NewPilingSitePersonnel,
   NewPilingShiftType,
   NewPilingNonWorkingWindow,
+  NewPilingStep,
   NewPilingStepDurationTemplate,
   NewPilSiteCoordinator,
 } from '@db/schema';
@@ -93,6 +102,16 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
   await saveMachines(machineRows);
   await deleteMachinesByIds((data.deleted_machine_ids as string[]) ?? []);
 
+  const contractorRows: NewPilContractor[] = (data.contractors as any[]).map((c) => ({
+    id: c.id,
+    siteId: c.site_id,
+    name: c.name,
+    isActive: c.is_active ?? true,
+    syncedAt,
+  }));
+  await saveContractors(contractorRows);
+  await deleteContractorsByIds((data.deleted_contractor_ids as string[]) ?? []);
+
   const personnelRows: NewPilingSitePersonnel[] = (data.personnel as any[]).map((p) => ({
     id: p.id,
     siteId: p.site_id,
@@ -140,6 +159,16 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
   }));
   await saveDurationTemplates(templateRows);
 
+  // Always the site's full current list, not a delta (see SyncPullOut.site_steps
+  const stepRows: NewPilingStep[] = (data.site_steps as any[]).map((s) => ({
+    id: s.step_id,
+    stepName: s.step_name,
+    sequenceOrder: s.sequence_order,
+    track: s.track,
+    isSplittable: s.is_splittable,
+  }));
+  await saveSteps(stepRows);
+
   // Always the site's full current list, not a delta — see the schema
   // comment on SyncPullOut.coordinators server-side for why. A full replace
   // (not upsert) is what lets a removed/reassigned coordinator actually
@@ -166,6 +195,14 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
     await hydrateChecklistFromServer(checklist);
   }
   await purgeChecklistPilesByIds((data.deleted_checklist_pile_ids as string[]) ?? []);
+  const deletedChecklistIds = ((data.deleted_checklist_ids as string[]) ?? []).filter(
+    (id) => !dirtyIds.has(id),
+  );
+  await purgeChecklistsByIds(deletedChecklistIds);
+
+  // No deleted-ids list — pile measurements are never independently
+  // hard-deleted (see the server contract / syncPileMeasurements.ts).
+  await applyPileMeasurementsPull(data.pile_measurements as any[] | undefined);
 
   return { serverTime: data.server_time as string, checklistsApplied: checklists.length };
 }

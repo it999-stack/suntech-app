@@ -6,9 +6,10 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Layers, Coffee } from 'lucide-react-native';
+import { Layers, Coffee, PencilLine } from 'lucide-react-native';
 import Accordion from '@components/shared/Accordion';
-import MachineBadge from '@components/shared/MachineBadge';
+import Avatar from '@components/shared/Avatar';
+import InfoRow from '@components/shared/InfoRow';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import StepTimelineRow from './StepTimelineRow';
 import type { TrackChoice } from './TrackChoiceTiles';
@@ -24,6 +25,7 @@ import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import type { PilingStep } from '@/db/schema';
 import type { ResumeWork } from '@/types/plan';
 import { colors, spacing, typography, radius } from '@/theme/theme';
+import { TRACK_META } from '@/utils/trackMeta';
 import { formatDurationMinutes, formatTime } from '@/utils/formatTime';
 
 const EMPTY_STEPS: PlanStepWithMeta[] = [];
@@ -58,6 +60,9 @@ interface PilePreviewPageProps {
   allSteps: PilingStep[];
   selectedStepIds: string[];
   resumeWork?: ResumeWork;
+  /** Opens the machine-reassignment panel for this pile. Omitted on read-only screens
+   * (e.g. PlanDetailScreen) so the rows below render non-interactive, with no pencil icon. */
+  onPressMachineBadge?: (pileId: string) => void;
 }
 
 /** One pile's page content inside the swipeable bar. Memoized because SwipeableTabBar's
@@ -74,6 +79,7 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
   allSteps,
   selectedStepIds,
   resumeWork,
+  onPressMachineBadge,
 }: PilePreviewPageProps) {
   const totalDuration = formatDurationMinutes(computeTotalDuration(steps));
   // Occupancy is derived from the CONFIRMED schedule (steps) only — a pending,
@@ -143,15 +149,50 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
         <Text style={styles.pileDuration}>{totalDuration}</Text>
       </View>
       <View style={styles.pileMachinesRow}>
-        <MachineBadge track="RIG" label={`Rig - (${pile.rigMachineNo} · ${rigOccupancy})`} showIcon={false} />
+        <InfoRow
+          leading={
+            <Avatar
+              name={pile.rigMachineNo}
+              icon={TRACK_META.RIG.icon}
+              size={40}
+              backgroundColor={TRACK_META.RIG.color}
+              borderColor={TRACK_META.RIG.color}
+              textColor={colors.white}
+            />
+          }
+          title={pile.rigMachineNo}
+          caption={rigOccupancy}
+          accentColor={TRACK_META.RIG.color}
+          onPress={onPressMachineBadge ? () => onPressMachineBadge(pile.id) : undefined}
+          trailing={onPressMachineBadge ? <PencilLine size={14} color={TRACK_META.RIG.color} /> : undefined}
+        />
         {pile.craneMachineNo ? (
-          <MachineBadge
-            track="CRANE"
-            label={`Crane - (${pile.craneMachineNo} · ${craneOccupancy})`}
-            showIcon={false}
+          <InfoRow
+            leading={
+              <Avatar
+                name={pile.craneMachineNo}
+                icon={TRACK_META.CRANE.icon}
+                size={40}
+                backgroundColor={TRACK_META.CRANE.color}
+                borderColor={TRACK_META.CRANE.color}
+                textColor={colors.white}
+              />
+            }
+            title={pile.craneMachineNo}
+            caption={craneOccupancy}
+            accentColor={TRACK_META.CRANE.color}
+            onPress={onPressMachineBadge ? () => onPressMachineBadge(pile.id) : undefined}
+            trailing={onPressMachineBadge ? <PencilLine size={14} color={TRACK_META.CRANE.color} /> : undefined}
           />
         ) : (
-          <MachineBadge track="RIG" label="Rig only" showIcon={false} muted />
+          <InfoRow
+            leading={<Avatar name={null} icon={TRACK_META.CRANE.icon} size={40} />}
+            title="None assigned"
+            titleMuted
+            caption="Crane"
+            onPress={onPressMachineBadge ? () => onPressMachineBadge(pile.id) : undefined}
+            trailing={onPressMachineBadge ? <PencilLine size={14} color={colors.textSecondary} /> : undefined}
+          />
         )}
       </View>
 
@@ -279,6 +320,9 @@ interface PilesAccordionProps {
   allSteps?: PilingStep[];
   selectedStepIds?: string[];
   resumeWorkByPileId?: Record<string, ResumeWork>;
+  /** Opens the machine-reassignment panel for a pile — Preview-only, omitted on read-only
+   * screens (e.g. PlanDetailScreen) so the Rig/Crane rows stay non-interactive. */
+  onPressMachineBadge?: (pileId: string) => void;
 }
 
 export default function PilesAccordion({
@@ -291,6 +335,7 @@ export default function PilesAccordion({
   allSteps = [],
   selectedStepIds = [],
   resumeWorkByPileId = {},
+  onPressMachineBadge,
 }: PilesAccordionProps) {
   const [selectedPileId, setSelectedPileId] = React.useState<string | undefined>(piles[0]?.id);
 
@@ -361,6 +406,7 @@ export default function PilesAccordion({
               allSteps={allSteps}
               selectedStepIds={selectedStepIds}
               resumeWork={resumeWorkByPileId[pile.id]}
+              onPressMachineBadge={onPressMachineBadge}
             />
           );
         }}
@@ -402,7 +448,6 @@ const styles = StyleSheet.create({
   },
   pileMachinesRow: {
     flexDirection: 'column',
-    gap: spacing.xs,
     paddingHorizontal: spacing.sm,
     marginTop: spacing.xs,
   },

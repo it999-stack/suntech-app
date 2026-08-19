@@ -4,7 +4,7 @@
 // reorder overlay (ReorderPilesOverlay) wiring — which machine is being
 // reordered, its piles, and committing a new order back into the draft.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { PlanDraft } from '@/types/plan';
 import type { MachineInfo } from '@/types/timeline';
 import type { PreviewPile } from '@components/plan/generate/steps/PreviewStep';
@@ -20,7 +20,15 @@ export function usePreviewReorder(args: {
   builtPreviewPiles: PreviewPile[];
   editingMachineId: string | undefined;
   setEditingMachineId: (id: string | undefined) => void;
+  /** The machine the reorder overlay is showing. Stays populated for one extra
+   * beat after `editingMachineId` clears (see isMachineOverlayOpen) so the
+   * overlay's own close animation has real data to fade out instead of
+   * snapping to blank content. */
   editingMachine: MachineInfo | undefined;
+  /** True only while a machine is actually selected for editing — drives the
+   * overlay's `visible` prop. `editingMachine` itself deliberately outlives
+   * this going false, so don't use `!!editingMachine` for that purpose. */
+  isMachineOverlayOpen: boolean;
   pilesForMachine: (m: MachineInfo) => { id: string; label: string }[];
   handleReorderMachine: (newSubsetOrder: string[]) => void;
 } {
@@ -67,7 +75,14 @@ export function usePreviewReorder(args: {
     ...activeRigs.map((r) => ({ id: r.id, machineNo: r.machineNo, type: 'RIG' as const })),
     ...activeCranes.map((c) => ({ id: c.id, machineNo: c.machineNo, type: 'CRANE' as const })),
   ];
-  const editingMachine = machineInfos.find((m) => m.id === editingMachineId);
+  const selectedMachine = machineInfos.find((m) => m.id === editingMachineId);
+  // Caches the last real selection during render (not an effect) so the overlay
+  // keeps rendering the machine it was showing while it fades out, instead of
+  // going blank the instant editingMachineId clears — see the exported
+  // isMachineOverlayOpen/editingMachine doc comments above.
+  const lastMachineRef = useRef<MachineInfo | undefined>(selectedMachine);
+  if (selectedMachine) lastMachineRef.current = selectedMachine;
+  const editingMachine = selectedMachine ?? lastMachineRef.current;
 
   function pilesForMachine(machine: MachineInfo) {
     return builtPreviewPiles
@@ -92,6 +107,7 @@ export function usePreviewReorder(args: {
     editingMachineId,
     setEditingMachineId,
     editingMachine,
+    isMachineOverlayOpen: !!editingMachineId,
     pilesForMachine,
     handleReorderMachine,
   };

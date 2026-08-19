@@ -13,6 +13,8 @@ import type { PilingStep } from '@/db/schema';
 import { TRACK_META } from '@/utils/trackMeta';
 import { formatDurationLong } from '@/utils/formatTime';
 import { useAuthStore } from '@store/authStore';
+import { onDeltaSyncComplete } from '@sync/delta/runDeltaSync';
+import { onBootstrapCompleted } from '@sync/bootstrap/bootstrapSync';
 
 function StepCard({
   step,
@@ -73,13 +75,38 @@ export default function StepsScreen() {
 
   useEffect(() => {
     if (!siteId) { setLoading(false); return; }
-    Promise.all([getSteps(), getAllTemplatesWithDimensions(siteId)])
-      .then(([stepRows, templateRows]) => {
-        setSteps(stepRows);
-        setTemplates(templateRows);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+
+    let cancelled = false;
+    const loadFromDb = () => {
+      Promise.all([getSteps(), getAllTemplatesWithDimensions(siteId)])
+        .then(([stepRows, templateRows]) => {
+          if (cancelled) return;
+          setSteps(stepRows);
+          setTemplates(templateRows);
+        })
+        .catch(console.error)
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    loadFromDb();
+
+    // Local pilingSteps/pilingStepDurationTemplates get overwritten by every
+    // sync (bootstrap on first install, delta pull thereafter — see
+    // deltaPull.ts's site_steps handling), but this screen only ever read
+    // them once on mount — a reorder/duration change made elsewhere never
+    // showed up here until the app restarted. Same fix as
+    // SiteSettingsContext/AppConfigContext/PlanContext: reload whenever a
+    // sync completes, not just on first mount.
+    const unsubscribeDelta = onDeltaSyncComplete(loadFromDb);
+    const unsubscribeBootstrap = onBootstrapCompleted(loadFromDb);
+
+    return () => {
+      cancelled = true;
+      unsubscribeDelta();
+      unsubscribeBootstrap();
+    };
   }, [siteId]);
 
   const templatesByStepId = useMemo(() => {

@@ -13,61 +13,48 @@
 // moment a supervisor backfills an earlier pile's time after a later one
 // (a normal workflow), it wrongly blocks something that never actually
 // overlaps. Interval overlap is the actual physical constraint that matters.
+//
+// Only CLOSED intervals (both actualStart and actualEnd recorded) count as
+// "busy" here — a step that's merely started (in progress, no end yet)
+// doesn't block anything, on this machine or within its own pile. This
+// keeps the rule to exactly "can't overlap a time that's already been
+// recorded", with no guessing about how long an in-progress step will run.
 
 import type { ActualEntry, PileGroup } from '@app-types/plan';
 
-export type MachineConflictInfo = {
-  /** e.g. "RIG (SANY 205 1ST)" — same "TRACK (no)" convention as the track badge. */
-  machineLabel: string;
-  /** e.g. "Pile P-387 — BORING" */
-  reasonLabel: string;
-  /** The conflicting interval's own bounds — end is null when that step is still
-   * open (started, not yet finished), i.e. busy indefinitely from `start`. */
-  start: string;
-  end: string | null;
-};
-
 type MachineInterval = {
   stepId: string;
+  /** pil_checklist_piles.id — `stepId` alone is only the shared step-DEFINITION
+   * id (e.g. every pile's "BORING" step has the same stepId), so it can't tell
+   * two different piles' same-named step apart. This is what actually makes an
+   * interval unique across the whole checklist; see the exclusion check below. */
+  checklistPileId: string;
   start: string;
-  end: string | null;
-  pileCode: string;
-  stepName: string;
-  machineLabel: string;
+  end: string;
 };
 
-/** assignedMachineId -> that machine's actual-time intervals across the WHOLE
- * checklist (every pile). */
+/** assignedMachineId -> that machine's CLOSED actual-time intervals across the
+ * WHOLE checklist (every pile). */
 export type MachineFloorIndex = Map<string, MachineInterval[]>;
-
-function machineLabelFor(step: ActualEntry): string {
-  return `${step.track}${step.assignedMachineNo ? ` (${step.assignedMachineNo})` : ''}`;
-}
 
 /**
  * Builds the cross-pile machine interval index from `pileGroups` — already
- * whole-checklist, already-joined data (assignedMachineId, actualStartIso,
- * actualEndIso, pileCode, stepName, track, assignedMachineNo all present per
- * step), so no separate re-join of raw plan/actual steps is needed. Every
- * step with at least an actualStart contributes one interval: [start, end) if
- * finished, [start, +∞) (end: null) if merely open (started, not yet
- * finished) — so a machine that's still mid-step elsewhere in the checklist
- * still correctly shows up as busy from <start> onward rather than looking
- * completely free just because nobody has closed the step out yet. Recompute
- * whenever `pileGroups` changes (e.g. via useMemo keyed on it).
+ * whole-checklist, already-joined data. Only a step with BOTH actualStartIso
+ * and actualEndIso recorded contributes an interval — an in-progress step
+ * (started, not yet finished) is not considered "busy" for conflict-checking
+ * purposes. Recompute whenever `pileGroups` changes (e.g. via useMemo keyed
+ * on it).
  */
 export function buildMachineFloorIndex(pileGroups: PileGroup[]): MachineFloorIndex {
   const index: MachineFloorIndex = new Map();
   for (const group of pileGroups) {
     for (const step of group.steps) {
-      if (!step.assignedMachineId || !step.actualStartIso) continue;
+      if (!step.assignedMachineId || !step.actualStartIso || !step.actualEndIso) continue;
       const entry: MachineInterval = {
         stepId: step.stepId,
+        checklistPileId: group.checklistPileId,
         start: step.actualStartIso,
-        end: step.actualEndIso ?? null,
-        pileCode: step.pileCode,
-        stepName: step.stepName,
-        machineLabel: machineLabelFor(step),
+        end: step.actualEndIso,
       };
       const list = index.get(step.assignedMachineId);
       if (list) list.push(entry);
@@ -77,96 +64,74 @@ export function buildMachineFloorIndex(pileGroups: PileGroup[]): MachineFloorInd
   return index;
 }
 
-/** True when [aStart, aEnd) and [bStart, bEnd) genuinely overlap (both ends
- * exclusive-upper, epoch millis; pass Infinity for a still-open end). */
+/** True when [aStart, aEnd) and [bStart, bEnd) genuinely overlap (epoch millis). */
 function intervalsOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   return aStart < bEnd && bStart < aEnd;
 }
 
-/**
- * The first *other* interval on `machineId` (excluding `excludeStepId`, so
- * re-checking a step's own start/end never self-blocks against a value
- * derived from its own already-set fields) that genuinely overlaps
- * `[candidateStart, candidateEnd)`. `candidateEnd` is optional — filling a
- * start time with no end known yet degenerates to a point check: does
- * candidateStart fall strictly inside another interval. Returns undefined
- * when nothing conflicts (including when this machine has no other actual
- * time recorded at all).
- */
-export function getMachineConflict(
-  index: MachineFloorIndex,
-  machineId: string | null | undefined,
-  excludeStepId: string,
-  candidateStart: Date,
-  candidateEnd?: Date,
-): MachineConflictInfo | undefined {
-  if (!machineId) return undefined;
-  const intervals = index.get(machineId);
-  if (!intervals) return undefined;
-
+/** Turns a candidate (start, optional end) into a non-zero-width [start, end)
+ * probe — a bare point (no known end yet) still needs a non-zero width to
+ * detect landing inside another interval; start === end would never overlap
+ * anything under the strict "<" test above. */
+function candidateRange(candidateStart: Date, candidateEnd?: Date): [number, number] {
   const start = candidateStart.getTime();
-  // A bare point (no known end yet) still needs a non-zero-width probe to
-  // detect landing inside another interval — start === end would never
-  // overlap anything under the strict "<" test below.
   const end = candidateEnd ? candidateEnd.getTime() : start + 1;
-
-  for (const interval of intervals) {
-    if (interval.stepId === excludeStepId) continue;
-    const otherStart = new Date(interval.start).getTime();
-    const otherEnd = interval.end ? new Date(interval.end).getTime() : Infinity;
-    if (intervalsOverlap(start, end, otherStart, otherEnd)) {
-      return {
-        machineLabel: interval.machineLabel,
-        reasonLabel: `Pile ${interval.pileCode} — ${interval.stepName}`,
-        start: interval.start,
-        end: interval.end,
-      };
-    }
-  }
-  return undefined;
+  return [start, end];
 }
 
 /**
- * The next genuinely free instant on `machineId` at or after `from` —
- * repeatedly jumps past any other interval `from` lands inside, the same
- * "never start inside a window" shape as the scheduler's own
- * skipNonWorkingWindows (pilingPlannerService.ts), just against actual-time
- * intervals instead of non-working windows. For SUGGESTING A DEFAULT
- * value only — never a hard block; see getMachineConflict for the actual
- * validation performed at save time.
+ * True when `[candidateStart, candidateEnd)` genuinely overlaps any *other*
+ * closed interval recorded on `machineId` (excluding the entry's own
+ * checklist-pile + step, so re-checking a step's own start/end never
+ * self-blocks against a value derived from its own already-set fields).
+ *
+ * `excludeStepId` alone is NOT enough to identify "this step" — it's the
+ * shared step-DEFINITION id (e.g. every pile's "BORING" step has the same
+ * stepId), so excluding by stepId alone would also exclude every OTHER
+ * pile's same-named step on this machine, hiding a genuine double-booking
+ * between two different piles. `excludeChecklistPileId` (unique per pile)
+ * is what actually disambiguates.
  */
-export function nextFreeTimeOnOrAfter(
+export function hasMachineConflict(
   index: MachineFloorIndex,
   machineId: string | null | undefined,
+  excludeChecklistPileId: string,
   excludeStepId: string,
-  from: Date,
-): Date {
-  if (!machineId) return from;
+  candidateStart: Date,
+  candidateEnd?: Date,
+): boolean {
+  if (!machineId) return false;
   const intervals = index.get(machineId);
-  if (!intervals) return from;
+  if (!intervals) return false;
 
-  let current = from.getTime();
-  let moved = true;
-  while (moved) {
-    moved = false;
-    for (const interval of intervals) {
-      if (interval.stepId === excludeStepId) continue;
-      const otherStart = new Date(interval.start).getTime();
-      if (interval.end === null) {
-        // Still open (in progress) indefinitely — there's no known free instant
-        // to jump to. Best-effort: suggest right when it started rather than
-        // looping toward Infinity. Purely a suggested default; getMachineConflict
-        // is what actually blocks a genuine overlap at save time.
-        if (current >= otherStart) return new Date(otherStart);
-        continue;
-      }
-      const otherEnd = new Date(interval.end).getTime();
-      if (current >= otherStart && current < otherEnd) {
-        current = otherEnd;
-        moved = true;
-        break;
-      }
-    }
-  }
-  return new Date(current);
+  const [start, end] = candidateRange(candidateStart, candidateEnd);
+  return intervals.some((interval) => {
+    if (interval.checklistPileId === excludeChecklistPileId && interval.stepId === excludeStepId) return false;
+    const otherStart = new Date(interval.start).getTime();
+    const otherEnd = new Date(interval.end).getTime();
+    return intervalsOverlap(start, end, otherStart, otherEnd);
+  });
+}
+
+/**
+ * True when `[candidateStart, candidateEnd)` genuinely overlaps any *other*
+ * step within the same pile that already has both an actual start and end
+ * recorded — the within-pile counterpart to `hasMachineConflict`. Regardless
+ * of which machine each step is assigned to; this is purely "does this pile's
+ * own timeline already have something recorded here".
+ */
+export function hasPileStepConflict(
+  steps: ActualEntry[],
+  excludeStepId: string,
+  candidateStart: Date,
+  candidateEnd?: Date,
+): boolean {
+  const [start, end] = candidateRange(candidateStart, candidateEnd);
+  return steps.some((step) => {
+    if (step.stepId === excludeStepId) return false;
+    if (!step.actualStartIso || !step.actualEndIso) return false;
+    const otherStart = new Date(step.actualStartIso).getTime();
+    const otherEnd = new Date(step.actualEndIso).getTime();
+    return intervalsOverlap(start, end, otherStart, otherEnd);
+  });
 }

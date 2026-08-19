@@ -5,7 +5,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { X, SquareCheckBig, Eraser } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@/theme/theme';
-import MachineSelect from './MachineSelect';
+import MachineAssignPanel from './MachineAssignPanel';
 import type { SimpleMachine } from './types';
 
 interface BulkAssignBarProps {
@@ -60,22 +60,16 @@ export default function BulkAssignBar({
         subtitle={`${selectedCount} ${selectedCount === 1 ? 'pile' : 'piles'} selected`}
         position="center"
       >
-        <MachineSelect label="Rig" kind="rig" options={rigs} valueId={rigId} onSelect={onSelectRig} />
-        <MachineSelect
-          label="Crane (optional)"
-          kind="crane"
-          options={cranes}
-          valueId={craneId}
-          onSelect={onSelectCrane}
-          onClear={() => onSelectCrane(null)}
+        <MachineAssignPanel
+          rigs={rigs}
+          cranes={cranes}
+          rigId={rigId}
+          craneId={craneId}
+          onSelectRig={onSelectRig}
+          onSelectCrane={onSelectCrane}
+          onApply={onApply}
+          applyLabel={`Apply to ${selectedCount}`}
         />
-        <Pressable
-          style={[styles.applyButton, !rigId && styles.applyButtonDisabled]}
-          onPress={onApply}
-          disabled={!rigId}
-        >
-          <Text style={styles.applyButtonText}>Apply to {selectedCount}</Text>
-        </Pressable>
       </AppModal>
     </View>
   );
@@ -119,11 +113,4 @@ const styles = StyleSheet.create({
   },
   unassignButtonDisabled: { opacity: 0.4 },
   unassignButtonText: { ...typography.caption, fontWeight: '700', color: colors.white },
-  applyButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: colors.accent, borderRadius: radius.lg, paddingVertical: spacing.md,
-    marginTop: spacing.sm,
-  },
-  applyButtonDisabled: { opacity: 0.4 },
-  applyButtonText: { ...typography.buttonLabel, borderRadius: radius.xl, paddingHorizontal: spacing.md, fontWeight: '700', color: colors.white },
 });

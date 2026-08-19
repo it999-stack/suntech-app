@@ -28,6 +28,29 @@ export interface SyncActualStep {
   updated_at?: string | null;
 }
 
+/**
+ * One physical pile's one-time engineering measurements — keyed by pile_id
+ * (not checklist_pile_id), all fields but pile_id optional. Upserted
+ * server-side keyed by pile_id, plain last-write-wins (no
+ * optimistic-concurrency check, unlike actual_steps). See
+ * pilPileMeasurements in db/schema.ts.
+ */
+export interface SyncPileMeasurement {
+  pile_id: string;
+  egl_m?: number | null;
+  pile_contractor_id?: string | null;
+  cage_contractor_id?: string | null;
+  pile_length_m?: number | null;
+  cage_weight_kg?: number | null;
+  ctl_m?: number | null;
+  col_m?: number | null;
+  bore_depth_m?: number | null;
+  hook_length_m?: number | null;
+  fl_m?: number | null;
+  planned_qty_m3?: number | null;
+  actual_qty_m3?: number | null;
+}
+
 export interface SyncMachineEvent {
   id: string;
   pile_id: string;
@@ -77,6 +100,7 @@ export interface SyncChecklist {
   plan_steps: SyncPlanStep[];
   actual_steps: SyncActualStep[];
   machine_events: SyncMachineEvent[];
+  pile_measurements: SyncPileMeasurement[];
 }
 
 export interface SyncAppPlanPayload {
@@ -110,6 +134,9 @@ export interface SyncAppPlanResponse {
   plan_steps_synced: number;
   actual_steps_synced: number;
   machine_events_synced: number;
+  /** Informational only — the server never reports per-row conflicts for
+   * measurements (plain last-write-wins, no optimistic-concurrency check). */
+  pile_measurements_synced?: number;
   errors?: Array<{ checklist_id: string; error: string }>;
   conflicts?: SyncConflict[];
   synced_versions?: SyncedVersion[];

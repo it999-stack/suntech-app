@@ -17,6 +17,7 @@ import {
   type PilMachineEvent,
 } from '@db/schema';
 import type { SyncChecklist, SyncedVersion } from '@sync/SyncAppPlanPayload';
+import { getPileMeasurementsByPileIds } from '@repositories/pileMeasurementsRepository';
 
 // ─── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ export async function getChecklistsForSync(
 
   for (const cl of checklists) {
     const cpIds = (await getChecklistPiles(cl.id)).map((cp) => cp.id);
-    
+
     // Get all related data
     const [piles, personnel, planSteps, actualSteps, machineEvents] = await Promise.all([
       getChecklistPiles(cl.id),
@@ -114,6 +115,11 @@ export async function getChecklistsForSync(
       getActualSteps(cpIds),
       getMachineEvents(cl.id),
     ]);
+
+    // Measurements are per *physical* pile (pile_id), not per checklist-pile
+    // — gather this checklist's distinct physical pile ids and only send
+    // rows that actually have something recorded locally.
+    const measurementsByPileId = await getPileMeasurementsByPileIds(piles.map((p) => p.pileId));
 
     // Convert to sync format
     const syncChecklist: SyncChecklist = {
@@ -180,6 +186,21 @@ export async function getChecklistsForSync(
         replacement_id: e.replacementId ?? undefined,
         notes: e.notes ?? undefined,
         occurred_at: e.occurredAt,
+      })),
+      pile_measurements: Array.from(measurementsByPileId.values()).map((m) => ({
+        pile_id: m.pileId,
+        egl_m: m.eglM ?? undefined,
+        pile_contractor_id: m.pileContractorId ?? undefined,
+        cage_contractor_id: m.cageContractorId ?? undefined,
+        pile_length_m: m.pileLengthM ?? undefined,
+        cage_weight_kg: m.cageWeightKg ?? undefined,
+        ctl_m: m.ctlM ?? undefined,
+        col_m: m.colM ?? undefined,
+        bore_depth_m: m.boreDepthM ?? undefined,
+        hook_length_m: m.hookLengthM ?? undefined,
+        fl_m: m.flM ?? undefined,
+        planned_qty_m3: m.plannedQtyM3 ?? undefined,
+        actual_qty_m3: m.actualQtyM3 ?? undefined,
       })),
     };
 

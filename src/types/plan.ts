@@ -170,6 +170,29 @@ export type ActualEntry = {
   isHistorical?: boolean;
 };
 
+/**
+ * The fixed set of one-time engineering measurements for a *physical* pile
+ * (never varies per checklist — see pilPileMeasurements in db/schema.ts).
+ * Field keys match pilPileMeasurements' own column names 1:1 so a value read
+ * off that table can be spread directly into a patch with no translation.
+ * null once no field has been recorded yet; individual fields are null until
+ * their trigger step's actual start/end is filled in — see
+ * pileMeasurementTriggers.ts.
+ */
+export type PileMeasurementFields = {
+  eglM: number | null;
+  pileContractorId: string | null;
+  cageContractorId: string | null;
+  pileLengthM: number | null;
+  cageWeightKg: number | null;
+  ctlM: number | null;
+  colM: number | null;
+  boreDepthM: number | null;
+  hookLengthM: number | null;
+  flM: number | null;
+  actualQtyM3: number | null;
+};
+
 /** Shape expected by PileProgressCard and PileStepsModal — one pile's steps
  * grouped with its rig/crane assignment, used by FillActualScreen. */
 export type PileGroup = {
@@ -187,6 +210,10 @@ export type PileGroup = {
    * self-logged idle session (status IDLE) — that step's actual time entry is
    * blocked until the idle session is ended, everywhere this pile appears. */
   isBlockedByIdle: boolean;
+  /** One-time engineering measurements recorded so far for this physical
+   * pile, or null if nothing has been recorded yet — see
+   * MeasurementFieldsModal.tsx / pileMeasurementTriggers.ts. */
+  measurements: PileMeasurementFields | null;
 };
 
 /**

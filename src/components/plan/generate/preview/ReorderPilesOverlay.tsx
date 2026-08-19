@@ -24,14 +24,23 @@
 // immediate parent, not the screen, so nesting this inside scrollable
 // content would size/scroll it with that content instead of covering the
 // full screen.
+//
+// Stays mounted across opens (the caller keeps rendering it once a machine
+// has ever been picked, caching that last machine/piles instead of clearing
+// them immediately — see usePreviewReorder's editingMachine/
+// isMachineOverlayOpen). `visible` toggling then drives a real fade+scale on
+// BOTH open and close (via the internal `rendered` flag, which only flips
+// after the close tween finishes), instead of just popping the entrance
+// animation and vanishing instantly on close like an unmount would.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
   interpolate,
+  runOnJS,
   LinearTransition,
 } from 'react-native-reanimated';
 import { ChevronUp, ChevronDown, Lock, X, Plus, Trash2 } from 'lucide-react-native';
@@ -83,9 +92,26 @@ export default function ReorderPilesOverlay({
 }: ReorderPilesOverlayProps) {
   const progress = useSharedValue(0);
 
-  React.useEffect(() => {
-    progress.value = withTiming(visible ? 1 : 0, { duration: 220 });
-  }, [visible, progress]);
+  // The parent (GeneratePlanScreen) keeps this component mounted across opens
+  // now — it caches the last-edited machine/piles so this overlay always has
+  // real content to animate, rather than remounting fresh each time. That
+  // means closing must fade out here instead of just vanishing: `rendered`
+  // stays true through the close tween and only flips (unmounting the tree)
+  // once the fade-to-0 actually finishes, matching AppModal's center-mode
+  // open+close feel instead of only replicating its open half.
+  const [rendered, setRendered] = useState(visible);
+
+  useEffect(() => {
+    if (visible) {
+      setRendered(true);
+      progress.value = withTiming(1, { duration: 220 });
+    } else if (rendered) {
+      progress.value = withTiming(0, { duration: 220 }, (finished) => {
+        if (finished) runOnJS(setRendered)(false);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   const cardStyle = useAnimatedStyle(() => ({
     opacity: progress.value,
@@ -97,11 +123,17 @@ export default function ReorderPilesOverlay({
   }));
 
   // Local draft ordering — only applied to the real plan when Confirm is
-  // tapped. The overlay is unmounted/remounted by the parent on each open, so
-  // this initializer already picks up a fresh value every time.
+  // tapped. Since the component now stays mounted across opens (see
+  // `rendered` above), it must be explicitly re-seeded from the incoming
+  // `piles` whenever a fresh open happens — a plain useState initializer only
+  // runs once per mount and would otherwise keep showing a stale order.
   const [localPiles, setLocalPiles] = useState(piles);
+  useEffect(() => {
+    if (visible) setLocalPiles(piles);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
-  if (!visible) return null;
+  if (!rendered) return null;
 
   function move(index: number, direction: -1 | 1) {
     const target = index + direction;

@@ -7,11 +7,12 @@
 // omitted, so rows render as static, non-interactive).
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Users } from 'lucide-react-native';
 import SummaryAccordion from './SummaryAccordion';
 import Avatar from '@components/shared/Avatar';
 import Divider from '@components/shared/Divider';
+import InfoRow from '@components/shared/InfoRow';
 import MachineBadge from '@components/shared/MachineBadge';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { formatDesignation } from '@/utils/personnelRoles';
@@ -77,35 +78,25 @@ function TeamPersonRow({
 }) {
   const assigned = !!name;
   return (
-    <Pressable
-      style={[
-        styles.personRow,
-        tone === 'day' ? styles.personRowDay : tone === 'night' ? styles.personRowNight : styles.personRowNeutral,
-      ]}
+    <InfoRow
+      leading={<Avatar name={name} size={40} />}
+      title={assigned ? name! : 'None assigned'}
+      titleMuted={!assigned}
+      caption={assigned && designation ? formatDesignation(designation) : label}
+      tone={tone}
       onPress={onPress}
-      disabled={!onPress}
-    >
-      <Avatar name={name} size={40} />
-      <View style={styles.personInfo}>
-        <Text style={[styles.personName, !assigned && styles.personNameEmpty]}>
-          {assigned ? name : 'None assigned'}
-        </Text>
-        {assigned && designation ? (
-          <Text style={styles.personDesignation}>{formatDesignation(designation)}</Text>
-        ) : (
-          <Text style={styles.personDesignation}>{label}</Text>
-        )}
-      </View>
-      {badgeText ? (
-        <View style={[styles.personBadge, tone === 'night' ? styles.personBadgeNight : styles.personBadgeDay]}>
-          <Text
-            style={[styles.personBadgeText, tone === 'night' ? styles.personBadgeTextNight : styles.personBadgeTextDay]}
-          >
-            {badgeText}
-          </Text>
-        </View>
-      ) : null}
-    </Pressable>
+      trailing={
+        badgeText ? (
+          <View style={[styles.personBadge, tone === 'night' ? styles.personBadgeNight : styles.personBadgeDay]}>
+            <Text
+              style={[styles.personBadgeText, tone === 'night' ? styles.personBadgeTextNight : styles.personBadgeTextDay]}
+            >
+              {badgeText}
+            </Text>
+          </View>
+        ) : undefined
+      }
+    />
   );
 }
 
@@ -232,40 +223,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  // Leadership / Shift Incharge rows
-  personRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-  },
-  personRowNeutral: {
-    backgroundColor: 'rgba(28,28,46,0.03)',
-    borderColor: colors.border,
-  },
-  personRowDay: {
-    backgroundColor: 'rgba(249,115,22,0.05)',
-    borderColor: 'rgba(249,115,22,0.15)',
-  },
-  personRowNight: {
-    backgroundColor: 'rgba(79,70,229,0.05)',
-    borderColor: 'rgba(79,70,229,0.15)',
-  },
-  personInfo: { flex: 1 },
-  personName: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  personNameEmpty: { color: colors.textSecondary, fontStyle: 'italic', fontWeight: '400' },
-  personDesignation: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
+  // Leadership / Shift Incharge row badges (row shell itself lives in shared InfoRow)
   personBadge: {
     borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,

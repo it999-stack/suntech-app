@@ -10,6 +10,7 @@ import {
   pilingChecklistPersonnel,
   pilePlanSteps,
   pileActualSteps,
+  pilMachineEvents,
   type PilingDailyChecklist,
   type NewPilingDailyChecklist,
   type PilingChecklistPile,
@@ -21,6 +22,7 @@ import {
   type NewPileActualStep,
 } from '@db/schema';
 import { generateId, isContinuingStep } from '@utils/helpers';
+import { saveMeasurementsBatch, type PileMeasurementSyncRow } from '@repositories/pileMeasurementsRepository';
 
 /** A plain db handle, or the transaction-scoped one passed into
  * db.transaction(async (tx) => {...}) — a distinct type from the plain
@@ -290,6 +292,25 @@ export async function hydrateChecklistFromServer(serverChecklist: {
       // See checklist_piles[].updated_at above — same purpose, per actual step.
       updated_at?: string | null;
     }>;
+    // One-time engineering measurements for this pile — only present on the
+    // bootstrap-history response (see syncChecklistHistory.ts). Contractor
+    // ids are nested as resolved {id,name} objects here (unlike the flat
+    // delta-pull shape in syncPileMeasurements.ts), since bootstrap-history
+    // resolves them for display; only the ids are kept locally.
+    measurements?: {
+      egl_m: number | null;
+      pile_contractor: { id: string; name: string } | null;
+      cage_contractor: { id: string; name: string } | null;
+      pile_length_m: number | null;
+      cage_weight_kg: number | null;
+      ctl_m: number | null;
+      col_m: number | null;
+      bore_depth_m: number | null;
+      hook_length_m: number | null;
+      fl_m: number | null;
+      planned_qty_m3: number | null;
+      actual_qty_m3: number | null;
+    } | null;
   }>;
 }): Promise<void> {
   const db = await initDb();
@@ -414,6 +435,35 @@ export async function hydrateChecklistFromServer(serverChecklist: {
     if (planStepRows.length) await tx.insert(pilePlanSteps).values(planStepRows);
     if (actualStepRows.length) await tx.insert(pileActualSteps).values(actualStepRows);
   });
+
+  // Seed one-time pile measurements from bootstrap-history's nested
+  // `measurements` object, when present — keyed by physical pile id, not
+  // checklist_pile_id, so this lives outside (and after) the checklist
+  // transaction above rather than being cleaned up/replaced alongside it.
+  // Absent on every other caller of this function (generatePlan,
+  // editPlanMidDay, syncActivePlan), which don't currently echo measurements
+  // back — this is a no-op for them.
+  const measurementRows: PileMeasurementSyncRow[] = [];
+  for (const cp of serverPiles) {
+    const m = cp.measurements;
+    if (!m) continue;
+    measurementRows.push({
+      pileId: cp.pile.id,
+      eglM: m.egl_m ?? null,
+      pileContractorId: m.pile_contractor?.id ?? null,
+      cageContractorId: m.cage_contractor?.id ?? null,
+      pileLengthM: m.pile_length_m ?? null,
+      cageWeightKg: m.cage_weight_kg ?? null,
+      ctlM: m.ctl_m ?? null,
+      colM: m.col_m ?? null,
+      boreDepthM: m.bore_depth_m ?? null,
+      hookLengthM: m.hook_length_m ?? null,
+      flM: m.fl_m ?? null,
+      plannedQtyM3: m.planned_qty_m3 ?? null,
+      actualQtyM3: m.actual_qty_m3 ?? null,
+    });
+  }
+  if (measurementRows.length) await saveMeasurementsBatch(measurementRows);
 }
 
 /**
@@ -429,6 +479,32 @@ export async function purgeChecklistPilesByIds(checklistPileIds: string[]): Prom
   await db.delete(pilePlanSteps).where(inArray(pilePlanSteps.checklistPileId, checklistPileIds));
   await db.delete(pileActualSteps).where(inArray(pileActualSteps.checklistPileId, checklistPileIds));
   await db.delete(pilingChecklistPiles).where(inArray(pilingChecklistPiles.id, checklistPileIds));
+}
+
+/**
+ * Hard-delete whole checklists the server has soft-deleted (delta pull's
+ * `deleted_checklist_ids`) plus every dependent local row — lets the user
+ * regenerate a fresh plan for that date instead of the plan colliding with a
+ * stale local copy. Callers should exclude any checklist id with unsynced
+ * local edits still queued (see deltaPull.ts's dirtyIds usage) so an
+ * in-flight edit is never wiped out from under the user.
+ */
+export async function purgeChecklistsByIds(checklistIds: string[]): Promise<void> {
+  if (!checklistIds.length) return;
+  const db = await initDb();
+  const cpRows = await db
+    .select({ id: pilingChecklistPiles.id })
+    .from(pilingChecklistPiles)
+    .where(inArray(pilingChecklistPiles.checklistId, checklistIds));
+  const checklistPileIds = cpRows.map((r) => r.id);
+  if (checklistPileIds.length) {
+    await db.delete(pilePlanSteps).where(inArray(pilePlanSteps.checklistPileId, checklistPileIds));
+    await db.delete(pileActualSteps).where(inArray(pileActualSteps.checklistPileId, checklistPileIds));
+  }
+  await db.delete(pilingChecklistPiles).where(inArray(pilingChecklistPiles.checklistId, checklistIds));
+  await db.delete(pilingChecklistPersonnel).where(inArray(pilingChecklistPersonnel.checklistId, checklistIds));
+  await db.delete(pilMachineEvents).where(inArray(pilMachineEvents.checklistId, checklistIds));
+  await db.delete(pilingDailyChecklists).where(inArray(pilingDailyChecklists.id, checklistIds));
 }
 
 // ─── Checklist Personnel ──────────────────────────────────────────────────────

@@ -155,6 +155,29 @@ export const pilingMachines = sqliteTable('pil_machines', {
 export type PilingMachine = typeof pilingMachines.$inferSelect;
 export type NewPilingMachine = typeof pilingMachines.$inferInsert;
 
+// ─── Piling Contractors (synced from server) ─────────────────────────────────
+
+/**
+ * Local cache of the site-scoped contractor master list fetched from the
+ * server — backs the "Name of Pile Contractor" / "Name of Cage Contractor"
+ * dropdown fields on the one-time pile measurements (see pilPileMeasurements
+ * below). Same sync shape/pattern as pilingMachines: upsert on id, wholesale
+ * replace via deleted_ids.
+ */
+export const pilContractors = sqliteTable('pil_contractors', {
+  id: text('id').primaryKey(),
+  siteId: text('site_id').notNull(),
+  name: text('name').notNull(),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  syncedAt: integer('synced_at').notNull(),
+  // Phase 2 groundwork for a future delta-sync cursor — not read/written yet.
+  updatedAt: integer('updated_at'),
+  deletedAt: integer('deleted_at'),
+});
+
+export type PilContractor = typeof pilContractors.$inferSelect;
+export type NewPilContractor = typeof pilContractors.$inferInsert;
+
 // ─── Piling Site Personnel (synced from server) ──────────────────────────────
 
 /**
@@ -200,9 +223,14 @@ export type NewPilSiteCoordinator = typeof pilSiteCoordinators.$inferInsert;
 // ─── Piling Steps (synced from server) ──────────────────────────────────────
 
 /**
- * Global workflow-step definitions, synced from server on every bootstrap
- * (see sync/steps/syncSteps.ts) — this table is fully replaced (delete-all,
- * then insert) on each sync, not merged.
+ * This device's site's own chosen/ordered workflow steps (server-side:
+ * pil_site_steps joined to the shared pil_steps name/track catalog), synced
+ * from server on every bootstrap (see sync/steps/syncSteps.ts) — this table
+ * is fully replaced (delete-all, then insert) on each sync, not merged. `id`
+ * is the catalog step id (matches server-side pil_steps.id / what plan and
+ * actual step rows FK to), not the per-site pil_site_steps row id — this
+ * device only ever holds one site's steps at a time, so sequenceOrder stays
+ * trivially unique locally even though it's now site-scoped server-side.
  */
 export const pilingSteps = sqliteTable('pil_steps', {
   id: text('id').primaryKey(),
@@ -430,6 +458,42 @@ export const pilMachineEvents = sqliteTable('pil_machine_events', {
 
 export type PilMachineEvent = typeof pilMachineEvents.$inferSelect;
 export type NewPilMachineEvent = typeof pilMachineEvents.$inferInsert;
+
+// ─── Pile Measurements (one-time engineering measurements per physical pile) ─
+
+/**
+ * A fixed set of one-time engineering measurements captured per *physical*
+ * pile (not per checklist-pile — a pile only ever has one E.G.L., one Pile
+ * Length, etc., regardless of how many daily checklists it appears on).
+ * Keyed by a unique pileId, not checklistPileId. All fields optional/
+ * non-blocking, same low-friction UX as remarks — see
+ * MeasurementFieldsModal.tsx and pileMeasurementTriggers.ts for which field
+ * is prompted at which step's actual start/end.
+ * Synced last-write-wins (no optimistic-concurrency version, unlike
+ * pile_actual_steps) via the checklist push/pull payloads' `pile_measurements`
+ * array — see SyncAppPlanPayload.ts / deltaPull.ts.
+ */
+export const pilPileMeasurements = sqliteTable('pil_pile_measurements', {
+  id: text('id').primaryKey(),
+  pileId: text('pile_id').notNull().unique(),
+  eglM: real('egl_m'),
+  pileContractorId: text('pile_contractor_id'),
+  cageContractorId: text('cage_contractor_id'),
+  pileLengthM: real('pile_length_m'),
+  cageWeightKg: real('cage_weight_kg'),
+  ctlM: real('ctl_m'),
+  colM: real('col_m'),
+  boreDepthM: real('bore_depth_m'),
+  hookLengthM: real('hook_length_m'),
+  flM: real('fl_m'),
+  plannedQtyM3: real('planned_qty_m3'),
+  actualQtyM3: real('actual_qty_m3'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export type PilPileMeasurement = typeof pilPileMeasurements.$inferSelect;
+export type NewPilPileMeasurement = typeof pilPileMeasurements.$inferInsert;
 
 // ─── Sync Queue (offline outbox — dirty checklists awaiting push) ────────────
 

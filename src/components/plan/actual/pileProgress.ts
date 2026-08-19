@@ -1,8 +1,4 @@
 // src/components/plan/actual/pileProgress.ts
-//
-// Shared step-progress derivation for a pile's actual-entry list — used by
-// both PileProgressCard and PileSequenceRow so their status/progress reading
-// stays identical.
 
 import { colors } from '@theme/theme';
 import { ActualEntry } from '@app-types/plan';

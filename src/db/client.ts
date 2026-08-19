@@ -38,6 +38,7 @@ export async function initDb() {
       DROP TABLE IF EXISTS app_config;
       DROP TABLE IF EXISTS pil_sync_cursor;
       DROP TABLE IF EXISTS pil_sync_queue;
+      DROP TABLE IF EXISTS pil_pile_measurements;
       DROP TABLE IF EXISTS pil_machine_events;
       DROP TABLE IF EXISTS pil_actual_steps;
       DROP TABLE IF EXISTS pil_plan_steps;
@@ -49,6 +50,7 @@ export async function initDb() {
       DROP TABLE IF EXISTS pil_steps;
       DROP TABLE IF EXISTS pil_site_coordinators;
       DROP TABLE IF EXISTS pil_site_personnel;
+      DROP TABLE IF EXISTS pil_contractors;
       DROP TABLE IF EXISTS pil_machines;
       DROP TABLE IF EXISTS pil_non_working_windows;
       DROP TABLE IF EXISTS pil_shift_types;
@@ -166,6 +168,23 @@ export async function initDb() {
       updated_at  INTEGER,
       deleted_at  INTEGER
     );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_contractors (
+      id          TEXT PRIMARY KEY NOT NULL,
+      site_id     TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      is_active   INTEGER NOT NULL DEFAULT 1,
+      synced_at   INTEGER NOT NULL,
+      updated_at  INTEGER,
+      deleted_at  INTEGER
+    );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_contractors_site
+      ON pil_contractors (site_id);
   `);
 
   await sqlite.execAsync(`
@@ -416,6 +435,32 @@ export async function initDb() {
   await sqlite.execAsync(`
     CREATE INDEX IF NOT EXISTS idx_machine_events_checklist
       ON pil_machine_events (checklist_id);
+  `);
+
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_pile_measurements (
+      id                  TEXT PRIMARY KEY NOT NULL,
+      pile_id             TEXT NOT NULL,
+      egl_m               REAL,
+      pile_contractor_id  TEXT,
+      cage_contractor_id  TEXT,
+      pile_length_m       REAL,
+      cage_weight_kg      REAL,
+      ctl_m               REAL,
+      col_m               REAL,
+      bore_depth_m        REAL,
+      hook_length_m       REAL,
+      fl_m                REAL,
+      planned_qty_m3      REAL,
+      actual_qty_m3       REAL,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pile_measurements_pile_unique
+      ON pil_pile_measurements (pile_id);
   `);
 
   await sqlite.execAsync(`
