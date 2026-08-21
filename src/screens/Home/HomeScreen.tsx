@@ -452,7 +452,7 @@ const styles = StyleSheet.create({
   editCircle: {
     width: 36,
     height: 36,
-    borderRadius: radius.lg,
+    borderRadius: radius.sm,
     backgroundColor: colors.accent,
     justifyContent: 'center',
     alignItems: 'center',
@@ -493,7 +493,7 @@ const styles = StyleSheet.create({
 
   primaryBtn: {
     backgroundColor: colors.textPrimary,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     alignItems: 'center',

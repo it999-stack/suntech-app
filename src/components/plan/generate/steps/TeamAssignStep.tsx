@@ -1,16 +1,18 @@
 // src/components/plan/generate/steps/TeamAssignStep.tsx
 //
 // Shift Incharge, Engineers, Supervisors, and Machine Operators — all
-// assigned per shift, in one open card (no per-section collapse). Merges
-// the former separate TeamAssignStep + ShiftInchargeStep into one screen: a
-// Shift 1 / Shift 2 tab switch (local UI state, not persisted) selects
-// which shift's roster is being edited. Supervisors are rig-only now — no
+// assigned for a single shift, in one open card (no per-section collapse).
+// Merges the former separate TeamAssignStep + ShiftInchargeStep into one
+// screen. GeneratePlanScreen mounts this once per shift (`team` then
+// `teamNight` in STEP_ORDER, picked via the `shiftSlot` prop) so Continue
+// on the Day shift always lands the user on a dedicated Night shift screen
+// rather than silently skipping past it. Supervisors are rig-only now — no
 // crane pairing, no "1 rig max" cap; one supervisor may cover any number
 // of rigs.
 //
 // Exposes an imperative handle (focusFirstMissing) so GeneratePlanScreen's
-// Continue button can, instead of just staying disabled, jump the user to
-// whichever shift/row is still unfilled.
+// Continue button can, instead of just staying disabled, scroll the user to
+// whichever row of this shift's roster is still unfilled.
 
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
@@ -42,9 +44,8 @@ export interface SimpleShift {
 
 export interface TeamAssignStepHandle {
   /**
-   * True if both shifts are fully staffed. If not, switches to the first
-   * incomplete shift's tab, scrolls to and highlights its first missing
-   * row, and returns false.
+   * True if this shift is fully staffed. If not, scrolls to and highlights
+   * its first missing row, and returns false.
    */
   focusFirstMissing: () => boolean;
 }
@@ -52,6 +53,8 @@ export interface TeamAssignStepHandle {
 interface TeamAssignStepProps {
   draft: PlanDraft;
   onUpdate: (patch: Partial<PlanDraft>) => void;
+  /** Which shift's roster this instance edits — GeneratePlanScreen mounts one per shift. */
+  shiftSlot: 1 | 2;
   activeRigs: SimpleMachine[];
   activeCranes: SimpleMachine[];
   personnel: SimplePersonnel[];
@@ -107,6 +110,7 @@ function fieldKey(role: 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR', machineI
 const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(function TeamAssignStep({
   draft,
   onUpdate,
+  shiftSlot,
   activeRigs,
   activeCranes,
   personnel,
@@ -114,7 +118,6 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
   scrollViewRef,
   scrollYRef,
 }, ref) {
-  const [activeTab, setActiveTab] = useState<1 | 2>(1);
   const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
 
@@ -124,8 +127,8 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
   const shift2 = shifts[1];
   const tab1Label = shift1 ? `${shift1.name}` : 'Shift 1 (Day)';
   const tab2Label = shift2 ? `${shift2.name}` : 'Shift 2 (Night)';
-  const currentShiftLabel = activeTab === 1 ? tab1Label : tab2Label;
-  const otherShiftLabel = activeTab === 1 ? tab2Label : tab1Label;
+  const currentShiftLabel = shiftSlot === 1 ? tab1Label : tab2Label;
+  const otherShiftLabel = shiftSlot === 1 ? tab2Label : tab1Label;
 
   const machineNoFor = useMemo(() => {
     const map = new Map([...activeRigs, ...activeCranes].map((m) => [m.id, m.machineNo]));
@@ -154,10 +157,10 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
     [personnel],
   );
 
-  const team = activeTab === 1 ? draft.checklistPersonnel.shift1 : draft.checklistPersonnel.shift2;
+  const team = shiftSlot === 1 ? draft.checklistPersonnel.shift1 : draft.checklistPersonnel.shift2;
   // The shift NOT currently being edited — used to disable (not hide) anyone already
   // assigned to the same role there, since nobody can work both shifts.
-  const otherTeam = activeTab === 1 ? draft.checklistPersonnel.shift2 : draft.checklistPersonnel.shift1;
+  const otherTeam = shiftSlot === 1 ? draft.checklistPersonnel.shift2 : draft.checklistPersonnel.shift1;
 
   // Clear the highlight the moment the field it points at gets filled in.
   useEffect(() => {
@@ -175,31 +178,23 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
     focusFirstMissing() {
       const rigIds = activeRigs.map((r) => r.id);
       const craneIds = activeCranes.map((c) => c.id);
-      const missingShift1 = findFirstMissingTeamField(draft.checklistPersonnel.shift1, rigIds, craneIds);
-      const missingShift2 = findFirstMissingTeamField(draft.checklistPersonnel.shift2, rigIds, craneIds);
+      const missing = findFirstMissingTeamField(team, rigIds, craneIds);
 
-      const target = missingShift1
-        ? { tab: 1 as const, field: missingShift1 }
-        : missingShift2
-          ? { tab: 2 as const, field: missingShift2 }
-          : null;
-
-      if (!target) {
+      if (!missing) {
         setHighlightKey(null);
         return true;
       }
 
-      const key = fieldKey(target.field.role, target.field.machineId);
-      setActiveTab(target.tab);
+      const key = fieldKey(missing.role, missing.machineId);
       setHighlightKey(key);
       requestAnimationFrame(() => scrollToField(key));
       return false;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [activeRigs, activeCranes, draft.checklistPersonnel, scrollToField]);
+  }), [activeRigs, activeCranes, team, scrollToField]);
 
   function updateTeam(patch: Partial<ShiftTeamAssignment>) {
-    const key = activeTab === 1 ? 'shift1' : 'shift2';
+    const key = shiftSlot === 1 ? 'shift1' : 'shift2';
     onUpdate({
       checklistPersonnel: { ...draft.checklistPersonnel, [key]: { ...team, ...patch } },
     });
@@ -312,17 +307,10 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
 
   return (
     <>
-      <View style={styles.tabRow}>
-        <Pressable style={[styles.tab, activeTab === 1 && styles.tabActive]} onPress={() => setActiveTab(1)}>
-          <Text style={[styles.tabText, activeTab === 1 && styles.tabTextActive]} numberOfLines={1}>
-            {tab1Label}
-          </Text>
-        </Pressable>
-        <Pressable style={[styles.tab, activeTab === 2 && styles.tabActive]} onPress={() => setActiveTab(2)}>
-          <Text style={[styles.tabText, activeTab === 2 && styles.tabTextActive]} numberOfLines={1}>
-            {tab2Label}
-          </Text>
-        </Pressable>
+      <View style={styles.shiftHeadingRow}>
+        <Text style={styles.shiftHeadingText} numberOfLines={1}>
+          {currentShiftLabel}
+        </Text>
       </View>
 
       <GlassCard style={styles.cardOuter}>
@@ -440,28 +428,13 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
 export default TeamAssignStep;
 
 const styles = StyleSheet.create({
-  tabRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
+  shiftHeadingRow: {
     marginBottom: spacing.md,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    backgroundColor: 'rgba(28,28,46,0.04)',
-  },
-  tabActive: {
-    backgroundColor: colors.accent,
-  },
-  tabText: {
+  shiftHeadingText: {
     ...typography.body,
     fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  tabTextActive: {
-    color: colors.textInverse,
+    color: colors.textPrimary,
   },
   cardOuter: { marginBottom: spacing.sm },
   group: { marginBottom: spacing.sm },

@@ -11,17 +11,18 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
-import MachineSelect from '@components/plan/generate/steps/pile-assign/MachineSelect';
-import type { SimpleMachine } from '@components/plan/generate/steps/pile-assign/types';
+import TilePicker, { type TileSection } from '@components/shared/TilePicker';
+import type { TileGroupOption } from '@components/shared/TileGroup';
 import type { LogMachineEventInput } from '@state/PlanContext';
 import type { PilMachineEvent } from '@db/schema';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { toLocalIsoString } from '@utils/formatTime';
+import { TRACK_META, type MachineKind } from '@utils/helpers';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
 import NotesField from './machineEvents/NotesField';
 import SaveEventButton from './machineEvents/SaveEventButton';
 import { useSaveMachineEvent } from './machineEvents/useSaveMachineEvent';
-import { trackToMachineSelectKind } from './machineEvents/eventLabels';
+import { isEligibleReplacementType } from './machineEvents/eventLabels';
 import type { MachineEventMachine, Track } from './machineEvents/types';
 
 interface Props {
@@ -56,9 +57,27 @@ export default function MachineReplaceModal({
   const [notes, setNotes] = useState('');
   const [occurredAt, setOccurredAt] = useState(() => new Date());
 
-  const replacementOptions: SimpleMachine[] = machines
-    .filter((m) => m.type === defaultTrack && m.status === 'ACTIVE' && m.id !== currentMachineId)
-    .map((m) => ({ id: m.id, machineNo: m.machineNo }));
+  const toOption = (m: MachineEventMachine): TileGroupOption => {
+    const meta = TRACK_META[m.type as MachineKind];
+    return { id: m.id, label: m.machineNo, icon: meta.icon, color: meta.color, soft: meta.soft };
+  };
+
+  const eligibleMachines = machines.filter(
+    (m) => isEligibleReplacementType(m.type, defaultTrack) && m.status === 'ACTIVE' && m.id !== currentMachineId,
+  );
+
+  // Split by the replacement's own type, not defaultTrack — a CRANE-track
+  // step's eligible list can include RIG machines (isEligibleReplacementType),
+  // so they get their own "Rigs" section instead of sitting under "Cranes".
+  const replacementSections: TileSection[] = [
+    { key: 'RIG', label: 'Rigs', options: eligibleMachines.filter((m) => m.type === 'RIG').map(toOption) },
+    { key: 'CRANE', label: 'Cranes', options: eligibleMachines.filter((m) => m.type === 'CRANE').map(toOption) },
+    {
+      key: 'COMPRESSOR',
+      label: 'Compressors',
+      options: eligibleMachines.filter((m) => m.type === 'COMPRESSOR').map(toOption),
+    },
+  ];
 
   const isValid = !!currentMachineId && !!replacementId;
 
@@ -94,10 +113,9 @@ export default function MachineReplaceModal({
 
         <View style={styles.fieldsWrap}>
           <View style={styles.machineSelectWrap}>
-            <MachineSelect
-              label="Replacement"
-              kind={trackToMachineSelectKind(defaultTrack)}
-              options={replacementOptions}
+            <TilePicker
+              label=""
+              sections={replacementSections}
               valueId={replacementId}
               onSelect={setReplacementId}
             />

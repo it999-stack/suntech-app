@@ -43,7 +43,7 @@ export default function Switch({ value, onValueChange, disabled }: SwitchProps) 
   // Off = dull grey track, On = white track.
   const trackBackgroundColor = anim.interpolate({
     inputRange: [0, 1],
-    outputRange: [colors.machine.idle, colors.white],
+    outputRange: [colors.machines.idle, colors.white],
   });
 
   return (
@@ -95,6 +95,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   thumbDisabled: {
-    backgroundColor: colors.machine.idle,
+    backgroundColor: colors.machines.idle,
   },
 });

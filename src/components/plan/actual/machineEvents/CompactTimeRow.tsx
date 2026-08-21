@@ -1,15 +1,9 @@
 // src/components/plan/actual/machineEvents/CompactTimeRow.tsx
-//
-// Single tappable "Start time"/"End time" row used by MachineIdleModal and
-// MachineDownModal — opens TimerSelectMenu (time + date together, one tap)
-// rather than the two separate time/date fields OccurredAtPicker used. White
-// card + border + a trailing pencil icon signal it's an editable field, not
-// a plain label (matching TimerSelectMenu's own header edit affordance).
 
 import React, { useState } from 'react';
 import { View, Pressable, Text, StyleSheet } from 'react-native';
 import { PencilLine } from 'lucide-react-native';
-import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { formatTimeWithDay, toLocalIsoString } from '@utils/formatTime';
 

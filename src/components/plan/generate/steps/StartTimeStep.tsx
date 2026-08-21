@@ -2,8 +2,8 @@
 //
 // Step 2 — the user picks a plan start time.
 // Two blocks now: a compact pressable "Start" card (date + time, opens
-// TimerSelectMenu), and below it a vertical timeline card that visualizes
-// the fixed 24-hour span down to the derived end.
+// NativeTimerSelectMenu), and below it a vertical timeline card that
+// visualizes the fixed 24-hour span down to the derived end.
 
 import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -11,7 +11,7 @@ import { Calendar, Pencil, Clock, Briefcase, HardHat } from 'lucide-react-native
 import GlassCard from '@components/shared/GlassCard';
 import AppModal from '@components/shared/AppModal';
 import PersonnelPickerList, { type SimplePersonnel } from '@components/shared/PersonnelPickerList';
-import TimerSelectMenu from '@/components/shared/TimerSelectMenu';
+import TimerSelectMenu from '@/components/shared/NativeTimerSelectMenu';
 import { TimelineStopLog } from '@/components/shared/timeline/MachineStopTimeline';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { type PlanDraft, planEndTime } from '@/types/plan';

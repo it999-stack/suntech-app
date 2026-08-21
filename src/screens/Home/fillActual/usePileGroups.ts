@@ -26,6 +26,38 @@ function isoToMinutes(iso: string | null | undefined): number | undefined {
   }
 }
 
+/** Distinct machines that have worked one track's steps on this pile, in
+ * the order first assigned — the planned machine, plus any mid-day
+ * replacement(s). Historical steps (carried over from a prior checklist)
+ * carry no machine info, so they're skipped. */
+function machinesWorkedForTrack(
+  steps: ActualEntry[],
+  track: ActualEntry['track'],
+): { id: string; no: string }[] {
+  const seen = new Set<string>();
+  const result: { id: string; no: string }[] = [];
+  for (const s of steps) {
+    if (s.isHistorical || s.track !== track || !s.assignedMachineId || !s.assignedMachineNo) continue;
+    if (seen.has(s.assignedMachineId)) continue;
+    seen.add(s.assignedMachineId);
+    result.push({ id: s.assignedMachineId, no: s.assignedMachineNo });
+  }
+  return result;
+}
+
+/** The machine currently responsible for one track's work on this pile —
+ * the earliest not-done step's assigned machine, or the last step's if the
+ * whole track is done. Always the most recent replacement, if any. Mirrors
+ * PileStepsModal.tsx's local getCurrentMachineIdByTrack. */
+function currentMachineForTrack(steps: ActualEntry[], track: ActualEntry['track']): string | undefined {
+  const trackSteps = steps
+    .filter((s) => !s.isHistorical && s.track === track)
+    .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+  if (!trackSteps.length) return undefined;
+  const notDone = trackSteps.find((s) => s.actualEnd === undefined);
+  return (notDone ?? trackSteps[trackSteps.length - 1]).assignedMachineId;
+}
+
 export function usePileGroups(args: {
   checklistPiles: PilingChecklistPile[];
   planSteps: PlanStepWithMeta[];
@@ -103,6 +135,7 @@ export function usePileGroups(args: {
           pileCode: pile?.pileIdCode ?? cp.pileId,
           stepName: ps.stepName,
           track: ps.track as 'RIG' | 'CRANE' | 'COMPRESSOR',
+          businessTrack: (ps.businessTrack || ps.track) as 'RIG' | 'CRANE' | 'COMPRESSOR',
           sequenceOrder: ps.sequenceOrder,
           plannedStart: isoToMinutes(stepWorkStart(ps)) ?? 0,
           // Preserve undefined (rather than fabricating midnight) when this
@@ -167,14 +200,21 @@ export function usePileGroups(args: {
           }
         : null;
 
+      const rigsWorked = machinesWorkedForTrack(steps, 'RIG');
+      const cranesWorked = machinesWorkedForTrack(steps, 'CRANE');
+
       return {
         checklistPileId: cp.id,
         pileId: cp.pileId,
         pileCode: pile?.pileIdCode ?? cp.pileId,
-        rig: machineMap.get(cp.rigId) ?? cp.rigId,
-        crane: cp.craneId ? (machineMap.get(cp.craneId) ?? cp.craneId) : undefined,
-        rigId: cp.rigId,
-        craneId: cp.craneId ?? undefined,
+        rigs: rigsWorked.length ? rigsWorked.map((m) => m.no) : [machineMap.get(cp.rigId) ?? cp.rigId],
+        cranes: cranesWorked.length
+          ? cranesWorked.map((m) => m.no)
+          : cp.craneId
+            ? [machineMap.get(cp.craneId) ?? cp.craneId]
+            : [],
+        rigId: currentMachineForTrack(steps, 'RIG') ?? cp.rigId,
+        craneId: currentMachineForTrack(steps, 'CRANE') ?? (cp.craneId ?? undefined),
         steps,
         hasBreakdownWarning,
         isBlockedByIdle,

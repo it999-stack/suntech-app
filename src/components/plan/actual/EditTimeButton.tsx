@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 import { PencilLine } from 'lucide-react-native';
-import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import ConfirmDialog from '@components/shared/ConfirmDialog';
 import {
   formatMinutes12,
@@ -66,6 +66,9 @@ interface Props {
    * today only if never provided.
    */
   anchorIso?: string;
+  /** When set, tapping the pencil shows this toast instead of opening the
+   * time picker — e.g. the step's assigned machine is reported down. */
+  blocked?: { title: string; message: string };
 }
 
 export default function EditTimeButton({
@@ -77,6 +80,7 @@ export default function EditTimeButton({
   maxBoundIso,
   onConfirm,
   anchorIso,
+  blocked,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -132,7 +136,13 @@ export default function EditTimeButton({
       <Pressable
         style={styles.btn}
         disabled={saving}
-        onPress={() => setPickerOpen(true)}
+        onPress={() => {
+          if (blocked) {
+            notify.error(blocked.message, { title: blocked.title });
+            return;
+          }
+          setPickerOpen(true);
+        }}
         hitSlop={8}
         accessibilityLabel={`Edit ${label}`}
       >

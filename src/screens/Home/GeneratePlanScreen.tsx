@@ -13,8 +13,10 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import NextStepFab from '@components/plan/generate/NextStepFab';
 import ReorderPilesOverlay from '@components/plan/generate/preview/ReorderPilesOverlay';
 
 import { colors, spacing, radius, typography, shadow } from '@/theme/theme';
@@ -76,6 +78,12 @@ export default function GeneratePlanScreen() {
   useEffect(() => {
     if (siteId) loadChecklist(siteId, targetDate);
   }, [siteId, targetDate, loadChecklist]);
+
+  // planError used to render inline as red screen text; now surfaced as a
+  // toast instead, same as every other failure path in this screen.
+  useEffect(() => {
+    if (planError) notify.error(planError);
+  }, [planError]);
 
   const { piles, locations, steps, rigs, cranes, personnel, shifts, roleDefaults, dataLoading } =
     useGeneratePlanData(siteId);
@@ -186,6 +194,14 @@ export default function GeneratePlanScreen() {
     [locationPiles, completedPileIds],
   );
 
+  // PileAssignStep shows every location pile (including prior-day-completed
+  // ones) for full area visibility — completed rows render faded/non-selectable
+  // there. Every other consumer keeps assignablePiles.
+  const pilesWithCompletion = useMemo(
+    () => locationPiles.map((p) => ({ ...p, completed: completedPileIds.has(p.id) })),
+    [locationPiles, completedPileIds],
+  );
+
   const { editSeeding } = useEditModeSeed({
     isEditMode, dataLoading, checklistLoading, checklist, checklistPiles, piles, steps,
     setDraft, setStep,
@@ -211,7 +227,7 @@ export default function GeneratePlanScreen() {
   const { scrollViewRef, scrollYRef, onScroll, scrollEventThrottle } = useTrackedScrollView();
 
   function goNext() {
-    if (step === 'team') {
+    if (step === 'team' || step === 'teamNight') {
       const teamComplete = teamStepRef.current ? teamStepRef.current.focusFirstMissing() : canContinue;
       if (!teamComplete) return;
     }
@@ -268,10 +284,11 @@ export default function GeneratePlanScreen() {
       }
       case 'team': {
         if ([...draft.activeRigIds, ...draft.activeCraneIds].length === 0) return false;
-        return (
-          isShiftTeamComplete(draft.checklistPersonnel.shift1, draft.activeRigIds, draft.activeCraneIds) &&
-          isShiftTeamComplete(draft.checklistPersonnel.shift2, draft.activeRigIds, draft.activeCraneIds)
-        );
+        return isShiftTeamComplete(draft.checklistPersonnel.shift1, draft.activeRigIds, draft.activeCraneIds);
+      }
+      case 'teamNight': {
+        if ([...draft.activeRigIds, ...draft.activeCraneIds].length === 0) return false;
+        return isShiftTeamComplete(draft.checklistPersonnel.shift2, draft.activeRigIds, draft.activeCraneIds);
       }
       case 'piles':
         // Crane is optional — a rig can perform any CRANE-track step, never
@@ -400,10 +417,14 @@ export default function GeneratePlanScreen() {
           onClose={() => navigation.goBack()}
           onBack={goToPrevStep}
           backDisabled={STEP_ORDER.indexOf(step) === 0}
-          onNext={goNext}
-          nextDisabled={(step === 'team' || step === 'resume') ? isGenerating : (!canContinue || isGenerating)}
         />
 
+        {/* key={step} remounts this wrapper on every step change so FadeIn replays each
+            time — a lightweight, UI-thread-only crossfade (no exiting side, see discussion)
+            that also gives the screen a real paint boundary between steps, same idea as
+            MainTabNavigator's `animation: 'fade'` but implemented by hand since these steps
+            are conditional JSX, not separate navigator routes. */}
+        <Animated.View key={step} entering={FadeIn.duration(180)} style={styles.flex}>
         {/* Piles and Resume steps own their own FlatList — must NOT be inside a ScrollView */}
         {step === 'piles' || step === 'resume' ? (
           <View style={styles.pilesStepContainer}>
@@ -411,7 +432,7 @@ export default function GeneratePlanScreen() {
               <PileAssignStep
                 draft={draft}
                 onUpdate={updateDraft}
-                piles={assignablePiles}
+                piles={pilesWithCompletion}
                 locations={selectedLocations.map((l) => ({ id: l.id, name: l.name }))}
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
@@ -427,11 +448,8 @@ export default function GeneratePlanScreen() {
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
                 effectiveDayStart={effectiveDayStart}
-                onContinue={goNext}
-                continueDisabled={isGenerating}
               />
             )}
-            {planError ? <Text style={styles.errorText}>{planError}</Text> : null}
           </View>
         ) : (
           <ScrollView
@@ -462,11 +480,12 @@ export default function GeneratePlanScreen() {
               />
             )}
 
-            {step === 'team' && (
+            {(step === 'team' || step === 'teamNight') && (
               <TeamAssignStep
                 ref={teamStepRef}
                 draft={draft}
                 onUpdate={updateDraft}
+                shiftSlot={step === 'team' ? 1 : 2}
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
                 personnel={simplePersonnel}
@@ -516,35 +535,34 @@ export default function GeneratePlanScreen() {
             {step === 'preview' && orphanedTeamMachinesMessage ? (
               <Text style={styles.errorText}>{orphanedTeamMachinesMessage}</Text>
             ) : null}
-
-            {planError ? (
-              <Text style={styles.errorText}>{planError}</Text>
-            ) : null}
           </ScrollView>
         )}
+        </Animated.View>
 
-        {step !== 'piles' && step !== 'resume' && (
+        {/* Every step but Preview: a floating next-step chevron instead of a
+            full-width "Continue" bar — Preview's own button below is a real
+            submit action (Generate Plan / Save Changes), not just "next". */}
+        {step !== 'piles' && step !== 'preview' && (
+          <NextStepFab
+            onPress={goNext}
+            disabled={(step === 'team' || step === 'teamNight' || step === 'resume') ? isGenerating : (!canContinue || isGenerating)}
+          />
+        )}
+
+        {step === 'preview' && (
           <View style={styles.footer}>
             <Pressable
-              disabled={step === 'team' ? isGenerating : (!canContinue || isGenerating || (step === 'preview' && previewRecomputing))}
+              disabled={!canContinue || isGenerating || previewRecomputing}
               onPress={goNext}
               style={[
                 styles.continueBtn,
-                (step === 'team' ? isGenerating : (!canContinue || isGenerating || (step === 'preview' && previewRecomputing))) && styles.continueBtnDisabled,
+                (!canContinue || isGenerating || previewRecomputing) && styles.continueBtnDisabled,
               ]}
             >
-              {isGenerating && step === 'preview' ? (
-                <ActivityIndicator color={colors.white} />
-              ) : step === 'preview' && previewRecomputing ? (
+              {(isGenerating && !isEditMode) || previewRecomputing ? (
                 <ActivityIndicator color={colors.white} />
               ) : (
-                <Text style={styles.continueText}>
-                  {step === 'preview' && isEditMode
-                    ? 'Save Changes'
-                    : step === 'preview'
-                    ? 'Generate Plan'
-                    : 'Continue'}
-                </Text>
+                <Text style={styles.continueText}>{isEditMode ? 'Save Changes' : 'Generate Plan'}</Text>
               )}
             </Pressable>
           </View>
@@ -595,7 +613,7 @@ const styles = StyleSheet.create({
   },
   continueBtn: {
     backgroundColor: colors.accent,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     paddingVertical: spacing.md,
     alignItems: 'center',
     ...shadow.soft,
@@ -612,6 +630,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
+    paddingTop: spacing.xs,
   },
 });

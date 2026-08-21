@@ -6,7 +6,7 @@ import {
   CheckCircle2,
   Circle,
   ArrowRight,
-  MoreHorizontal,
+  ArrowLeftRight,
   AlertTriangle,
   MessageSquarePlus,
   Coffee,
@@ -37,12 +37,7 @@ import {
   durationMinutes,
 } from '@utils/formatTime';
 import { hasMachineConflict, hasPileStepConflict, type MachineFloorIndex } from '@utils/machineFloor';
-
-function trackColors(track: ActualEntry['track']): { bg: string; fg: string } {
-  if (track === 'RIG') return { bg: colors.accentSoft, fg: colors.accent };
-  if (track === 'CRANE') return { bg: 'rgba(255,149,0,0.12)', fg: colors.warning };
-  return { bg: colors.machines.compressor.soft, fg: colors.machines.compressor.color };
-}
+import { getTrackBadgeColors } from '@utils/helpers';
 
 /** Current time-of-day as minutes-since-midnight. */
 function nowMinutes(): number {
@@ -50,15 +45,23 @@ function nowMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-/** Current assigned machine per track, derived from this pile's steps —
- * the not-done step with the earliest sequence order per track (or, if every
- * step of that track is done, the last one), since that's "what's actually
- * assigned right now" for a breakdown report. */
+/** Current assigned machine per *business* track, derived from this pile's
+ * steps — the not-done step with the earliest sequence order per business
+ * track (or, if every step of that track is done, the last one), since
+ * that's "what's actually assigned right now" for a breakdown report.
+ * Grouped by businessTrack (the step definition's fixed nominal track), not
+ * the live `track` (whichever machine currently executes it) — otherwise a
+ * step's group key would itself change identity the moment it's replaced,
+ * making the resulting map impossible to look back up by its original
+ * track (see isEligibleReplacementType in eventLabels.ts for why this
+ * matters for Replace Machine specifically). */
 function getCurrentMachineIdByTrack(steps: ActualEntry[]): Partial<Record<ActualEntry['track'], string>> {
   const result: Partial<Record<ActualEntry['track'], string>> = {};
   const tracks: ActualEntry['track'][] = ['RIG', 'CRANE', 'COMPRESSOR'];
   for (const track of tracks) {
-    const trackSteps = steps.filter((s) => s.track === track).sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+    const trackSteps = steps
+      .filter((s) => (s.businessTrack ?? s.track) === track)
+      .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
     if (!trackSteps.length) continue;
     const notDone = trackSteps.find((s) => s.actualEnd === undefined);
     const chosen = notDone ?? trackSteps[trackSteps.length - 1];
@@ -217,13 +220,27 @@ export default function PileStepsModal({
     !!currentStep.assignedMachineId &&
     machines.find((m) => m.id === currentStep.assignedMachineId)?.status === 'BREAKDOWN';
 
+  // Blocks the fill/edit time controls on the current step (see
+  // StepTimeControl/EditTimeButton's `blocked` prop) without locking the
+  // whole card — Replace Machine and the warning banner above must stay
+  // reachable so the user has a way to resolve this.
+  const breakdownBlockedNotice = currentStepHasBreakdown
+    ? {
+        title: `${machines.find((m) => m.id === currentStep!.assignedMachineId)?.machineNo ?? 'Machine'} is down`,
+        message: 'Replace the machine or mark it resumed to continue.',
+      }
+    : undefined;
+
   const currentStepBlockedByIdle =
     group.isBlockedByIdle &&
     !!currentStep &&
     !!currentStep.assignedMachineId &&
     machines.find((m) => m.id === currentStep.assignedMachineId)?.status === 'IDLE';
 
-  const subtitle = [group.rig && `Rig ${group.rig}`, group.crane && `Crane ${group.crane}`]
+  const subtitle = [
+    group.rigs.length > 0 && `Rig ${group.rigs.join(', ')}`,
+    group.cranes.length > 0 && `Crane ${group.cranes.join(', ')}`,
+  ]
     .filter(Boolean)
     .join(' · ');
 
@@ -243,7 +260,7 @@ export default function PileStepsModal({
               kind: 'down',
               stepId: currentStep.stepId,
               stepName: currentStep.stepName,
-              track: currentStep.track,
+              track: currentStep.businessTrack ?? currentStep.track,
             })
           }
         >
@@ -262,7 +279,7 @@ export default function PileStepsModal({
               kind: 'idle',
               stepId: currentStep.stepId,
               stepName: currentStep.stepName,
-              track: currentStep.track,
+              track: currentStep.businessTrack ?? currentStep.track,
               initialEventType: 'IDLE_END',
             })
           }
@@ -307,13 +324,13 @@ export default function PileStepsModal({
                 <View
                   style={[
                     modalStyles.trackBadge,
-                    { backgroundColor: trackColors(step.track).bg },
+                    { backgroundColor: getTrackBadgeColors(step.track).bg },
                   ]}
                 >
                   <Text
                     style={[
                       modalStyles.trackTag,
-                      { color: trackColors(step.track).fg },
+                      { color: getTrackBadgeColors(step.track).fg },
                     ]}
                   >
                     {`${step.track}${step.assignedMachineNo ? ` (${step.assignedMachineNo})` : ''}`}
@@ -342,11 +359,11 @@ export default function PileStepsModal({
                         kind: 'replace',
                         stepId: step.stepId,
                         stepName: step.stepName,
-                        track: step.track,
+                        track: step.businessTrack ?? step.track,
                       })
                     }
                   >
-                    <MoreHorizontal size={18} color={colors.textSecondary} />
+                    <ArrowLeftRight size={18} color={colors.textSecondary} />
                   </Pressable>
                 </View>
               )}
@@ -465,6 +482,7 @@ export default function PileStepsModal({
                     pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                     onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
                     anchorIso={step.startAnchorIso}
+                    blocked={breakdownBlockedNotice}
                   />
                   <DeleteTimeButton
                     label="start time"
@@ -559,6 +577,7 @@ export default function PileStepsModal({
                 pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                 minBoundIso={prevStep?.actualEndIso}
                 anchorIso={step.startAnchorIso}
+                blocked={breakdownBlockedNotice}
               />
             )}
 
@@ -576,6 +595,7 @@ export default function PileStepsModal({
                 pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
                 minBoundIso={step.actualStartIso}
                 anchorIso={step.endAnchorIso}
+                blocked={breakdownBlockedNotice}
               />
             )}
 
@@ -855,8 +875,10 @@ const modalStyles = StyleSheet.create({
     gap: spacing.xs,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     paddingVertical: spacing.sm,
+    backgroundColor: colors.white,
+    ...shadow.soft,
   },
   editMeasurementsBtnText: {
     ...typography.body,

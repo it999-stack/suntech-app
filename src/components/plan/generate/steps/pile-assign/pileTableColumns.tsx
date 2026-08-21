@@ -3,7 +3,9 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { CircleCheck } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
+import Badge from '@components/shared/Badge';
 import MachineBadge from '@components/shared/MachineBadge';
 import type { IndexTableColumn } from '@components/shared/IndexTable';
 import type { EligiblePile, MachineKind } from './types';
@@ -37,6 +39,9 @@ export function buildColumns({
         const rigLabel = asgn?.rig ? machineLabel('rig', asgn.rig) : null;
         const craneLabel = asgn?.crane ? machineLabel('crane', asgn.crane) : null;
         if (!rigLabel) {
+          if (p.completed) {
+            return <Badge icon={CircleCheck} text="Completed" textColor={colors.success} bgColor={colors.successSoft} fontSize={12} />;
+          }
           return <View style={styles.pillEmpty}><Text style={styles.pillEmptyText}>Unassigned</Text></View>;
         }
         return (
@@ -57,6 +62,8 @@ export function buildColumns({
 const styles = StyleSheet.create({
   code: { ...typography.body, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   spec: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  completedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  completedText: { ...typography.caption, color: colors.success, fontWeight: '700' },
   pillRow: { flexDirection: 'column', gap: spacing.xs },
   pillEmpty: { borderWidth: 1, borderColor: 'rgba(28,28,46,0.15)', borderStyle: 'dashed', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 3, alignSelf: 'flex-start' },
   pillEmptyText: { ...typography.caption, color: colors.textSecondary },

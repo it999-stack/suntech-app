@@ -25,7 +25,7 @@ export default function EditConfirmModal({ visible, onClose, onConfirm, date, to
       onClose={handleClose}
       position="center"
       title="Save Changes?"
-      subtitle={`You are about to update the existing plan for ${isToday ? 'today' : date}.`}
+      subtitle={`You are about to update the existing plan.`}
     >
       <View style={styles.confirmBody}>
         <View style={styles.confirmIconWrap}>
@@ -98,7 +98,7 @@ const styles = StyleSheet.create({
   },
   cancelBtn: {
     flex: 1,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     borderWidth: 1.5,
     borderColor: 'rgba(28,28,46,0.12)',
     paddingVertical: spacing.md,
@@ -114,7 +114,7 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     flex: 1,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     backgroundColor: colors.accent,
     paddingVertical: spacing.md,
     alignItems: 'center',

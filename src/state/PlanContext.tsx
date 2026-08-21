@@ -68,14 +68,12 @@ export type PlanStatus = 'none' | 'planned' | 'in_progress' | 'completed';
 
 /** One pile entry submitted by the user in GeneratePlanScreen. */
 export type PileAssignmentInput = {
-  pileId: string;      // pilingPiles.id
+  pileId: string;
   pileCode: string;
-  dimensionId: string; // pilingDimensions.id - used for duration template lookup
-  rigId: string;       // pilingMachines.id (type=RIG)
-  craneId?: string;    // pilingMachines.id (type=CRANE) — optional, a rig can plan solo
+  dimensionId: string;
+  rigId: string;
+  craneId?: string;
   resumeWork?: ResumeWork;
-  /** Step ids whose CRANE-track step should run on the Rig instead for this pile —
-   * one-off per plan generation, chosen in the Preview step. */
   stepTrackOverrides?: string[];
 };
 
@@ -359,6 +357,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         const message =
           (err as any)?.response?.data?.detail ||
           (err instanceof Error ? err.message : 'Failed to generate plan');
+        console.error('generatePlan failed:', err);
         setError(message);
         throw err;
       } finally {
@@ -568,7 +567,8 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           if (currentStep) {
             await reassignMachineFromStep(
               checklistPileId,
-              input.track,
+              input.machineId,
+              currentStep.businessTrack ?? currentStep.track,
               currentStep.sequenceOrder,
               input.replacementId,
             );

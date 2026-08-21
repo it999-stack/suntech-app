@@ -12,7 +12,7 @@ import { Drill, Forklift } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { PlanDraft } from '@/types/plan';
-import { getMachineColor } from '@/utils/helpers';
+import { TRACK_META } from '@/utils/helpers';
 
 export interface SimpleMachine {
   id: string;
@@ -148,16 +148,16 @@ export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: Mac
       {/* Cranes */}
       <GlassCard innerStyle={styles.groupPad}>
         <View style={styles.groupHeader}>
-          <Forklift size={16} color={colors.machine.craneColors[0]} />
+          <Forklift size={16} color={TRACK_META.CRANE.color} />
           <Text style={styles.groupLabel}>Cranes</Text>
           <Text style={styles.groupCount}>{cranesActiveCount} active</Text>
         </View>
         {cranes.length === 0 ? (
           <Text style={styles.emptyText}>No cranes synced yet.</Text>
         ) : (
-          cranes.map((c, idx) => {
+          cranes.map((c) => {
             const active = draft.activeCraneIds.includes(c.id);
-            const craneColor = getMachineColor({ id: c.id, type: 'CRANE' }, idx);
+            const craneColor = TRACK_META.CRANE.color;
             return (
               <MachineRow
                 key={c.id}

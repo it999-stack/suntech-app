@@ -245,47 +245,52 @@ export default function PilesScreen() {
           />
         </View>
 
-        {/* Paginated grid */}
-        <FlatList
-          data={items}
-          keyExtractor={(item) => item.id}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrapper}
-          renderItem={({ item }) => (
-            <PileGridCard
-              code={item.pileIdCode}
-              dia={item.dia}
-              depth={item.depth}
-              area={item.area}
-              badge="none"
-              completed={statusForPile(item.id) === 'completed'}
-              onPress={() => setSelectedPile(item)}
-            />
-          )}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          ListHeaderComponent={error ? <Text style={styles.errorText}>⚠ {error}</Text> : null}
-          ListFooterComponent={
-            <View style={styles.pagerRow}>
-              {loading && <ActivityIndicator size="small" color={colors.accent} style={styles.pagerSpinner} />}
-              <Pager page={page} totalPages={totalPages} onPageChange={setPage} />
-            </View>
-          }
-          ListEmptyComponent={
-            !error ? (
-              <EmptyState
-                icon={totalPileCount === 0 ? 'download' : 'search'}
-                title={totalPileCount === 0 ? 'No piles synced' : 'No matches'}
-                message={
-                  totalPileCount === 0
-                    ? 'No piles synced yet. Pull data from the Profile tab.'
-                    : 'No piles match your search or filter.'
-                }
+        {/* Paginated grid — the list scrolls in its own bounded area so the
+            pager below stays pinned in view instead of scrolling out of
+            reach at the bottom of a long page (matches PileAssignStep /
+            AddPileModal's list+pinned-pager layout). */}
+        <View style={styles.listSection}>
+          <FlatList
+            style={styles.list}
+            data={items}
+            keyExtractor={(item) => item.id}
+            numColumns={2}
+            columnWrapperStyle={styles.columnWrapper}
+            renderItem={({ item }) => (
+              <PileGridCard
+                code={item.pileIdCode}
+                dia={item.dia}
+                depth={item.depth}
+                area={item.area}
+                badge="none"
+                completed={statusForPile(item.id) === 'completed'}
+                onPress={() => setSelectedPile(item)}
               />
-            ) : null
-          }
-        />
+            )}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            ListHeaderComponent={error ? <Text style={styles.errorText}>⚠ {error}</Text> : null}
+            ListEmptyComponent={
+              !error ? (
+                <EmptyState
+                  icon={totalPileCount === 0 ? 'download' : 'search'}
+                  title={totalPileCount === 0 ? 'No piles synced' : 'No matches'}
+                  message={
+                    totalPileCount === 0
+                      ? 'No piles synced yet. Pull data from the Profile tab.'
+                      : 'No piles match your search or filter.'
+                  }
+                />
+              ) : null
+            }
+          />
+
+          <View style={styles.pagerFooter}>
+            {loading && <ActivityIndicator size="small" color={colors.accent} style={styles.pagerSpinner} />}
+            <Pager page={page} totalPages={totalPages} onPageChange={setPage} />
+          </View>
+        </View>
 
         <PileStepsModal
           visible={!!selectedPile}
@@ -333,15 +338,21 @@ const styles = StyleSheet.create({
 
   columnWrapper: { gap: spacing.sm },
 
+  listSection: { flex: 1, minHeight: 0 },
+  list: { flex: 1 },
   listContent: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.md,
     gap: spacing.sm,
   },
 
-  pagerRow: {
-    marginTop: spacing.sm,
+  pagerFooter: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(28,28,46,0.08)',
     alignItems: 'center',
     gap: spacing.xs,
   },

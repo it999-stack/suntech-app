@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
   addBtn: {
     marginTop: spacing.md,
     backgroundColor: colors.accent,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     paddingVertical: spacing.sm + 2,
     alignItems: 'center',
   },

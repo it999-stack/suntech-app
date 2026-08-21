@@ -84,10 +84,13 @@ export type PlanStepWithMeta = PilePlanStep & {
   assignedMachineId: string | null;
   /** Machine number label (e.g. "R-01") — joined from piling_machines. */
   assignedMachineNo: string;
-  /** The step definition's own nominal track, distinct from `track` (the executing
-   * machine's type) once overridden. Only ever set on live wizard-preview rows
-   * (pilingPlannerService.ts) — undefined on persisted/synced rows, which have no
-   * separate override concept to preserve. */
+  /** The step definition's own nominal track (piling_steps.track), distinct from
+   * `track` (the currently assigned machine's type) once overridden by a runtime
+   * replacement or a generation-time stepTrackOverride. Fixed for the step's
+   * lifetime — use this, not `track`, for anything that must survive a machine
+   * swap (e.g. MachineReplaceModal's eligibility rule). Populated both on live
+   * wizard-preview rows (pilingPlannerService.ts) and on persisted/synced rows
+   * (getPlanStepsForChecklist above). */
   businessTrack?: string;
 };
 
@@ -143,6 +146,7 @@ export async function getPlanStepsForChecklist(
         updatedAt: r.updatedAt,
         stepName: r.stepName ?? '',
         track: r.assignedMachineType ?? r.track ?? '',
+        businessTrack: r.track ?? '',
         sequenceOrder: r.sequenceOrder ?? 0,
       });
     }
@@ -152,20 +156,25 @@ export async function getPlanStepsForChecklist(
 }
 
 /**
- * Reassign the machine for every step CURRENTLY running on a machine of type `track`
- * on this checklist-pile from `fromSequenceOrder` onward (inclusive) — the "applies to
- * this step onward" scope of a machine swap. Steps before fromSequenceOrder (already
- * done) are never touched, preserving their historical assignedMachineId.
+ * Reassign the machine for every step currently on `currentMachineId`, whose step
+ * definition's nominal track is `businessTrack`, from `fromSequenceOrder` onward
+ * (inclusive) — the "applies to this step onward" scope of a machine swap. Steps
+ * before fromSequenceOrder (already done) are never touched, preserving their
+ * historical assignedMachineId.
  *
- * Filters by the CURRENTLY ASSIGNED machine's type, not the step definition's nominal
- * track — a step overridden to run on the Rig (see stepTrackOverrides in the Preview
- * step) has assignedMachineId pointing at a rig even though its step definition is
- * nominally CRANE; filtering by the step definition would silently miss it during a
- * Rig breakdown/replacement, leaving it pointed at the broken machine forever.
+ * Both conditions matter together: matching on `currentMachineId` alone would also
+ * sweep along any *other* business track that machine happens to be covering on this
+ * same pile (e.g. a Rig doing its own Casing/Boring steps *and* temporarily covering
+ * a broken Crane's step) — replacing the borrowed crane work would then wrongly move
+ * the Rig's own steps too. Matching on `businessTrack` alone would miss the step
+ * being replaced the moment it's no longer on its nominal track's machine type (e.g.
+ * re-replacing a Crane-track step that's currently running on a Rig after an earlier
+ * swap) — see MachineReplaceModal.tsx / eventLabels.ts's isEligibleReplacementType.
  */
 export async function reassignMachineFromStep(
   checklistPileId: string,
-  track: string,
+  currentMachineId: string | null | undefined,
+  businessTrack: string,
   fromSequenceOrder: number,
   newMachineId: string,
 ): Promise<void> {
@@ -174,16 +183,21 @@ export async function reassignMachineFromStep(
     .select({
       id: pilePlanSteps.id,
       sequenceOrder: pilingSteps.sequenceOrder,
-      assignedMachineType: pilingMachines.type,
+      assignedMachineId: pilePlanSteps.assignedMachineId,
+      track: pilingSteps.track,
     })
     .from(pilePlanSteps)
     .leftJoin(pilingSteps, eq(pilePlanSteps.stepId, pilingSteps.id))
-    .leftJoin(pilingMachines, eq(pilePlanSteps.assignedMachineId, pilingMachines.id))
     .where(eq(pilePlanSteps.checklistPileId, checklistPileId))
     .all();
 
   const targetIds = rows
-    .filter((r) => r.assignedMachineType === track && (r.sequenceOrder ?? 0) >= fromSequenceOrder)
+    .filter(
+      (r) =>
+        r.assignedMachineId === currentMachineId &&
+        r.track === businessTrack &&
+        (r.sequenceOrder ?? 0) >= fromSequenceOrder,
+    )
     .map((r) => r.id);
 
   for (const id of targetIds) {

@@ -8,7 +8,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
-import { TRACK_META } from '@/utils/trackMeta';
+import { TRACK_META } from '@/utils/helpers';
 
 interface MachineBadgeProps {
   track: 'RIG' | 'CRANE' | 'COMPRESSOR';

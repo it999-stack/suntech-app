@@ -5,7 +5,7 @@ import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, LayoutAnimati
 import { Search, X } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import FilterMenuButton, { type FilterMenuOption } from '@components/shared/FilterMenuButton';
-import type { PileFilter } from './types';
+import { ALL_LOCATIONS_ID, type PileFilter } from './types';
 
 export interface LocationFilterOption { id: string; name: string; }
 
@@ -29,10 +29,12 @@ export default function PileListToolbar({
 }: PileListToolbarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
 
+  // "All" first — FilterMenuButton treats the first option as the reset
+  // value, tinting its trigger and clearing back to it from that same row.
   const filterOptions: FilterMenuOption<PileFilter>[] = [
-    { label: 'All', value: 'all', count: allCount },
-    { label: 'Pending', value: 'pending', count: pendingCount },
-    { label: 'Assigned', value: 'assigned', count: assignedCount },
+    { label: 'All', value: 'all', count: allCount, color: colors.textSecondary },
+    { label: 'Pending', value: 'pending', count: pendingCount, color: colors.warning },
+    { label: 'Assigned', value: 'assigned', count: assignedCount, color: colors.success },
   ];
 
   function toggleSearch(): void {
@@ -56,6 +58,11 @@ export default function PileListToolbar({
           />
         ) : locations.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
+            <Pill
+              label={`All (${allCount})`}
+              active={activeLocationId === ALL_LOCATIONS_ID}
+              onPress={() => onLocationChange(ALL_LOCATIONS_ID)}
+            />
             {locations.map((location) => (
               <Pill
                 key={location.id}

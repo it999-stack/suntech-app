@@ -163,7 +163,7 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
       visible={visible}
       onClose={onClose}
       position="center"
-      title="Select Date"
+      title="Select Time"
       subtitle="Choose which day's plan to generate"
     >
       <AppCalendar
@@ -206,7 +206,7 @@ const styles = StyleSheet.create({
   },
   confirmBtn: {
     backgroundColor: colors.accent,
-    borderRadius: radius.md,
+    borderRadius: radius.sm,
     paddingVertical: spacing.md,
     alignItems: 'center',
     marginTop: spacing.lg,

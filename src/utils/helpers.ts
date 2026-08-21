@@ -4,6 +4,7 @@
 import { colors } from '@/theme/theme';
 import * as Crypto from 'expo-crypto';
 import { addMinutes, toLocalIsoString } from '@utils/formatTime';
+import { Drill, Forklift, Wind, type LucideIcon } from 'lucide-react-native';
 
 // ---------------------------------------------------------------------------
 // Person helpers
@@ -21,28 +22,31 @@ export function initials(name: string): string {
 
 export type MachineKind = 'RIG' | 'CRANE' | 'COMPRESSOR';
 
-export interface MachineLike {
-  id: string;
-  type: MachineKind;
+// ---------------------------------------------------------------------------
+// Machine track metadata — the single source of icon/color/soft/label per
+// machine type (RIG/CRANE/COMPRESSOR), shared by every screen/component that
+// needs to render "which machine track" visually.
+// ---------------------------------------------------------------------------
+
+export interface TrackMeta {
+  label: string;
+  icon: LucideIcon;
+  color: string;
+  soft: string;
 }
 
-// ---------------------------------------------------------------------------
-// Machine color helpers
-// ---------------------------------------------------------------------------
+export const TRACK_META: Record<MachineKind, TrackMeta> = {
+  RIG: { label: 'RIG', icon: Drill, color: colors.machines.rig.color, soft: colors.machines.rig.soft },
+  CRANE: { label: 'CRANE', icon: Forklift, color: colors.machines.crane.color, soft: colors.machines.crane.soft },
+  COMPRESSOR: { label: 'COMPRESSOR', icon: Wind, color: colors.machines.compressor.color, soft: colors.machines.compressor.soft },
+};
 
-/**
- * Deterministic color for a machine based on its type and its position
- * *within that type's list* — so a rig's color stays stable even if rigs
- * and cranes are interleaved differently on some other screen.
- */
-export function getMachineColor(machine: MachineLike, indexWithinType: number): string {
-  const palette =
-    machine.type === 'RIG'
-      ? colors.machine.rigColors
-      : machine.type === 'CRANE'
-        ? colors.machine.craneColors
-        : colors.machine.compressorColors;
-  return palette[indexWithinType % palette.length];
+/** Step-track badge colors (RIG/CRANE keep their own accent/warning scheme,
+ * distinct from TRACK_META's rig/crane orange/blue). */
+export function getTrackBadgeColors(track: MachineKind): { bg: string; fg: string } {
+  if (track === 'RIG') return { bg: colors.accentSoft, fg: colors.accent };
+  if (track === 'CRANE') return { bg: 'rgba(255,149,0,0.12)', fg: colors.warning };
+  return { bg: TRACK_META.COMPRESSOR.soft, fg: TRACK_META.COMPRESSOR.color };
 }
 
 /** Converts a `#rrggbb` hex color to an `rgba(...)` string at the given opacity. */
@@ -53,18 +57,6 @@ export function hexToRgba(hex: string, alpha: number): string {
   const g = (value >> 8) & 255;
   const b = value & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-/** Maps each machine's id to its position among machines of the same type, in list order. */
-export function buildTypeIndexById<T extends MachineLike>(machines: T[]): Record<string, number> {
-  const counters: Record<string, number> = {};
-  const map: Record<string, number> = {};
-  machines.forEach((m) => {
-    const i = counters[m.type] ?? 0;
-    map[m.id] = i;
-    counters[m.type] = i + 1;
-  });
-  return map;
 }
 
 // generate uuid

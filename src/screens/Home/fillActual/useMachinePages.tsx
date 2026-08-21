@@ -5,8 +5,8 @@
 // (front-of-queue) vs "upcoming", and which machine badge is selected.
 
 import React, { useMemo, useState } from 'react';
-import { Drill, Forklift } from 'lucide-react-native';
 import { colors } from '@theme/theme';
+import { TRACK_META } from '@utils/helpers';
 import type { SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import type { PilingChecklistPile } from '@db/schema';
 import type { PileGroup } from '@app-types/plan';
@@ -30,19 +30,27 @@ export function useMachinePages(args: {
 } {
   const { checklistPiles, machineMap, pileGroups, frontPileIdByMachineId } = args;
 
-  // ── Machine badges shown at the top — every Rig/Crane used in today's plan ─
+  // ── Machine badges shown at the top — every Rig/Crane used in today's plan,
+  // unioned with whichever machine is currently responsible for each pile's
+  // track (PileGroup.rigId/craneId) so a mid-day replacement onto a machine
+  // that wasn't originally planned for any pile still gets its own tab ─
   const activeMachines = useMemo((): MachineBadge[] => {
     const byMachineNo = (a: string, b: string) =>
       (machineMap.get(a) ?? a).localeCompare(machineMap.get(b) ?? b);
-    const rigIds = Array.from(new Set(checklistPiles.map((cp) => cp.rigId))).sort(byMachineNo);
+    const rigIds = Array.from(
+      new Set([...checklistPiles.map((cp) => cp.rigId), ...pileGroups.map((g) => g.rigId)]),
+    ).sort(byMachineNo);
     const craneIds = Array.from(
-      new Set(checklistPiles.map((cp) => cp.craneId).filter((id): id is string => !!id)),
+      new Set([
+        ...checklistPiles.map((cp) => cp.craneId).filter((id): id is string => !!id),
+        ...pileGroups.map((g) => g.craneId).filter((id): id is string => !!id),
+      ]),
     ).sort(byMachineNo);
     return [
       ...rigIds.map((id) => ({ id, machineNo: machineMap.get(id) ?? id, type: 'RIG' as const })),
       ...craneIds.map((id) => ({ id, machineNo: machineMap.get(id) ?? id, type: 'CRANE' as const })),
     ];
-  }, [checklistPiles, machineMap]);
+  }, [checklistPiles, pileGroups, machineMap]);
 
   // ── Piles bucketed by machine — every pile has a rig, and a crane if one was
   // assigned, so it naturally appears (unchanged) on its rig's page and (if
@@ -80,8 +88,8 @@ export function useMachinePages(args: {
 
   const machineBadgeItems = useMemo((): SwipeableTabItem[] => {
     return activeMachines.map((m) => {
-      const meta = m.type === 'RIG' ? colors.machines.rig : colors.machines.crane;
-      const Icon = m.type === 'RIG' ? Drill : Forklift;
+      const meta = TRACK_META[m.type];
+      const Icon = meta.icon;
       return {
         value: m.id,
         label: m.machineNo,

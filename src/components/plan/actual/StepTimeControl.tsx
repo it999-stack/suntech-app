@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import ConfirmDialog from '@components/shared/ConfirmDialog';
 import {
   formatMinutes12,
@@ -60,6 +60,9 @@ interface Props {
    * today only if never provided.
    */
   anchorIso?: string;
+  /** When set, tapping the fill button shows this toast instead of opening
+   * the time picker — e.g. the step's assigned machine is reported down. */
+  blocked?: { title: string; message: string };
 }
 
 export default function StepTimeControl({
@@ -71,6 +74,7 @@ export default function StepTimeControl({
   pileConflictCheck,
   minBoundIso,
   anchorIso,
+  blocked,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
@@ -132,6 +136,10 @@ export default function StepTimeControl({
             style={[styles.actionBtn, styles.primaryBtn, saving && styles.actionBtnDisabled]}
             disabled={saving}
             onPress={() => {
+              if (blocked) {
+                notify.error(blocked.message, { title: blocked.title });
+                return;
+              }
               setDraftMinutes(defaultMinutes);
               setPickerOpen(true);
             }}
@@ -174,7 +182,7 @@ export default function StepTimeControl({
 const styles = StyleSheet.create({
   wrap: { marginTop: spacing.sm },
   actionBtn: {
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     paddingVertical: spacing.sm + 2,
     alignItems: 'center',
   },

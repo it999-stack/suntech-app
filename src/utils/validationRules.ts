@@ -18,7 +18,7 @@ export interface DateRule {
 
 /** Today or earlier — for logging something that already happened (actual
  * start/finish times, machine events, resume close-out times). This is
- * TimerSelectMenu's default date rule when a caller doesn't specify one. */
+ * NativeTimerSelectMenu's default date rule when a caller doesn't specify one. */
 export const pastOrTodayDateRule: DateRule = {
   isAllowed: (dateStr) => dateStr <= toLocalDateStr(new Date()),
   message: '',

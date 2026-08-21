@@ -62,16 +62,6 @@ export const colors = {
   backdropGradient: [backdropStart, backdropMid, backdropEnd] as [string, string, string],
   creamGradient: ['#FFFFFF', '#FDF6F3'] as [string, string],
 
-  // Machine visualizations (timelines, charts, chips) — unchanged
-  machine: {
-    rigColors: ['#EA580C', '#F97316', '#FB923C', '#FDBA74'],
-    craneColors: ['#0369A1', '#0284C7', '#38BDF8', '#7DD3FC'],
-    compressorColors: ['#6D28D9', '#7C3AED', '#A78BFA', '#C4B5FD'],
-    break: '#fbbf24',
-    idle: '#c7c7d6',
-    unused: '#e4e4e7',
-  },
-
   machines: {
     rig: {
       color: '#EA580C',

@@ -20,7 +20,7 @@ import { View, Text, TextInput, Pressable, StyleSheet, Keyboard } from 'react-na
 import { Feather } from '@expo/vector-icons';
 import { CheckCircle2, Clock, ChevronRight } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
-import TimerSelectMenu from '@components/shared/TimerSelectMenu';
+import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { formatTime, formatTimeWithDay, formatDuration, toLocalIsoString } from '@utils/formatTime';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import type { ResumeWork } from '@/types/plan';
@@ -55,8 +55,8 @@ function seedPastTime(checklistDate: string | undefined): Date {
   return new Date(y, m - 1, d, now.getHours(), now.getMinutes(), 0, 0);
 }
 
-/** TimerSelectMenu's returned date isn't reliably anchored to the day we care
- * about — only its hour/minute are trustworthy, applied onto our own anchor day. */
+/** NativeTimerSelectMenu's returned date isn't reliably anchored to the day we
+ * care about — only its hour/minute are trustworthy, applied onto our own anchor day. */
 function applyPickedTime(picked: Date, anchorDate: Date): Date {
   const out = new Date(anchorDate);
   out.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
@@ -78,7 +78,7 @@ export default function ResumeTimeConfirmModal({
   const [stage, setStage] = useState<Stage>('status');
   const [pastDate, setPastDate] = useState<Date>(() => seedPastTime(resumeWork.checklistDate));
   const [finishDate, setFinishDate] = useState<Date>(seedFinish);
-  // Which field the shared TimerSelectMenu is currently editing — not always
+  // Which field the shared NativeTimerSelectMenu is currently editing — not always
   // implied by `stage` alone, since partial-finish lets you reopen the past
   // (yesterday) picker via the Yesterday recap's edit button without leaving
   // that stage.

@@ -8,7 +8,7 @@ import PilesStackNavigator from './Piles/PilesStackNavigator';
 import SiteScreen from '@/screens/Site/SiteScreen';
 import ProfileStackNavigator from './Profile/ProfileStackNavigator';
 import {
-  LayoutDashboard,
+  House,
   Construction,
   Building2,
   CircleUserRound,
@@ -31,6 +31,7 @@ export default function MainTabNavigator() {
     <Tab.Navigator
         screenOptions={{
             headerShown: false,
+            animation: 'fade',
         }}
         >
         <Tab.Screen
@@ -39,7 +40,7 @@ export default function MainTabNavigator() {
             options={({ route }) => ({
                 title: 'Home',
                 tabBarIcon: ({ color, size }) => (
-                <LayoutDashboard color={color} size={size} />
+                <House color={color} size={size} />
                 ),
                 tabBarStyle: getHomeTabBarStyle(route),
             })}

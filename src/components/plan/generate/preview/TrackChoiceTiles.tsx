@@ -10,8 +10,8 @@
 
 import React from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
-import { Drill, Forklift } from 'lucide-react-native';
 import { colors, spacing, radius } from '@/theme/theme';
+import { TRACK_META } from '@/utils/helpers';
 
 export type TrackChoice = 'RIG' | 'CRANE';
 
@@ -23,11 +23,6 @@ interface TrackChoiceTilesProps {
   /** Omit to render the tile(s) as display-only (read-only screens). */
   onSelect?: (track: TrackChoice) => void;
 }
-
-const TILE_META = {
-  RIG: { icon: Drill, color: colors.machines.rig.color, soft: colors.machines.rig.soft },
-  CRANE: { icon: Forklift, color: colors.machines.crane.color, soft: colors.machines.crane.soft },
-} as const;
 
 /** The single square icon tile — exported so read-only callers that just need to
  * show "which machine" (no RIG/CRANE choice) can render the exact same tile,
@@ -43,7 +38,7 @@ export function MachineTrackTile({
   selected: boolean;
   onPress?: () => void;
 }) {
-  const meta = TILE_META[track];
+  const meta = TRACK_META[track];
   const Icon = meta.icon;
   const tint = selected
     ? { backgroundColor: meta.soft, borderColor: meta.color }

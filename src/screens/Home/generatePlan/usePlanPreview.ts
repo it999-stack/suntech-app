@@ -6,6 +6,7 @@
 // (or changes something on) the preview step.
 
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { InteractionManager } from 'react-native';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
 import type { Step } from '@components/plan/generate/ProgressHeader';
@@ -129,6 +130,20 @@ export function usePlanPreview(args: {
     }
 
     setPreviewLoading(true);
+
+    // Wait for the step-change fade transition (and any other in-flight interaction) to
+    // actually finish committing before the synchronous scheduling work below runs. A bare
+    // setTimeout(0) only yields the JS thread for one macrotask, which isn't a hard guarantee
+    // the native side has committed/painted the "on preview step, loading" frame yet;
+    // InteractionManager is RN's own tool for "wait until the current
+    // animation/transition is done, then run this expensive JS work" — without it,
+    // the Continue tap from StepSelectStep feels like it froze instead of transitioning
+    // then spinning, because the heavy computation could still start before the fade paints.
+    await new Promise<void>((resolve) => {
+      InteractionManager.runAfterInteractions(() => resolve());
+    });
+    if (requestId !== previewRequestIdRef.current) return;
+
     try {
       const selectedPiles = selectedPlanPiles;
       const previewPilesInput = selectedPiles.map((pile) => {

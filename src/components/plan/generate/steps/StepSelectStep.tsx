@@ -14,7 +14,7 @@ import { Minus, Plus, Lock } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
 import { getLockedStepIds } from '@/services/planPreselectService';
-import { TRACK_META } from '@/utils/trackMeta';
+import { TRACK_META } from '@/utils/helpers';
 import { formatDurationLong } from '@/utils/formatTime';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
@@ -88,7 +88,6 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
             ? "Tap a step to include or remove it from today's plan. Steps required by carry-over piles cannot be removed."
             : "Tap a step to include or remove it from today's plan."}
         </Text>
-        <Text style={styles.countText}>{selectedSet.size} of {steps.length} included</Text>
       </View>
 
       <View style={styles.list}>
@@ -115,7 +114,7 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
                     {step.stepName}
                   </Text>
                   <View style={[styles.trackBadge, { backgroundColor: meta.soft }]}>
-                    <Icon color={meta.color} size={10} strokeWidth={2} />
+                    <Icon color={meta.color} size={16} strokeWidth={2} />
                     <Text style={[styles.trackText, { color: meta.color }]}>{meta.label}</Text>
                   </View>
                   <View style={[
@@ -176,12 +175,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: spacing.sm,
   },
-  countText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.accent,
-    marginTop: spacing.sm,
-  },
   list: { gap: spacing.md },
   cardMuted: { opacity: 0.5 },
   card: {
@@ -223,7 +216,7 @@ const styles = StyleSheet.create({
   trackText: {
     ...typography.caption,
     fontWeight: '700',
-    fontSize: 10,
+    fontSize: 14,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
   },

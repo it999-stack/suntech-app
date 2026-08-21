@@ -5,12 +5,12 @@
 // stops (active / break / idle). Knows nothing about plans, piles, or steps.
 // Build the stop log with buildMachineStops() from '@/utils/timeline'.
 
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { Drill, Forklift, ArrowUpDown } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import { formatTime, formatDurationMinutes } from '@/utils/formatTime';
-import { getMachineColor, buildTypeIndexById } from '@/utils/helpers';
+import { TRACK_META } from '@/utils/helpers';
 import { type TimelineStop, type MachineInfo } from '@/types/timeline';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
 import InfoRow from '@components/shared/InfoRow';
@@ -30,9 +30,9 @@ export interface MachineStopTimelineProps {
 
 function stopColor(kind: TimelineStop['kind'], activeColor: string): string {
   if (kind === 'active') return activeColor;
-  if (kind === 'break') return colors.machine.break;
+  if (kind === 'break') return colors.machines.break;
   if (kind === 'buffer') return colors.accentBlue;
-  return colors.machine.idle;
+  return colors.machines.idle;
 }
 
 function stopKindLabel(kind: TimelineStop['kind']): string {
@@ -141,8 +141,6 @@ export default function MachineStopTimeline({
   const [internalSelected, setInternalSelected] = useState<string | undefined>(machines[0]?.id);
   const activeId = selectedMachineId ?? internalSelected;
 
-  const typeIndexById = useMemo(() => buildTypeIndexById(machines), [machines]);
-
   if (machines.length === 0) {
     return <Text style={styles.detailEmpty}>No machines to show.</Text>;
   }
@@ -155,7 +153,7 @@ export default function MachineStopTimeline({
   const items: SwipeableTabItem[] = machines.map((m) => ({
     value: m.id,
     label: m.machineNo,
-    color: getMachineColor(m, typeIndexById[m.id] ?? 0),
+    color: TRACK_META[m.type].color,
     renderIcon: (color) =>
       m.type === 'RIG' ? <Drill size={16} color={color} /> : <Forklift size={16} color={color} />,
   }));
@@ -208,11 +206,11 @@ export default function MachineStopTimeline({
                 <Text style={styles.legendText}>Buffer</Text>
               </View>
               <View style={styles.legendChip}>
-                <View style={[styles.legendDot, { backgroundColor: colors.machine.break }]} />
+                <View style={[styles.legendDot, { backgroundColor: colors.machines.break }]} />
                 <Text style={styles.legendText}>Break</Text>
               </View>
               <View style={styles.legendChip}>
-                <View style={[styles.legendDot, { backgroundColor: colors.machine.idle }]} />
+                <View style={[styles.legendDot, { backgroundColor: colors.machines.idle }]} />
                 <Text style={styles.legendText}>Idle</Text>
               </View>
             </View>

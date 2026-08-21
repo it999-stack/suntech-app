@@ -7,9 +7,10 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ArrowDownUp, Drill, Forklift, Coffee, AlertTriangle, Play, Clock3 } from 'lucide-react-native';
+import { ArrowDownUp, Coffee, AlertTriangle, Play, Clock3 } from 'lucide-react-native';
 import { colors, spacing, typography, radius } from '@theme/theme';
 import { formatElapsedHMS, formatTime } from '@utils/formatTime';
+import { TRACK_META } from '@utils/helpers';
 import { useElapsedSeconds } from '@hooks/useElapsedSeconds';
 import GlassCard from '@components/shared/GlassCard';
 import MachineActionPill from './MachineActionPill';
@@ -44,8 +45,8 @@ export default function MachineInfoCard({
   onStartIdle: () => void;
   onEndIdle: () => void;
 }) {
-  const meta = machine.type === 'RIG' ? colors.machines.rig : colors.machines.crane;
-  const Icon = machine.type === 'RIG' ? Drill : Forklift;
+  const meta = TRACK_META[machine.type];
+  const Icon = meta.icon;
   const statusMeta = pileScreenStatusMeta(status);
   const isIdle = !!openIdle;
   const idleElapsedSeconds = useElapsedSeconds(openIdle?.since ?? null);

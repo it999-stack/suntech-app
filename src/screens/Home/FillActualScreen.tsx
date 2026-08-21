@@ -15,6 +15,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { HomeStackParamList } from '@app-types/navigation';
 import { ChevronLeft } from 'lucide-react-native';
 import { colors, spacing, typography } from '@theme/theme';
+import { TRACK_META } from '@utils/helpers';
 import { usePlan } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
 import { useWorkingDate } from '@store/workingDateStore';
@@ -272,7 +273,7 @@ export default function FillActualsScreen() {
                   <MachinePilesPage
                     machine={machine}
                     status={machineStatusById.get(machine.id)}
-                    railColor={machine.type === 'RIG' ? colors.machines.rig.color : colors.machines.crane.color}
+                    railColor={TRACK_META[machine.type].color}
                     activeGroups={page.activeGroups}
                     upcomingGroups={page.upcomingGroups}
                     openIdle={idleSessionByMachineId.get(item.value)}

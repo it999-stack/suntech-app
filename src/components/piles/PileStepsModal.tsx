@@ -7,6 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@theme/theme';
+import { getTrackBadgeColors } from '@utils/helpers';
 import { formatTimeRange } from '@utils/formatTime';
 
 export type CompletedStepRow = {
@@ -16,12 +17,6 @@ export type CompletedStepRow = {
   actualStart: string;
   actualEnd: string;
 };
-
-function trackBadgeColors(track: CompletedStepRow['track']): { bg: string; fg: string } {
-  if (track === 'RIG') return { bg: colors.accentSoft, fg: colors.accent };
-  if (track === 'CRANE') return { bg: 'rgba(255,149,0,0.12)', fg: colors.warning };
-  return { bg: colors.machines.compressor.soft, fg: colors.machines.compressor.color };
-}
 
 interface Props {
   visible: boolean;
@@ -38,7 +33,7 @@ export default function PileStepsModal({ visible, onClose, pileCode, steps }: Pr
       ) : (
         steps.map((step, idx) => {
           const isLast = idx === steps.length - 1;
-          const track = trackBadgeColors(step.track);
+          const track = getTrackBadgeColors(step.track);
           return (
             <View key={step.id} style={[styles.stepRow, !isLast && styles.stepRowDivider]}>
               <View style={styles.stepHeader}>

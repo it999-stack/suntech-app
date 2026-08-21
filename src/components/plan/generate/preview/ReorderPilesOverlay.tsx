@@ -92,13 +92,6 @@ export default function ReorderPilesOverlay({
 }: ReorderPilesOverlayProps) {
   const progress = useSharedValue(0);
 
-  // The parent (GeneratePlanScreen) keeps this component mounted across opens
-  // now — it caches the last-edited machine/piles so this overlay always has
-  // real content to animate, rather than remounting fresh each time. That
-  // means closing must fade out here instead of just vanishing: `rendered`
-  // stays true through the close tween and only flips (unmounting the tree)
-  // once the fade-to-0 actually finishes, matching AppModal's center-mode
-  // open+close feel instead of only replicating its open half.
   const [rendered, setRendered] = useState(visible);
 
   useEffect(() => {

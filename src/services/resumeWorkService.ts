@@ -1,9 +1,11 @@
 // src/services/resumeWorkService.ts
 //
 // Live computation of "which step should this pile resume from," derived
-// directly from the pile's most recent past checklist's actual steps.
-// Replaces the old pile_work_progress table, which had no reliable writer
-// in production and could end up pointing at the wrong step.
+// from the actual steps recorded across ALL of the pile's past checklists —
+// not just its most recent one, since a pile's progress can straddle more
+// than one day/junction row. Replaces the old pile_work_progress table,
+// which had no reliable writer in production and could end up pointing at
+// the wrong step.
 //
 // This service only locates the resume point (which step, and whether it
 // was genuinely started). It does not estimate remaining duration from
@@ -94,25 +96,34 @@ export async function findResumeWorkForPiles(
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   if (!checklists.length) return empty;
 
-  // Walk newest-to-oldest, keeping only the most recent checklist-pile row per pile.
-  const remaining = new Set(pileIds);
-  const latestCpByPile = new Map<string, PilingChecklistPile>();
+  // Walk newest-to-oldest, collecting EVERY checklist-pile row per pile — a
+  // pile's real progress can straddle more than one day/junction row (a new
+  // pil_checklist_piles row is created each time a pile carries over into a
+  // new plan), and earlier steps completed under an older row must still be
+  // recognized as done. The most-recent row per pile is kept separately as
+  // the "anchor" — the default rig/crane and the fallback resume point for
+  // steps nobody has touched yet.
+  const pileIdSet = new Set(pileIds);
+  const anchorCpByPile = new Map<string, PilingChecklistPile>();
+  const cpRowsByPile = new Map<string, PilingChecklistPile[]>();
+  const cpById = new Map<string, PilingChecklistPile>();
   for (const checklist of checklists) {
-    if (remaining.size === 0) break;
     const cpRows = await getChecklistPiles(checklist.id);
     for (const cp of cpRows) {
-      if (remaining.has(cp.pileId)) {
-        latestCpByPile.set(cp.pileId, cp);
-        remaining.delete(cp.pileId);
-      }
+      if (!pileIdSet.has(cp.pileId)) continue;
+      cpById.set(cp.id, cp);
+      if (!anchorCpByPile.has(cp.pileId)) anchorCpByPile.set(cp.pileId, cp);
+      const list = cpRowsByPile.get(cp.pileId) ?? [];
+      list.push(cp);
+      cpRowsByPile.set(cp.pileId, list);
     }
   }
-  if (!latestCpByPile.size) return empty;
+  if (!anchorCpByPile.size) return empty;
 
   const checklistDateById = new Map(checklists.map((c) => [c.id, c.date]));
 
   // Fetch actual + plan steps once per distinct checklist involved.
-  const checklistIds = new Set([...latestCpByPile.values()].map((cp) => cp.checklistId));
+  const checklistIds = new Set([...cpById.values()].map((cp) => cp.checklistId));
   const actualStepsByCpId = new Map<string, ActualStepWithMeta[]>();
   const planStepByCpAndStepId = new Map<string, Map<string, { plannedStart: string; plannedEnd: string | null }>>();
   for (const checklistId of checklistIds) {
@@ -139,7 +150,7 @@ export async function findResumeWorkForPiles(
   const pileRows = await db
     .select()
     .from(pilingPiles)
-    .where(inArray(pilingPiles.id, [...latestCpByPile.keys()]))
+    .where(inArray(pilingPiles.id, [...anchorCpByPile.keys()]))
     .all();
   const pileById = new Map(pileRows.map((p) => [p.id, p]));
 
@@ -159,14 +170,25 @@ export async function findResumeWorkForPiles(
 
   const pendingWorkItems: ResumeWorkInfo[] = [];
   const completedPileIds: string[] = [];
-  for (const [pileId, cp] of latestCpByPile) {
+  for (const [pileId, anchorCp] of anchorCpByPile) {
     const dimensionId = pileById.get(pileId)?.dimensionId;
     const applicableSteps = dimensionId
       ? allSteps.filter((s) => templateMap.has(`${dimensionId}|${s.id}`))
       : [];
     const referenceSteps = applicableSteps.length > 0 ? applicableSteps : allSteps;
 
-    const actualByStepId = new Map((actualStepsByCpId.get(cp.id) ?? []).map((a) => [a.stepId, a]));
+    // Merge actual steps across EVERY checklist-pile row this pile has ever
+    // had (not just its most recent one) — a step completed under an older
+    // row must still count as done. A given step should only ever be
+    // actioned under one row; if it somehow appears under more than one,
+    // prefer whichever record is actually completed.
+    const actualByStepId = new Map<string, ActualStepWithMeta>();
+    for (const cp of cpRowsByPile.get(pileId) ?? [anchorCp]) {
+      for (const a of actualStepsByCpId.get(cp.id) ?? []) {
+        const existing = actualByStepId.get(a.stepId);
+        if (!existing || (!existing.actualEnd && a.actualEnd)) actualByStepId.set(a.stepId, a);
+      }
+    }
 
     const firstIncomplete = referenceSteps.find((s) => !actualByStepId.get(s.id)?.actualEnd);
     if (!firstIncomplete) {
@@ -175,6 +197,10 @@ export async function findResumeWorkForPiles(
     }
 
     const actualStep = actualByStepId.get(firstIncomplete.id);
+    // The checklist-pile row to resume into: wherever firstIncomplete's own
+    // (in-progress) actual record lives, or the anchor row as a fallback
+    // when the step hasn't been touched at all yet.
+    const resolvedCp = (actualStep && cpById.get(actualStep.checklistPileId)) || anchorCp;
     // Remaining duration is never derived from the historical plan/actual
     // timestamps — only the step's canonical template duration seeds the
     // supervisor's confirmation modal; they enter the real remaining time.
@@ -184,12 +210,11 @@ export async function findResumeWorkForPiles(
       .filter((s) => actualByStepId.get(s.id)?.actualEnd)
       .map((s) => s.stepName);
 
-    const planStepsForCp = planStepByCpAndStepId.get(cp.id);
     const completedSteps: CompletedStepInfo[] = referenceSteps
       .filter((s) => actualByStepId.get(s.id)?.actualEnd)
       .map((s) => {
         const a = actualByStepId.get(s.id)!;
-        const p = planStepsForCp?.get(s.id);
+        const p = planStepByCpAndStepId.get(a.checklistPileId)?.get(s.id);
         return {
           stepId: s.id,
           stepName: s.stepName,
@@ -221,16 +246,16 @@ export async function findResumeWorkForPiles(
       stepId: firstIncomplete.id,
       stepName: firstIncomplete.stepName,
       remainingMinutes,
-      lastRigId: cp.rigId,
-      lastCraneId: cp.craneId,
+      lastRigId: resolvedCp.rigId,
+      lastCraneId: resolvedCp.craneId,
       wasStarted: !!actualStep?.actualStart,
-      pastChecklistPileId: cp.id,
+      pastChecklistPileId: resolvedCp.id,
       pastActualStart: actualStep?.actualStart ?? null,
       completedStepNames,
       completedSteps,
       nextStep,
-      checklistId: cp.checklistId,
-      checklistDate: checklistDateById.get(cp.checklistId) ?? beforeDate,
+      checklistId: resolvedCp.checklistId,
+      checklistDate: checklistDateById.get(resolvedCp.checklistId) ?? beforeDate,
     });
   }
 

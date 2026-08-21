@@ -5,14 +5,15 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronRight, AlertTriangle, Drill, Forklift } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
+import { TRACK_META } from '@utils/helpers';
 import { ActualEntry } from '@app-types/plan';
 import { getPileProgress } from './pileProgress';
 
 interface Props {
   index: number;
   pileCode: string;
-  rig?: string;
-  crane?: string;
+  rigs?: string[];
+  cranes?: string[];
   steps: ActualEntry[];
   hasBreakdownWarning?: boolean;
   circleVariant: 'upNext' | 'rail';
@@ -23,8 +24,8 @@ interface Props {
 export default function PileSequenceRow({
   index,
   pileCode,
-  rig,
-  crane,
+  rigs,
+  cranes,
   steps,
   hasBreakdownWarning,
   circleVariant,
@@ -54,20 +55,20 @@ export default function PileSequenceRow({
           <ChevronRight size={20} color={colors.textSecondary} />
         </View>
 
-        {(rig || crane) && (
+        {((rigs && rigs.length > 0) || (cranes && cranes.length > 0)) && (
           <View style={styles.machineBadgeRow}>
-            {rig && (
-              <View style={[styles.machineBadge, { backgroundColor: colors.machines.rig.soft }]}>
-                <Drill size={12} color={colors.machines.rig.color} />
-                <Text style={[styles.machineBadgeText, { color: colors.machines.rig.color }]}>{rig}</Text>
+            {rigs?.map((no) => (
+              <View key={`rig-${no}`} style={[styles.machineBadge, { backgroundColor: TRACK_META.RIG.soft }]}>
+                <Drill size={12} color={TRACK_META.RIG.color} />
+                <Text style={[styles.machineBadgeText, { color: TRACK_META.RIG.color }]}>{no}</Text>
               </View>
-            )}
-            {crane && (
-              <View style={[styles.machineBadge, { backgroundColor: colors.machines.crane.soft }]}>
-                <Forklift size={12} color={colors.machines.crane.color} />
-                <Text style={[styles.machineBadgeText, { color: colors.machines.crane.color }]}>{crane}</Text>
+            ))}
+            {cranes?.map((no) => (
+              <View key={`crane-${no}`} style={[styles.machineBadge, { backgroundColor: TRACK_META.CRANE.soft }]}>
+                <Forklift size={12} color={TRACK_META.CRANE.color} />
+                <Text style={[styles.machineBadgeText, { color: TRACK_META.CRANE.color }]}>{no}</Text>
               </View>
-            )}
+            ))}
           </View>
         )}
 

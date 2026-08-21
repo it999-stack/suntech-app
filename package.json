@@ -30,6 +30,7 @@
     "react-hook-form": "^7.81.0",
     "react-native": "0.86.0",
     "react-native-calendars": "^1.1314.0",
+    "react-native-date-picker": "^5.0.13",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-keyboard-controller": "1.21.9",
     "react-native-pager-view": "8.0.2",
@@ -44,6 +45,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "^57.0.7",
     "drizzle-kit": "^0.31.10",
     "expo-drizzle-studio-plugin": "^0.2.1",
     "typescript": "~6.0.3"

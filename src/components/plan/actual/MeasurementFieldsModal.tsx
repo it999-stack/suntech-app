@@ -114,6 +114,7 @@ export default function MeasurementFieldsModal({
       visible={visible}
       onClose={onClose}
       title={title}
+      position="center"
       subtitle="Optional — skip any field you don't have yet"
     >
       <View style={styles.content}>
@@ -233,7 +234,7 @@ const styles = StyleSheet.create({
   saveBtn: {
     marginTop: spacing.sm,
     backgroundColor: colors.accent,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     paddingVertical: spacing.sm + 2,
     alignItems: 'center',
   },

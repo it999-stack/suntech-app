@@ -72,8 +72,8 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
                 key={group.checklistPileId}
                 index={i + 1}
                 pileCode={group.pileCode}
-                rig={group.rig}
-                crane={group.crane}
+                rigs={group.rigs}
+                cranes={group.cranes}
                 steps={group.steps}
                 hasBreakdownWarning={group.hasBreakdownWarning}
                 circleVariant={hasUpNext && i === 0 ? 'upNext' : 'rail'}

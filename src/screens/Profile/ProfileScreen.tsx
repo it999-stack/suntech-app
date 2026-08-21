@@ -380,7 +380,7 @@ const styles = StyleSheet.create({
   syncButton: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     backgroundColor: colors.accent,
     minWidth: 80,
     alignItems: 'center',

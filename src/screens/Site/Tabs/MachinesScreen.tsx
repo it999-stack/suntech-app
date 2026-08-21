@@ -11,37 +11,12 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Drill, Forklift, Wind } from 'lucide-react-native';
-
 import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
 import { getMachinesBySite } from '@repositories/machinesRepository';
+import { TRACK_META } from '@utils/helpers';
 import { useAuthStore } from '@store/authStore';
 import type { PilingMachine } from '@db/schema';
-
-// ── Per-type visual identity ───────────────────────────────────────────────
-// Keeps icon + color + label logic in one place, so adding a new
-// machine type later is a one-line change here, not a hunt through JSX.
-const MACHINE_META = {
-  RIG: {
-    icon: Drill,
-    label: 'Rig',
-    color: colors.machines.rig.color,
-    soft: colors.machines.rig.soft,
-  },
-  CRANE: {
-    icon: Forklift,
-    label: 'Crane',
-    color: colors.machines.crane.color,
-    soft: colors.machines.crane.soft,
-  },
-  COMPRESSOR: {
-    icon: Wind,
-    label: 'Compressor',
-    color: colors.machines.compressor.color,
-    soft: colors.machines.compressor.soft,
-  },
-} as const;
 
 // Status → dot/text style + label. Unrecognized values (server/enum drift)
 // fall back to the INACTIVE treatment rather than crashing or looking "active".
@@ -53,7 +28,7 @@ function statusMeta(status: string): { dot: object; text: object; label: string 
 }
 
 function MachineCard({ machine }: { machine: PilingMachine }) {
-  const meta = MACHINE_META[machine.type as keyof typeof MACHINE_META] ?? MACHINE_META.RIG;
+  const meta = TRACK_META[machine.type as keyof typeof TRACK_META] ?? TRACK_META.RIG;
   const Icon = meta.icon;
   const status = statusMeta(machine.status);
 

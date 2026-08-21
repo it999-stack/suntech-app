@@ -7,10 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import GlassCard from '@components/shared/GlassCard';
+import Badge from '@components/shared/Badge';
 import { getSteps, getAllTemplatesWithDimensions } from '@repositories/stepsRepository';
 import type { TemplateWithDimension } from '@repositories/stepsRepository';
 import type { PilingStep } from '@/db/schema';
-import { TRACK_META } from '@/utils/trackMeta';
+import { TRACK_META } from '@/utils/helpers';
 import { formatDurationLong } from '@/utils/formatTime';
 import { useAuthStore } from '@store/authStore';
 import { onDeltaSyncComplete } from '@sync/delta/runDeltaSync';
@@ -37,10 +38,7 @@ function StepCard({
         <Text style={styles.stepName} numberOfLines={1}>
           {step.stepName}
         </Text>
-        <View style={[styles.trackBadge, { backgroundColor: meta.soft }]}>
-          <Icon color={meta.color} size={10} strokeWidth={2} />
-          <Text style={[styles.trackText, { color: meta.color }]}>{meta.label}</Text>
-        </View>
+        <Badge icon={Icon} text={meta.label} textColor={meta.color} bgColor={meta.soft} />
       </View>
 
       <View style={styles.templateList}>
@@ -204,22 +202,6 @@ const styles = StyleSheet.create({
   headerBody: {
     flex: 1,
     gap: 4,
-  },
-  trackBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    flexShrink: 0,
-  },
-  trackText: {
-    ...typography.caption,
-    fontWeight: '700',
-    fontSize: 10,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
   },
   templateList: {
     marginTop: spacing.sm,

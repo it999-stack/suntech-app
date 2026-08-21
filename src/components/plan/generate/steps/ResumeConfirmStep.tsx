@@ -4,8 +4,10 @@
 // lightweight, read-only preview of every assigned pile (code + rig/crane,
 // same as the Piles step) and flags any pile with a step still in progress
 // from a previous day (actualStart set, no actualEnd) that hasn't had its
-// plan finish time confirmed yet. The Continue button is never disabled for
-// this — GeneratePlanScreen.goNext() calls this component's exposed
+// plan finish time confirmed yet. Uses GeneratePlanScreen's shared
+// NextStepFab (no override needed here — unlike PileAssignStep, this step
+// never swaps its footer for anything else), which is never disabled for
+// this step — GeneratePlanScreen.goNext() calls this component's exposed
 // focusFirstMissing() instead (same pattern as TeamAssignStep), which
 // scrolls to the first unconfirmed pile and returns false to block
 // navigation; each unconfirmed pile also carries a persistent required-style
@@ -19,7 +21,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, FlatList } from 'react-native';
 import { Clock, PencilLine } from 'lucide-react-native';
-import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { colors, spacing, radius, typography } from '@theme/theme';
 import MachineBadge from '@components/shared/MachineBadge';
 import type { PlanDraft } from '@/types/plan';
 import GlassCard from '@components/shared/GlassCard';
@@ -50,13 +52,11 @@ interface ResumeConfirmStepProps {
   /** Where a resume step effectively starts in the new plan — see
    * pilingPlannerService.ts's resolveEffectiveDayStart. */
   effectiveDayStart: Date;
-  onContinue: () => void;
-  continueDisabled: boolean;
 }
 
 const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepProps>(function ResumeConfirmStep({
   draft, onUpdate, piles = [], activeRigs = [], activeCranes = [],
-  effectiveDayStart, onContinue, continueDisabled,
+  effectiveDayStart,
 }, ref) {
   const resumeConfirm = useResumeConfirmQueue(draft, onUpdate);
   const flatListRef = useRef<FlatList<EligiblePile>>(null);
@@ -188,16 +188,6 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
         />
       </View>
 
-      <View style={styles.footer}>
-        <Pressable
-          disabled={continueDisabled}
-          onPress={onContinue}
-          style={[styles.continueBtn, continueDisabled && styles.continueBtnDisabled]}
-        >
-          <Text style={styles.continueText}>Continue</Text>
-        </Pressable>
-      </View>
-
       {(() => {
         const confirmPile = piles.find((p) => p.id === resumeConfirm.confirmQueue[0]);
         const confirmResumeWork = confirmPile ? draft.resumeWorkByPileId[confirmPile.id] : undefined;
@@ -261,7 +251,7 @@ const styles = StyleSheet.create({
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: radius.md,
+    borderRadius: radius.sm,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm + 2,
     marginTop: spacing.sm,
@@ -273,27 +263,10 @@ const styles = StyleSheet.create({
   statusPillEditBadge: {
     width: 26,
     height: 26,
-    borderRadius: radius.pill,
+    borderRadius: radius.sm,
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: spacing.sm,
   },
-  footer: {
-    marginHorizontal: -spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.white,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(28,28,46,0.08)',
-  },
-  continueBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    ...shadow.soft,
-  },
-  continueBtnDisabled: { opacity: 0.4 },
-  continueText: { ...typography.body, fontWeight: '700', color: colors.white },
 });

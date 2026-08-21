@@ -1,6 +1,6 @@
 // src/components/shared/Pager.tsx
 //
-// Footer pager with ellipsis truncation: "‹ 1 … 4 5 6 … 30 ›". Unlike a
+// Footer pager with ellipsis truncation: "‹ 1 … 15 … 30 ›". Unlike a
 // simple sliding window (see SwipeableTabBar.tsx's PaginationDots), this
 // always anchors on the first and last page and only collapses the pages
 // in between, so it stays usable even with dozens of pages.
@@ -17,7 +17,11 @@ interface PagerProps {
   onPageChange: (page: number) => void;
 }
 
-const SIBLING_COUNT = 1;
+// 0 siblings keeps the collapsed form as tight as possible on a phone-width
+// screen — e.g. "1 2 3 … 14" rather than "1 2 3 4 5 … 14" — so there's less
+// to tap through and less chance of the row crowding whatever floats over it
+// (e.g. GeneratePlanScreen's NextStepFab).
+const SIBLING_COUNT = 0;
 
 type PageEntry = number | 'ellipsis';
 
@@ -71,6 +75,7 @@ export default function Pager({ page, totalPages, onPageChange }: PagerProps) {
             key={entry}
             style={[styles.pageBtn, entry === page && styles.pageBtnActive]}
             onPress={() => onPageChange(entry)}
+            hitSlop={spacing.xs}
           >
             <Text style={[styles.pageText, entry === page && styles.pageTextActive]}>{entry}</Text>
           </Pressable>
@@ -95,11 +100,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: 6,
   },
   navBtn: {
-    width: 28,
-    height: 28,
+    width: 36,
+    height: 36,
     borderRadius: radius.pill,
     backgroundColor: colors.glassFillStrong,
     borderWidth: 1,
@@ -109,9 +114,9 @@ const styles = StyleSheet.create({
   },
   navBtnDisabled: { opacity: 0.4 },
   pageBtn: {
-    minWidth: 28,
-    height: 28,
-    paddingHorizontal: spacing.xs,
+    minWidth: 36,
+    height: 36,
+    paddingHorizontal: spacing.sm,
     borderRadius: radius.pill,
     backgroundColor: colors.glassFill,
     borderWidth: 1,

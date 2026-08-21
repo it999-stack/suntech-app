@@ -1,21 +1,24 @@
 // src/components/plan/generate/steps/PileAssignStep.tsx
 //
 // Step 4 — pile selection + per-pile rig/crane assignment. Owns its own
-// bottom bar: shows the wizard's "Continue" button by default, and swaps
-// it for the bulk assign/unassign bar whenever piles are checkbox-selected
-// (GeneratePlanScreen skips its shared footer for this step so this bar
-// lands in the exact same screen position).
+// bottom bar: shows the wizard's floating next-step chevron (NextStepFab) by
+// default, and swaps it for the bulk assign/unassign bar whenever piles are
+// checkbox-selected (GeneratePlanScreen skips its shared footer for this
+// step so this bar lands in the exact same screen position).
 
-import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
-import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { colors, spacing } from '@theme/theme';
 import type { PlanDraft } from '@/types/plan';
 import IndexTable from '@components/shared/IndexTable';
+import Pager from '@components/shared/Pager';
+import NextStepFab from '@components/plan/generate/NextStepFab';
+import { useAppConfig } from '@state/AppConfigContext';
 
 import PileListToolbar, { type LocationFilterOption } from './pile-assign/PileListToolbar';
 import BulkAssignBar from './pile-assign/BulkAssignBar';
 import { buildColumns } from './pile-assign/pileTableColumns';
-import type { EligiblePile, MachineKind, PileFilter, SimpleMachine } from './pile-assign/types';
+import { ALL_LOCATIONS_ID, type EligiblePile, type MachineKind, type PileFilter, type SimpleMachine } from './pile-assign/types';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -46,12 +49,6 @@ function mostCommonRigId(assignments: PlanDraft['assignments']): string | null {
   return best ? best[0] : null;
 }
 
-// The single rig/crane already shared by every one of the given piles' CURRENT
-// assignment, or null if they disagree (or none is set) — this is what lets
-// reopening the bulk panel for an already-assigned selection reflect what's
-// really there, without resurrecting the old "carries over from an unrelated
-// prior bulk-assign" bug (that read from a global last-used value instead of
-// the current selection itself).
 function commonAssignedValue(
   assignments: PlanDraft['assignments'],
   pileIds: string[],
@@ -70,9 +67,11 @@ export default function PileAssignStep({
   draft, onUpdate, piles = [], locations = [], activeRigs = [], activeCranes = [],
   onContinue, continueDisabled,
 }: PileAssignStepProps) {
+  const { config } = useAppConfig();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<PileFilter>('all');
   const [activeLocationId, setActiveLocationId] = useState(() => locations[0]?.id ?? '');
+  const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkRigId, setBulkRigId] = useState<string | null>(null);
@@ -110,21 +109,44 @@ export default function PileAssignStep({
   }, [piles]);
 
   const visiblePiles = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    // Hyphens stripped from both sides so "P07"/"p07" still matches a code
+    // like "P-07" — the user shouldn't have to type the separator.
+    const q = search.trim().toLowerCase().replace(/-/g, '');
     return piles
       .filter((p) => {
-        if (p.locationId !== activeLocationId) return false;
-        if (q && !p.code.toLowerCase().includes(q)) return false;
-        if (filter === 'pending') return !isPileFullyAssigned(p.id);
-        if (filter === 'assigned') return isPileFullyAssigned(p.id);
+        // While searching, match across every area selected for this plan
+        // instead of just the active tab — the location pills are hidden
+        // during search anyway (see PileListToolbar), so there's no active
+        // tab to scope to from the user's point of view.
+        if (!q && activeLocationId !== ALL_LOCATIONS_ID && p.locationId !== activeLocationId) return false;
+        if (q && !p.code.toLowerCase().replace(/-/g, '').includes(q)) return false;
+        // Completed piles count toward "assigned" (see pendingCount below) —
+        // they're done, not awaiting assignment.
+        if (filter === 'pending' && (p.completed || isPileFullyAssigned(p.id))) return false;
+        if (filter === 'assigned' && !p.completed && !isPileFullyAssigned(p.id)) return false;
         return true;
       })
       .sort((a, b) => a.code.localeCompare(b.code));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [piles, search, filter, activeLocationId, draft.assignments]);
 
-  const pendingCount = piles.filter((p) => !isPileFullyAssigned(p.id)).length;
-  const allVisibleSelected = visiblePiles.length > 0 && visiblePiles.every((p) => selectedIds.has(p.id));
+  // Search/filter/location narrow the result set, so a page index from
+  // before the change can point past the end of the new one.
+  useEffect(() => {
+    setPage(1);
+  }, [search, filter, activeLocationId]);
+
+  const totalPages = Math.max(1, Math.ceil(visiblePiles.length / config.pilesPageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedPiles = useMemo(
+    () => visiblePiles.slice((currentPage - 1) * config.pilesPageSize, currentPage * config.pilesPageSize),
+    [visiblePiles, currentPage, config.pilesPageSize],
+  );
+
+  const pendingCount = piles.filter((p) => !p.completed && !isPileFullyAssigned(p.id)).length;
+  // "Select all" applies to the current page only, matching Pager's per-page scope.
+  const selectableVisiblePiles = useMemo(() => pagedPiles.filter((p) => !p.completed), [pagedPiles]);
+  const allVisibleSelected = selectableVisiblePiles.length > 0 && selectableVisiblePiles.every((p) => selectedIds.has(p.id));
   const anySelectedAssigned = useMemo(
     () => [...selectedIds].some((id) => isPileFullyAssigned(id)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,6 +154,7 @@ export default function PileAssignStep({
   );
 
   function toggleRow(pileId: string): void {
+    if (piles.find((p) => p.id === pileId)?.completed) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(pileId) ? next.delete(pileId) : next.add(pileId);
@@ -141,10 +164,32 @@ export default function PileAssignStep({
   function toggleSelectAllVisible(): void {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      visiblePiles.forEach((p) => (allVisibleSelected ? next.delete(p.id) : next.add(p.id)));
+      selectableVisiblePiles.forEach((p) => (allVisibleSelected ? next.delete(p.id) : next.add(p.id)));
       return next;
     });
   }
+
+  function handleFilterChange(next: PileFilter): void {
+    setFilter(next);
+  }
+
+  function handlePageChange(next: number): void {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setPage(next);
+  }
+
+  // Deliberately bypass handlePageChange's LayoutAnimation here — IndexTable
+  // is already driving its own Reanimated slide for a swipe-triggered page
+  // change, and LayoutAnimation's native layout-commit animation fighting
+  // over the same frame is what left the table stuck mid-slide instead of
+  // resetting to center.
+  function swipeToNextPage(): void {
+    if (currentPage < totalPages) setPage(currentPage + 1);
+  }
+  function swipeToPrevPage(): void {
+    if (currentPage > 1) setPage(currentPage - 1);
+  }
+
   function clearSelection(): void {
     setSelectedIds(new Set());
     setBulkOpen(false);
@@ -154,13 +199,7 @@ export default function PileAssignStep({
     const ids = [...selectedIds];
     const commonRig = commonAssignedValue(draft.assignments, ids, (a) => a?.rig);
     const commonCrane = commonAssignedValue(draft.assignments, ids, (a) => a?.crane);
-    // Rig: reflect what the selection already shares; otherwise fall back to
-    // the last-used/only-active-rig convenience default for a fresh selection.
     setBulkRigId(commonRig ?? lastUsedRigId ?? (activeRigs.length === 1 ? activeRigs[0].id : null));
-    // Crane: ONLY reflects what this selection already shares right now —
-    // never a "last used" global memory, which is what let a crane silently
-    // leak onto an unrelated later selection. No consensus (mixed, or simply
-    // unset) means the panel starts at Rig only, same as before.
     setBulkCraneId(commonCrane);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setBulkOpen(true);
@@ -191,7 +230,6 @@ export default function PileAssignStep({
 
   const columns = useMemo(
     () => buildColumns({ assignments: draft.assignments, machineLabel }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [draft.assignments, activeRigs, activeCranes],
   );
 
@@ -202,7 +240,7 @@ export default function PileAssignStep({
           search={search}
           onSearchChange={setSearch}
           filter={filter}
-          onFilterChange={setFilter}
+          onFilterChange={handleFilterChange}
           allCount={piles.length}
           pendingCount={pendingCount}
           assignedCount={piles.length - pendingCount}
@@ -215,19 +253,23 @@ export default function PileAssignStep({
 
       <View style={styles.listSection}>
         <IndexTable
-          data={visiblePiles}
+          data={pagedPiles}
           columns={columns}
           selectable
           selectedIds={selectedIds}
           onToggleRow={toggleRow}
           onToggleAll={toggleSelectAllVisible}
           allSelected={allVisibleSelected}
+          isRowDisabled={(p) => !!p.completed}
           emptyText={piles.length === 0 ? 'No piles found for this site.' : 'No piles match this view.'}
+          footer={<Pager page={currentPage} totalPages={totalPages} onPageChange={handlePageChange} />}
+          onSwipeNextPage={swipeToNextPage}
+          onSwipePrevPage={swipeToPrevPage}
         />
       </View>
 
-      <View style={styles.footer}>
-        {selectedIds.size > 0 ? (
+      {selectedIds.size > 0 ? (
+        <View style={styles.footer}>
           <BulkAssignBar
             selectedCount={selectedIds.size}
             onClear={clearSelection}
@@ -243,23 +285,24 @@ export default function PileAssignStep({
             onUnassign={unassignSelected}
             unassignDisabled={!anySelectedAssigned}
           />
-        ) : (
-          <Pressable
-            disabled={continueDisabled}
-            onPress={onContinue}
-            style={[styles.continueBtn, continueDisabled && styles.continueBtnDisabled]}
-          >
-            <Text style={styles.continueText}>Continue</Text>
-          </Pressable>
-        )}
-      </View>
+        </View>
+      ) : (
+        // GeneratePlanScreen's pilesStepContainer already applies
+        // paddingHorizontal: spacing.lg around this step — cancel the FAB's
+        // own right offset so it lines up with every other step's copy.
+        <NextStepFab onPress={onContinue} disabled={continueDisabled} style={styles.nextFabOffset} />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0 },
-  toolbarSection: { marginBottom: spacing.sm },
+  toolbarSection: { marginBottom: spacing.xs / 2 },
+  // Runs the card to the very bottom, under NextStepFab's horizontal range —
+  // deliberate now that the pager also responds to swipe (see IndexTable's
+  // onSwipeNextPage/onSwipePrevPage), so tapping the last page number/chevron
+  // in that exact corner is no longer the only way to reach it.
   listSection: { flex: 1, minHeight: 0 },
   footer: {
     marginHorizontal: -spacing.lg,
@@ -269,13 +312,5 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(28,28,46,0.08)',
   },
-  continueBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    ...shadow.soft,
-  },
-  continueBtnDisabled: { opacity: 0.4 },
-  continueText: { ...typography.body, fontWeight: '700', color: colors.white },
+  nextFabOffset: { right: 0 },
 });

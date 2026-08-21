@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   title: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.xs },
   message: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.lg },
   row: { flexDirection: 'row', gap: spacing.sm },
-  btn: { flex: 1, borderRadius: radius.pill, paddingVertical: spacing.sm + 4, alignItems: 'center' },
+  btn: { flex: 1, borderRadius: radius.sm, paddingVertical: spacing.sm + 4, alignItems: 'center' },
   btnDisabled: { opacity: 0.5 },
   cancelBtn: { backgroundColor: 'rgba(28,28,46,0.06)' },
   cancelText: { ...typography.buttonLabel, color: colors.textSecondary },

@@ -126,7 +126,16 @@ export type ActualEntry = {
   stepId: string;
   stepName: string;
   pileCode: string;
+  /** Whichever machine is *currently* assigned to this step — flips if the
+   * machine is replaced mid-day. For anything that must survive a swap
+   * (e.g. which replacement machine types are eligible), use
+   * `businessTrack` instead. */
   track: 'RIG' | 'CRANE' | 'COMPRESSOR';
+  /** The step definition's own fixed nominal track (piling_steps.track) —
+   * unlike `track`, never changes when the assigned machine is replaced.
+   * Undefined only for historical (previous-checklist) rows, which carry
+   * no machine info at all. */
+  businessTrack?: 'RIG' | 'CRANE' | 'COMPRESSOR';
   /** piling_steps.sequence_order — the source of truth for step ordering, not plannedStart. */
   sequenceOrder: number;
   /** Planned start — minutes since midnight. */
@@ -199,9 +208,17 @@ export type PileGroup = {
   checklistPileId: string;
   pileId: string;
   pileCode: string;
-  rig: string;
-  crane?: string;
+  /** Every distinct machine that has worked this pile's RIG-track steps, in
+   * the order first assigned — usually just the planned rig, but includes
+   * any mid-day replacement too. Always non-empty. */
+  rigs: string[];
+  /** Same as `rigs`, for CRANE-track steps — empty if this pile has none. */
+  cranes: string[];
+  /** The machine currently responsible for this pile's RIG-track work (the
+   * most recent replacement, if any) — drives which machine's tab this pile
+   * appears under, see useMachinePages.ts. */
   rigId: string;
+  /** Same as `rigId`, for CRANE-track work. */
   craneId?: string;
   steps: ActualEntry[];
   /** True when a not-yet-done step's assigned machine has status BREAKDOWN. */
