@@ -16,13 +16,15 @@ interface BadgeProps {
   icon?: LucideIcon;
   fontSize?: number;
   style?: ViewStyle;
+  /** Defaults true, matching every existing call site's all-caps look. Set false for a title-case label. */
+  uppercase?: boolean;
 }
 
-export default function Badge({ text, textColor, bgColor, icon: Icon, fontSize = 10, style }: BadgeProps) {
+export default function Badge({ text, textColor, bgColor, icon: Icon, fontSize = 10, style, uppercase = true }: BadgeProps) {
   return (
     <View style={[styles.badge, { backgroundColor: bgColor }, style]}>
       {Icon && <Icon color={textColor} size={fontSize} strokeWidth={2} />}
-      <Text style={[styles.text, { color: textColor, fontSize }]}>{text}</Text>
+      <Text style={[styles.text, { color: textColor, fontSize }, !uppercase && styles.textNormalCase]}>{text}</Text>
     </View>
   );
 }
@@ -43,5 +45,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.4,
     textTransform: 'uppercase',
+  },
+  textNormalCase: {
+    letterSpacing: 0,
+    textTransform: 'none',
   },
 });

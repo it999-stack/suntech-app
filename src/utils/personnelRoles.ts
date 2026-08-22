@@ -13,6 +13,7 @@ export interface SimplePersonnel {
   id: string;
   name: string;
   designation: string;
+  isActive: boolean;
 }
 
 export interface SimpleMachine {

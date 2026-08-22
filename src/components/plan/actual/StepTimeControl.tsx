@@ -3,14 +3,7 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
-import ConfirmDialog from '@components/shared/ConfirmDialog';
-import {
-  formatMinutes12,
-  formatHeaderDate,
-  resolveOvernightDate,
-  toLocalDateStr,
-  toLocalIsoString,
-} from '@utils/formatTime';
+import { resolveOvernightDate, toLocalIsoString } from '@utils/formatTime';
 import { notify } from '@utils/notify';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
@@ -18,7 +11,6 @@ type Mode = 'start' | 'finish';
 
 interface Props {
   mode: Mode;
-  stepName: string;
   /** Sensible default minutes to seed the picker with (planned start/end). */
   defaultMinutes: number;
   /**
@@ -53,6 +45,15 @@ interface Props {
    */
   minBoundIso?: string;
   /**
+   * Earliest/latest real timestamp allowed by the checklist's own plan
+   * window (plan_start_time .. plan_end_time + 1h grace) — an independent
+   * outer bound from minBoundIso above (step adjacency), enforced both by
+   * capping the picker's own min/max and, as a backstop, in confirm().
+   * Omit for no plan-window restriction (e.g. checklist has no plan yet).
+   */
+  planWindowMinIso?: string;
+  planWindowMaxIso?: string;
+  /**
    * ISO timestamp whose calendar date seeds the picker's header — the same
    * anchor handleSetActualTime resolves the final saved day from (see
    * resolveActualTimeAnchor), so the header shows the day this entry will
@@ -67,30 +68,34 @@ interface Props {
 
 export default function StepTimeControl({
   mode,
-  stepName,
   defaultMinutes,
   onConfirm,
   machineConflictCheck,
   pileConflictCheck,
   minBoundIso,
+  planWindowMinIso,
+  planWindowMaxIso,
   anchorIso,
   blocked,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
   const [saving, setSaving] = useState(false);
-  const [pendingChange, setPendingChange] = useState<{
-    minutes: number;
-    explicitDate?: Date;
-    title: string;
-    message: string;
-  } | null>(null);
 
-  function confirm(minutes: number, explicitDate?: Date) {
+  async function confirm(minutes: number, explicitDate?: Date) {
     const candidateDate = explicitDate ?? resolveOvernightDate(anchorIso ?? toLocalIsoString(new Date()), minutes);
 
     if (minBoundIso && candidateDate.getTime() < new Date(minBoundIso).getTime()) {
       notify.error('Invalid time');
+      return;
+    }
+
+    if (planWindowMinIso && candidateDate.getTime() < new Date(planWindowMinIso).getTime()) {
+      notify.error('Please select a time within the plan window.');
+      return;
+    }
+    if (planWindowMaxIso && candidateDate.getTime() > new Date(planWindowMaxIso).getTime()) {
+      notify.error('Please select a time within the plan window.');
       return;
     }
 
@@ -99,22 +104,6 @@ export default function StepTimeControl({
       return;
     }
 
-    const timeLabel = explicitDate
-      ? `${formatMinutes12(minutes)} on ${formatHeaderDate(toLocalDateStr(explicitDate), { includeYear: true })}`
-      : formatMinutes12(minutes);
-
-    const title = mode === 'start' ? `Start ${stepName}?` : `Finish ${stepName}?`;
-    const message =
-      mode === 'start'
-        ? `This will log the start time as ${timeLabel}.`
-        : `Are you sure this step is complete? This will log the finish time as ${timeLabel}.`;
-
-    setPendingChange({ minutes, explicitDate, title, message });
-  }
-
-  async function handleConfirmChange() {
-    if (!pendingChange) return;
-    const { minutes, explicitDate } = pendingChange;
     setSaving(true);
     try {
       await onConfirm(minutes, explicitDate);
@@ -125,7 +114,6 @@ export default function StepTimeControl({
       });
     } finally {
       setSaving(false);
-      setPendingChange(null);
     }
   }
 
@@ -164,16 +152,8 @@ export default function StepTimeControl({
             d.setHours(Math.floor(defaultMinutes / 60), defaultMinutes % 60, 0, 0);
             return d;
           })()}
-        />
-
-        <ConfirmDialog
-          visible={!!pendingChange}
-          title={pendingChange?.title ?? ''}
-          message={pendingChange?.message ?? ''}
-          confirmLabel="Confirm"
-          confirmDisabled={saving}
-          onConfirm={handleConfirmChange}
-          onCancel={() => setPendingChange(null)}
+          minimumDate={planWindowMinIso ? new Date(planWindowMinIso) : undefined}
+          maximumDate={planWindowMaxIso ? new Date(planWindowMaxIso) : undefined}
         />
     </>
   );

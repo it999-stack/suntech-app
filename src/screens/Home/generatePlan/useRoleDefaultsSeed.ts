@@ -8,6 +8,7 @@
 import { useEffect, useRef } from 'react';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingSiteRoleDefault } from '@/db/schema';
+import type { SimplePersonnel } from '@/utils/personnelRoles';
 import type { SimpleMachine } from './useGeneratePlanData';
 
 export function useRoleDefaultsSeed(args: {
@@ -16,9 +17,10 @@ export function useRoleDefaultsSeed(args: {
   rigs: SimpleMachine[];
   cranes: SimpleMachine[];
   roleDefaults: PilingSiteRoleDefault[];
+  personnel: SimplePersonnel[];
   setDraft: (updater: (prev: PlanDraft) => PlanDraft) => void;
 }): void {
-  const { dataLoading, isEditMode, rigs, cranes, roleDefaults, setDraft } = args;
+  const { dataLoading, isEditMode, rigs, cranes, roleDefaults, personnel, setDraft } = args;
 
   const roleDefaultsSeeded = useRef(false);
   useEffect(() => {
@@ -28,16 +30,26 @@ export function useRoleDefaultsSeed(args: {
 
     const rigIds = new Set(rigs.map((r) => r.id));
     const craneIds = new Set(cranes.map((c) => c.id));
-    const findSingleton = (role: string) =>
-      roleDefaults.find((d) => d.role === role && d.shiftSlot == null)?.personnelId ?? null;
+    const activePersonnelIds = new Set(personnel.filter((p) => p.isActive).map((p) => p.id));
+    const findSingleton = (role: string) => {
+      const id = roleDefaults.find((d) => d.role === role && d.shiftSlot == null)?.personnelId ?? null;
+      return id && activePersonnelIds.has(id) ? id : null;
+    };
 
     function buildTeamForSlot(slot: 1 | 2): PlanDraft['checklistPersonnel']['shift1'] {
       const engineerByMachineId: Record<string, string> = {};
       const supervisorByMachineId: Record<string, string> = {};
       const operatorByMachineId: Record<string, string> = {};
+      // An operator can only run one machine per shift (unlike Engineer/Supervisor,
+      // which may legitimately cover several) — track claimed ids so a person whose
+      // "last used" default was saved for two different machines in this same slot
+      // (e.g. across two separate earlier plans) doesn't get seeded onto both at once,
+      // which the backend rejects as a double-booking.
+      const claimedOperatorIds = new Set<string>();
       for (const d of roleDefaults) {
         if (d.shiftSlot !== slot) continue;
         if (!d.machineId || (!rigIds.has(d.machineId) && !craneIds.has(d.machineId))) continue;
+        if (!activePersonnelIds.has(d.personnelId)) continue;
         // Engineers and Supervisors are only ever assigned to rigs now — a
         // stale/legacy default for a crane must not resurrect an assignment
         // the Team step no longer lets a user create.
@@ -45,10 +57,17 @@ export function useRoleDefaultsSeed(args: {
           if (rigIds.has(d.machineId)) engineerByMachineId[d.machineId] = d.personnelId;
         } else if (d.role === 'SUPERVISOR') {
           if (rigIds.has(d.machineId)) supervisorByMachineId[d.machineId] = d.personnelId;
-        } else if (d.role === 'MACHINE_OPERATOR') operatorByMachineId[d.machineId] = d.personnelId;
+        } else if (d.role === 'MACHINE_OPERATOR') {
+          if (claimedOperatorIds.has(d.personnelId)) continue;
+          claimedOperatorIds.add(d.personnelId);
+          operatorByMachineId[d.machineId] = d.personnelId;
+        }
       }
+      const shiftInchargeDefaultId =
+        roleDefaults.find((d) => d.role === 'SHIFT_INCHARGE' && d.shiftSlot === slot)?.personnelId ?? null;
       return {
-        shiftInchargeId: roleDefaults.find((d) => d.role === 'SHIFT_INCHARGE' && d.shiftSlot === slot)?.personnelId ?? null,
+        shiftInchargeId:
+          shiftInchargeDefaultId && activePersonnelIds.has(shiftInchargeDefaultId) ? shiftInchargeDefaultId : null,
         engineerByMachineId,
         supervisorByMachineId,
         operatorByMachineId,
@@ -74,5 +93,5 @@ export function useRoleDefaultsSeed(args: {
         shift2,
       },
     }));
-  }, [dataLoading, roleDefaults, isEditMode, rigs, cranes]);
+  }, [dataLoading, roleDefaults, isEditMode, rigs, cranes, personnel]);
 }

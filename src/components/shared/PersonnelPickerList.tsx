@@ -11,6 +11,7 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { User, X } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { formatDesignation, type SimplePersonnel } from '@/utils/personnelRoles';
+import Badge from './Badge';
 
 export type { SimplePersonnel };
 
@@ -21,6 +22,7 @@ function PersonnelRow({
   sublabel,
   active,
   disabled,
+  inactive,
   onPress,
   onUnassign,
 }: {
@@ -28,6 +30,7 @@ function PersonnelRow({
   sublabel?: string;
   active: boolean;
   disabled?: boolean;
+  inactive?: boolean;
   onPress: () => void;
   onUnassign?: () => void;
 }) {
@@ -41,7 +44,10 @@ function PersonnelRow({
         <User size={16} color={active ? colors.accent : colors.textSecondary} />
       </View>
       <View style={styles.personInfo}>
-        <Text style={[styles.personName, active && styles.personNameActive]}>{label}</Text>
+        <View style={styles.personNameRow}>
+          <Text style={[styles.personName, active && styles.personNameActive]}>{label}</Text>
+          {inactive ? <Badge text="Inactive" textColor={colors.danger} bgColor={colors.dangerSoft} /> : null}
+        </View>
         {sublabel ? (
           <Text style={[styles.personDesig, disabled && styles.personDesigDisabled]}>{sublabel}</Text>
         ) : null}
@@ -95,7 +101,8 @@ export default function PersonnelPickerList({
             label={item.name}
             sublabel={disabledDetails?.get(item.id) ?? formatDesignation(item.designation)}
             active={selectedId === item.id}
-            disabled={disabledDetails?.has(item.id)}
+            disabled={!item.isActive || disabledDetails?.has(item.id)}
+            inactive={!item.isActive}
             onPress={() => onSelect(item.id)}
             onUnassign={allowNone ? () => onSelect(null) : undefined}
           />
@@ -135,6 +142,11 @@ const styles = StyleSheet.create({
   },
   personIcon: { width: 24, alignItems: 'center' },
   personInfo: { flex: 1 },
+  personNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   personName: {
     ...typography.body,
     fontWeight: '600',

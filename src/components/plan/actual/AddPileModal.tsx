@@ -1,28 +1,57 @@
 // src/components/plan/actual/AddPileModal.tsx
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, LayoutAnimation } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  FlatList,
+  ScrollView,
+  ActivityIndicator,
+  LayoutAnimation,
+  KeyboardAvoidingView,
+  Keyboard,
+  Platform,
+  Dimensions,
+} from 'react-native';
 import { X } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MachineSelect from '@components/plan/generate/steps/pile-assign/MachineSelect';
+import StepTimelineRow from '@components/plan/generate/preview/StepTimelineRow';
+import { type TrackChoice } from '@components/plan/generate/preview/TrackChoiceTiles';
 import {
   getPilesBySiteWithDimensionsPage,
   getPileCountsByLocationForSite,
   type PileWithDimension,
 } from '@repositories/pilesRepository';
 import { getLocationsBySite } from '@repositories/locationsRepository';
-import type { PilingMachine, PilingLocation } from '@db/schema';
+import { getSteps } from '@repositories/stepsRepository';
+import { getAllDurationTemplates } from '@repositories/durationTemplatesRepository';
+import type { PilingMachine, PilingLocation, PilingStep } from '@db/schema';
+import type { PlanStepWithMeta } from '@repositories/planRepository';
 import SearchToggleField from '@components/shared/SearchToggleField';
 import PileGridCard from '@components/shared/PileGridCard';
 import Pager from '@components/shared/Pager';
 import EmptyState from '@components/shared/EmptyState';
 import LocationFilterPillRow from '@components/shared/LocationFilterPillRow';
 import { useAppConfig } from '@state/AppConfigContext';
+import { usePlan, type EditPlanPileInput, type EditPlanPreviewStep } from '@state/PlanContext';
+
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+// Breathing room from the very top of the screen once the card is pushed up
+// flush against the keyboard, so its header never slides in under the status bar.
+const TOP_CLEARANCE = 24;
 
 interface AddPileModalProps {
   visible: boolean;
   onClose: () => void;
   siteId: string;
+  checklistId: string;
+  /** The Sequence editor's current in-progress draft — the pile being added
+   * here is previewed alongside these so the preview's machine-availability
+   * picture matches exactly what "Save Changes" would actually schedule. */
+  draftRows: EditPlanPileInput[];
   /** Pile ids already in today's plan — excluded from search results. */
   excludePileIds: Set<string>;
   /** The machine whose sequence modal this was opened from — fixed, not editable here. */
@@ -30,13 +59,15 @@ interface AddPileModalProps {
   rigs: PilingMachine[];
   cranes: PilingMachine[];
   isSaving: boolean;
-  onConfirm: (input: { pileId: string; rigId: string; craneId?: string }) => void;
+  onConfirm: (input: { pileId: string; rigId: string; craneId?: string; stepTrackOverrides?: string[] }) => void;
 }
 
 export default function AddPileModal({
   visible,
   onClose,
   siteId,
+  checklistId,
+  draftRows,
   excludePileIds,
   lockedMachine,
   rigs,
@@ -45,6 +76,26 @@ export default function AddPileModal({
   onConfirm,
 }: AddPileModalProps) {
   const { config } = useAppConfig();
+  const { previewEditPlanMidDay } = usePlan();
+  // Tracked so the card's own height can be clamped to whatever room is
+  // actually left above the keyboard — otherwise a keyboard tall enough
+  // (card height + keyboard height > screen height) pushes the card's top
+  // off-screen above the status bar instead of just shrinking to fit.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+  const availableHeight = keyboardHeight > 0 ? SCREEN_HEIGHT - keyboardHeight - TOP_CLEARANCE : SCREEN_HEIGHT;
+  const cardMaxHeight = Math.min(SCREEN_HEIGHT * 0.9, availableHeight);
+  const cardBrowsingHeight = Math.min(SCREEN_HEIGHT * 0.8, availableHeight);
+
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -61,6 +112,100 @@ export default function AddPileModal({
 
   const [pendingPile, setPendingPile] = useState<PileWithDimension | null>(null);
   const [otherMachineId, setOtherMachineId] = useState<string | null>(null);
+
+  // Applicable step catalog for the picked pile's dimension — same
+  // "allSteps filtered to whatever has a duration template for this
+  // dimension" derivation resumeWorkService.ts already uses elsewhere.
+  const [applicableSteps, setApplicableSteps] = useState<PilingStep[]>([]);
+  // Step ids whose CRANE-track step this pile should run on the Rig instead
+  // — sent through as stepTrackOverrides on confirm.
+  const [stepTrackOverrides, setStepTrackOverrides] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!pendingPile) {
+      setApplicableSteps([]);
+      setStepTrackOverrides([]);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([getSteps(), getAllDurationTemplates(siteId)]).then(([allSteps, templates]) => {
+      if (cancelled) return;
+      const templateKeys = new Set(templates.map((t) => `${t.dimensionId}|${t.stepId}`));
+      setApplicableSteps(allSteps.filter((s) => templateKeys.has(`${pendingPile.dimensionId}|${s.id}`)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingPile, siteId]);
+
+  // Real computed schedule for the pending pile — previewed alongside the
+  // Sequence editor's current draft (draftRows) so the machine-availability
+  // picture matches exactly what "Save Changes" would actually schedule.
+  // Debounced: a pile/machine/track-toggle change fires a fresh preview call
+  // (same 450ms-ish debounce the generation wizard's own track tiles use).
+  const [previewPile, setPreviewPile] = useState<EditPlanPreviewStep[] | null>(null);
+  const [previewComplete, setPreviewComplete] = useState(true);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingPile) {
+      setPreviewPile(null);
+      setPreviewError(null);
+      return;
+    }
+    const rigId = lockedMachine.kind === 'rig' ? lockedMachine.machine.id : otherMachineId;
+    if (!rigId) {
+      setPreviewPile(null);
+      setPreviewError(null);
+      return;
+    }
+    const craneId = lockedMachine.kind === 'crane' ? lockedMachine.machine.id : (otherMachineId ?? undefined);
+    let cancelled = false;
+    setPreviewLoading(true);
+    const t = setTimeout(() => {
+      previewEditPlanMidDay(siteId, checklistId, [
+        ...draftRows,
+        { pileId: pendingPile.id, rigId, craneId, stepTrackOverrides },
+      ])
+        .then((result) => {
+          if (cancelled) return;
+          const pile = result.piles.find((p) => p.pileId === pendingPile.id) ?? null;
+          setPreviewPile(pile?.steps ?? []);
+          setPreviewComplete(pile?.isPlanComplete ?? true);
+          setPreviewError(null);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setPreviewPile(null);
+          setPreviewError(
+            (err as any)?.response?.data?.detail ||
+              (err instanceof Error ? err.message : 'Could not compute a preview.'),
+          );
+        })
+        .finally(() => {
+          if (!cancelled) setPreviewLoading(false);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    pendingPile,
+    otherMachineId,
+    stepTrackOverrides,
+    // lockedMachine is a fresh object literal on every FillActualScreen
+    // render — depend on its actual identity fields instead, or this
+    // effect would restart its debounce on every unrelated parent re-render.
+    lockedMachine.kind,
+    lockedMachine.machine.id,
+    draftRows,
+    siteId,
+    checklistId,
+    previewEditPlanMidDay,
+  ]);
 
   // Debounce the raw input before it drives a query — every keystroke would
   // otherwise fire a fresh SQL round-trip.
@@ -167,17 +312,65 @@ export default function AddPileModal({
   // required, since a pile can never be added without one.
   const canConfirm = !!pendingPile && !isSaving && (lockedMachine.kind === 'rig' || !!otherMachineId);
 
+  // Resolved rig/crane machine records for the step list's TrackChoiceTiles
+  // below — mirrors the rig/crane resolution already done inline for the
+  // MachineSelect rows just above.
+  const resolvedRig =
+    lockedMachine.kind === 'rig' ? lockedMachine.machine : rigs.find((r) => r.id === otherMachineId);
+  const resolvedCrane =
+    lockedMachine.kind === 'crane' ? lockedMachine.machine : cranes.find((c) => c.id === otherMachineId);
+
   function confirm() {
     if (!canConfirm || !pendingPile) return;
     const rigId = lockedMachine.kind === 'rig' ? lockedMachine.machine.id : otherMachineId!;
     const craneId = lockedMachine.kind === 'crane' ? lockedMachine.machine.id : (otherMachineId ?? undefined);
-    onConfirm({ pileId: pendingPile.id, rigId, craneId });
+    onConfirm({ pileId: pendingPile.id, rigId, craneId, stepTrackOverrides });
   }
+
+  // Every applicable step, real computed times where the preview scheduled
+  // one, faded placeholders (isPlanned=false) for whatever it cut off —
+  // exactly the diff PilesAccordion.tsx does against allSteps/planSteps for
+  // the generation wizard's own live preview.
+  const previewStepById = useMemo(
+    () => new Map((previewPile ?? []).map((s) => [s.stepId, s])),
+    [previewPile],
+  );
+  const displayRows: PlanStepWithMeta[] = applicableSteps.map((step) => {
+    const scheduled = previewStepById.get(step.id);
+    return {
+      id: scheduled ? `${step.id}-scheduled` : `${step.id}-unplanned`,
+      checklistPileId: '',
+      stepId: step.id,
+      stepName: step.stepName,
+      sequenceOrder: step.sequenceOrder,
+      track: scheduled?.track ?? step.track,
+      businessTrack: step.track,
+      plannedStart: scheduled?.plannedStart ?? '',
+      plannedEnd: scheduled?.plannedEnd ?? null,
+      durationMinutes: scheduled?.durationMinutes ?? 0,
+      bufferMinutes: 0,
+      assignedMachineId: scheduled?.assignedMachineId ?? null,
+      assignedMachineNo: '',
+      createdAt: 0,
+      updatedAt: null,
+    } as unknown as PlanStepWithMeta;
+  });
 
   return (
     <View style={styles.overlay} pointerEvents="box-none">
       <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
-      <View style={[styles.card, !pendingPile && styles.cardBrowsing]}>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoider}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        pointerEvents="box-none"
+      >
+      <View
+        style={[
+          styles.card,
+          { maxHeight: cardMaxHeight },
+          !pendingPile && [styles.cardBrowsing, { height: cardBrowsingHeight }],
+        ]}
+      >
         <View style={styles.headerRow}>
           <Text style={styles.title}>Add a pile</Text>
           <Pressable onPress={handleClose} hitSlop={10}>
@@ -245,7 +438,7 @@ export default function AddPileModal({
             </View>
           </View>
         ) : (
-          <>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={styles.selectedRow}>
               <Text style={styles.selectedLabel}>Pile {pendingPile.pileIdCode}</Text>
               {isSaving && <ActivityIndicator size="small" color={colors.accent} />}
@@ -266,6 +459,55 @@ export default function AddPileModal({
                 onSelect={lockedMachine.kind === 'crane' ? () => {} : setOtherMachineId}
                 onClear={lockedMachine.kind === 'rig' ? () => setOtherMachineId(null) : undefined}
               />
+
+              {applicableSteps.length > 0 && (
+                <View style={styles.stepsSection}>
+                  <View style={styles.stepsSectionHeader}>
+                    <Text style={styles.fieldLabel}>Steps</Text>
+                    {previewLoading && <ActivityIndicator size="small" color={colors.accent} />}
+                  </View>
+                  {previewError ? (
+                    <Text style={styles.previewErrorText}>{previewError}</Text>
+                  ) : (
+                    <>
+                      {!previewComplete && (
+                        <Text style={styles.previewHint}>
+                          Not every step fits in the remaining plan window — faded steps carry over.
+                        </Text>
+                      )}
+                      {displayRows.map((row, idx) => {
+                        // No crane chosen at all — every CRANE step auto-runs on
+                        // the rig, same rule as _resolve_step_execution's
+                        // no_crane case. Nothing to toggle in that case.
+                        const forcedRig = !resolvedCrane;
+                        return (
+                          <StepTimelineRow
+                            key={row.stepId}
+                            step={row}
+                            isLast={idx === displayRows.length - 1}
+                            isPlanned={row.plannedStart !== ''}
+                            rigMachineNo={resolvedRig?.machineNo ?? '—'}
+                            craneMachineNo={forcedRig ? undefined : resolvedCrane?.machineNo}
+                            trackChoice={
+                              forcedRig
+                                ? undefined
+                                : {
+                                    selected: row.track === 'RIG' ? 'RIG' : ('CRANE' as TrackChoice),
+                                    onSelect: (track) =>
+                                      setStepTrackOverrides((prev) =>
+                                        track === 'RIG'
+                                          ? [...prev, row.stepId]
+                                          : prev.filter((id) => id !== row.stepId),
+                                      ),
+                                  }
+                            }
+                          />
+                        );
+                      })}
+                    </>
+                  )}
+                </View>
+              )}
             </View>
             <Pressable
               onPress={confirm}
@@ -274,9 +516,10 @@ export default function AddPileModal({
             >
               <Text style={styles.saveBtnText}>{isSaving ? 'Adding…' : 'Add to plan'}</Text>
             </Pressable>
-          </>
+          </ScrollView>
         )}
       </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -294,15 +537,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  keyboardAvoider: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
   card: {
     width: '100%',
-    maxHeight: '90%',
+    maxHeight: SCREEN_HEIGHT * 0.9,
     backgroundColor: colors.white,
     borderRadius: radius.lg,
     padding: spacing.lg,
   },
   cardBrowsing: {
-    height: '80%',
+    height: SCREEN_HEIGHT * 0.8,
   },
   headerRow: {
     flexDirection: 'row',
@@ -343,6 +592,29 @@ const styles = StyleSheet.create({
   },
   selectedLabel: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
   dimmed: { opacity: 0.5 },
+  stepsSection: { marginTop: spacing.md },
+  stepsSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  fieldLabel: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  previewErrorText: {
+    ...typography.caption,
+    color: colors.danger,
+    paddingVertical: spacing.sm,
+  },
+  previewHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+    marginBottom: spacing.xs,
+  },
   saveBtn: {
     height: 48,
     borderRadius: radius.md,

@@ -43,10 +43,6 @@ export interface SimpleShift {
 }
 
 export interface TeamAssignStepHandle {
-  /**
-   * True if this shift is fully staffed. If not, scrolls to and highlights
-   * its first missing row, and returns false.
-   */
   focusFirstMissing: () => boolean;
 }
 

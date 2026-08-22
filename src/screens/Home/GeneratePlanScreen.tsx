@@ -89,7 +89,7 @@ export default function GeneratePlanScreen() {
     useGeneratePlanData(siteId);
 
   const simplePersonnel = useMemo(
-    () => personnel.map((p) => ({ id: p.id, name: p.name, designation: p.designation })),
+    () => personnel.map((p) => ({ id: p.id, name: p.name, designation: p.designation, isActive: p.isActive })),
     [personnel],
   );
 
@@ -217,7 +217,7 @@ export default function GeneratePlanScreen() {
     }
   }, [dataLoading, steps, draft.selectedStepIds.length]);
 
-  useRoleDefaultsSeed({ dataLoading, isEditMode, rigs, cranes, roleDefaults, setDraft });
+  useRoleDefaultsSeed({ dataLoading, isEditMode, rigs, cranes, roleDefaults, personnel: simplePersonnel, setDraft });
 
   usePilePreselection({ step, draft, setDraft, pendingWorkItems, steps });
 

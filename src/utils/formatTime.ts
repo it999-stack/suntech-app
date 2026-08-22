@@ -342,6 +342,15 @@ export function formatRelativeDayLabel(
 }
 
 /**
+ * Short day + month + year label for a "YYYY-MM-DD" date string, e.g.
+ * "20 May 2025" — no weekday, unlike formatHeaderDate below.
+ */
+export function formatShortDate(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  return `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/**
  * Full weekday + month + day header label for a "YYYY-MM-DD" date string,
  * e.g. "Monday, July 27" (or with `includeYear`, "Monday, July 27, 2026").
  */

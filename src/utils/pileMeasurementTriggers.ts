@@ -63,7 +63,7 @@ export const MEASUREMENT_TRIGGERS: MeasurementTrigger[] = [
     field: 'actualEnd',
     title: 'Concreting — Finish Measurements',
     fields: [
-      { key: 'flM', label: 'F.L. (Founding Level)', unit: 'm', type: 'number' },
+      { key: 'flM', label: 'F.L. (Founding Level)', unit: 'm', type: 'number', allowNegative: true },
       { key: 'actualQtyM3', label: 'Concrete Qty', unit: 'm³', type: 'number' },
     ],
   },

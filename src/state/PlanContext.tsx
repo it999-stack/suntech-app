@@ -111,6 +111,7 @@ export type EditPlanPileInput = {
   pileId: string;
   rigId: string;
   craneId?: string;
+  stepTrackOverrides?: string[];
 };
 
 /** What changed as a result of editPlanMidDay — shown to the user before/after
@@ -120,6 +121,40 @@ export type EditPlanSummary = {
   pilesAdded: string[];
   stepsRegeneratedCount: number;
   /** Piles left entirely untouched because a step on them is currently running. */
+  pilesLockedSkipped: string[];
+  warningPiles: string[];
+};
+
+/** One step's real computed schedule from previewEditPlanMidDay — only
+ * present for steps that actually got a time; a pile's other applicable
+ * steps (per its own totalApplicableSteps) simply don't appear here, same
+ * "missing = cut off by the plan window" convention PilesAccordion already
+ * uses for the generation wizard's live preview. */
+export type EditPlanPreviewStep = {
+  stepId: string;
+  stepName: string;
+  track: string;
+  /** Null for a step that runs past the plan window ("continuing") — no
+   * committed end time, same as PilePlanStep.plannedEnd's own meaning. */
+  plannedStart: string | null;
+  plannedEnd: string | null;
+  durationMinutes: number | null;
+  assignedMachineId: string | null;
+};
+
+export type EditPlanPreviewPile = {
+  pileId: string;
+  pileIdCode: string;
+  isPlanComplete: boolean;
+  totalApplicableSteps: number;
+  steps: EditPlanPreviewStep[];
+};
+
+/** Result of previewEditPlanMidDay — a dry run of editPlanMidDay with the
+ * exact same scheduling logic, but nothing persisted. See
+ * plan_generation_service.edit_checklist_plan_mid_day's dry_run behavior. */
+export type EditPlanPreview = {
+  piles: EditPlanPreviewPile[];
   pilesLockedSkipped: string[];
   warningPiles: string[];
 };
@@ -162,15 +197,19 @@ type PlanContextValue = {
   loadChecklist: (siteId: string, date: string) => Promise<void>;
   /** Create the checklist + piles, then run the local planner. */
   generatePlan: (siteId: string, input: GeneratePlanInput) => Promise<void>;
-  /** Reorder/add/remove piles on an already-generated, possibly
-   * partially-worked checklist — never disturbs completed/running work, only
-   * reschedules what's left from now. Returns a summary of what changed. */
   editPlanMidDay: (
     siteId: string,
     checklistId: string,
     date: string,
     piles: EditPlanPileInput[],
   ) => Promise<EditPlanSummary>;
+  /** Dry run of editPlanMidDay — real computed step times, nothing persisted.
+   * See EditPlanPreview. */
+  previewEditPlanMidDay: (
+    siteId: string,
+    checklistId: string,
+    piles: EditPlanPileInput[],
+  ) => Promise<EditPlanPreview>;
   setRemarks: (checklistPileId: string, stepId: string, remarks: string) => Promise<void>;
   /** Upsert a partial patch of one-time engineering measurement fields for a
    * physical pile — merges onto whatever's already recorded, never a hard
@@ -389,6 +428,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
               pile_id: p.pileId,
               rig_id: p.rigId,
               crane_id: p.craneId ?? null,
+              step_track_overrides: p.stepTrackOverrides ?? [],
             })),
           },
         );
@@ -413,6 +453,48 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [loadChecklist],
+  );
+
+  // Dry-run of editPlanMidDay — real computed step times for whatever piles/
+  // machines the caller is considering, with nothing persisted. Deliberately
+  // does NOT touch hydrateChecklistFromServer/loadChecklist/isGenerating/
+  // error state — a preview is ephemeral display data, not a change to the
+  // loaded checklist, and callers (e.g. AddPileModal) fire it frequently
+  // (debounced) while the user is still picking, not just once on submit.
+  const previewEditPlanMidDay = useCallback(
+    async (siteId: string, checklistId: string, piles: EditPlanPileInput[]): Promise<EditPlanPreview> => {
+      const { data } = await apiClient.post(
+        `/piling/sites/${siteId}/checklists/${checklistId}/edit-plan/preview`,
+        {
+          piles: piles.map((p) => ({
+            pile_id: p.pileId,
+            rig_id: p.rigId,
+            crane_id: p.craneId ?? null,
+            step_track_overrides: p.stepTrackOverrides ?? [],
+          })),
+        },
+      );
+      return {
+        piles: data.piles.map((p: any) => ({
+          pileId: p.pile_id,
+          pileIdCode: p.pile_id_code,
+          isPlanComplete: p.is_plan_complete,
+          totalApplicableSteps: p.total_applicable_steps,
+          steps: p.steps.map((s: any) => ({
+            stepId: s.step_id,
+            stepName: s.step_name,
+            track: s.track,
+            plannedStart: s.planned_start,
+            plannedEnd: s.planned_end,
+            durationMinutes: s.duration_minutes,
+            assignedMachineId: s.assigned_machine_id,
+          })),
+        })),
+        pilesLockedSkipped: data.piles_locked_skipped,
+        warningPiles: data.warning_piles,
+      };
+    },
+    [],
   );
 
   // ── Record actual time ────────────────────────────────────────────────────
@@ -626,6 +708,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       loadChecklist,
       generatePlan,
       editPlanMidDay,
+      previewEditPlanMidDay,
       setActualTime,
       clearActualTime,
       setRemarks,
@@ -647,6 +730,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       loadChecklist,
       generatePlan,
       editPlanMidDay,
+      previewEditPlanMidDay,
       setActualTime,
       clearActualTime,
       setRemarks,

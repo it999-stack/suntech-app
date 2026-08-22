@@ -49,6 +49,7 @@ export interface PersonnelDetail {
   id: string;
   name: string;
   designation: string;
+  isActive: boolean;
 }
 
 export interface ShiftDetail {

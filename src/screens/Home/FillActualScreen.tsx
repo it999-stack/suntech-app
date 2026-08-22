@@ -298,6 +298,7 @@ export default function FillActualsScreen() {
           machines={machines}
           machineFloorIndex={machineFloorIndex}
           contractors={contractors}
+          checklist={checklist}
           onClose={() => setOpenCpId(null)}
           onSetActualTime={handleSetActualTime}
           onClearActualTime={handleClearActualTime}
@@ -358,6 +359,8 @@ export default function FillActualsScreen() {
           visible
           onClose={() => setAddPileModalOpen(false)}
           siteId={siteId}
+          checklistId={checklist!.id}
+          draftRows={draftRows ?? []}
           excludePileIds={new Set((draftRows ?? []).map((r) => r.pileId))}
           lockedMachine={{
             kind: activeMachine.type === 'RIG' ? 'rig' : 'crane',

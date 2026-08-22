@@ -4,7 +4,7 @@
 // computed lazily by the caller only when a row is tapped.
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import AppModal from '@components/shared/AppModal';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { getTrackBadgeColors } from '@utils/helpers';
@@ -23,12 +23,15 @@ interface Props {
   onClose: () => void;
   pileCode: string;
   steps: CompletedStepRow[];
+  loading?: boolean;
 }
 
-export default function PileStepsModal({ visible, onClose, pileCode, steps }: Props) {
+export default function PileStepsModal({ visible, onClose, pileCode, steps, loading = false }: Props) {
   return (
     <AppModal visible={visible} onClose={onClose} title={pileCode} position='center' subtitle="Completed steps">
-      {steps.length === 0 ? (
+      {loading ? (
+        <ActivityIndicator size="small" color={colors.accent} style={styles.loading} />
+      ) : steps.length === 0 ? (
         <Text style={styles.emptyText}>No completed steps yet for this pile.</Text>
       ) : (
         steps.map((step, idx) => {
@@ -52,6 +55,9 @@ export default function PileStepsModal({ visible, onClose, pileCode, steps }: Pr
 }
 
 const styles = StyleSheet.create({
+  loading: {
+    paddingVertical: spacing.lg,
+  },
   emptyText: {
     ...typography.caption,
     color: colors.textSecondary,

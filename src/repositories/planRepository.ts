@@ -7,6 +7,7 @@ import {
   pilePlanSteps,
   pileActualSteps,
   pilingChecklistPiles,
+  pilingDailyChecklists,
   pilingSteps,
   pilingMachines,
   type PilePlanStep,
@@ -260,6 +261,60 @@ export async function upsertActualStep(
       updatedAt: now,
     });
   }
+}
+
+// ─── Steps for one pile on a specific day ──────────────────────────────────
+//
+// A pile has at most one checklist-pile row per date — pil_daily_checklists
+// is unique per (site_id, date) and pil_checklist_piles unique per
+// (checklist_id, pile_id) — so (pileId, date) alone identifies the row.
+// Powers PileStepsModal from the Piles list screen, where a tapped pile's
+// relevant day (its Completed/In Progress date) isn't necessarily today.
+
+export type PileStepRow = {
+  id: string;
+  name: string;
+  track: 'RIG' | 'CRANE' | 'COMPRESSOR';
+  actualStart: string;
+  actualEnd: string;
+};
+
+/** Completed steps (both actualStart and actualEnd recorded) for one pile on one day. */
+export async function getCompletedStepsForPileOnDate(pileId: string, date: string): Promise<PileStepRow[]> {
+  const db = await initDb();
+
+  const checklistPile = await db
+    .select({ id: pilingChecklistPiles.id })
+    .from(pilingChecklistPiles)
+    .innerJoin(pilingDailyChecklists, eq(pilingChecklistPiles.checklistId, pilingDailyChecklists.id))
+    .where(and(eq(pilingChecklistPiles.pileId, pileId), eq(pilingDailyChecklists.date, date)))
+    .limit(1);
+  const checklistPileId = checklistPile[0]?.id;
+  if (!checklistPileId) return [];
+
+  const rows = await db
+    .select({
+      id: pileActualSteps.id,
+      stepName: pilingSteps.stepName,
+      track: pilingSteps.track,
+      sequenceOrder: pilingSteps.sequenceOrder,
+      actualStart: pileActualSteps.actualStart,
+      actualEnd: pileActualSteps.actualEnd,
+    })
+    .from(pileActualSteps)
+    .leftJoin(pilingSteps, eq(pileActualSteps.stepId, pilingSteps.id))
+    .where(eq(pileActualSteps.checklistPileId, checklistPileId))
+    .orderBy(pilingSteps.sequenceOrder);
+
+  return rows
+    .filter((r): r is typeof r & { actualStart: string; actualEnd: string } => !!r.actualStart && !!r.actualEnd)
+    .map((r) => ({
+      id: r.id,
+      name: r.stepName ?? '',
+      track: (r.track ?? 'RIG') as PileStepRow['track'],
+      actualStart: r.actualStart,
+      actualEnd: r.actualEnd,
+    }));
 }
 
 /**

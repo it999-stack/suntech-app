@@ -29,6 +29,14 @@ interface NativeTimerSelectMenuProps {
   allowDateChange?: boolean;
   /** Same DateRule shape as TimerSelectMenu — converted to min/max bounds below. Defaults to `pastOrTodayDateRule`. */
   dateRule?: DateRule;
+  /**
+   * Explicit bounds, used as-is instead of deriving from `dateRule` when
+   * provided — for a precise timestamp window (e.g. a checklist's plan
+   * window) that a whole-day DateRule can't express. Either may be passed
+   * alone.
+   */
+  minimumDate?: Date;
+  maximumDate?: Date;
 }
 
 /**
@@ -68,12 +76,16 @@ export default function NativeTimerSelectMenu({
   title,
   allowDateChange = true,
   dateRule = pastOrTodayDateRule,
+  minimumDate: explicitMinimumDate,
+  maximumDate: explicitMaximumDate,
 }: NativeTimerSelectMenuProps) {
   const seedDate = useMemo(() => initialDate ?? new Date(), [initialDate]);
-  const { minimumDate, maximumDate } = useMemo(
-    () => (allowDateChange ? dateRuleToBounds(dateRule) : {}),
-    [allowDateChange, dateRule],
-  );
+  const { minimumDate, maximumDate } = useMemo(() => {
+    if (explicitMinimumDate || explicitMaximumDate) {
+      return { minimumDate: explicitMinimumDate, maximumDate: explicitMaximumDate };
+    }
+    return allowDateChange ? dateRuleToBounds(dateRule) : {};
+  }, [allowDateChange, dateRule, explicitMinimumDate, explicitMaximumDate]);
 
   function handleConfirm(date: Date) {
     const dateWasExplicit = allowDateChange && toLocalDateStr(date) !== toLocalDateStr(seedDate);

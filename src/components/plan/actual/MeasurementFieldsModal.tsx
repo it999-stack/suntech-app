@@ -11,7 +11,7 @@
 // triggered it. Reached from PileStepsModal.tsx.
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, Keyboard } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, Keyboard, Platform } from 'react-native';
 import { Check } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import type { PilContractor } from '@db/schema';
@@ -19,20 +19,33 @@ import type { PileMeasurementFields } from '@app-types/plan';
 import { notify } from '@utils/notify';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
-/** Strips anything but digits and ".", and collapses every "." after the
- * first into nothing — so "12.3.4" becomes "12.34" rather than parsing to
- * NaN once a stray second decimal point sneaks in. */
-function cleanDecimalText(text: string): string {
-  const cleaned = text.replace(/[^0-9.]/g, '');
-  const firstDot = cleaned.indexOf('.');
-  if (firstDot === -1) return cleaned;
-  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+/** Strips anything but digits, ".", and (when `allowNegative`) a single
+ * leading "-", and collapses every "." after the first into nothing — so
+ * "12.3.4" becomes "12.34" rather than parsing to NaN once a stray second
+ * decimal point sneaks in. A "-" is only kept at position 0 — e.g. F.L.
+ * (Founding Level), which is measured below a reference datum and so is
+ * routinely negative. */
+function cleanDecimalText(text: string, allowNegative: boolean): string {
+  const isNegative = allowNegative && text.trimStart().startsWith('-');
+  const digitsAndDot = text.replace(/[^0-9.]/g, '');
+  const firstDot = digitsAndDot.indexOf('.');
+  const cleaned = firstDot === -1 ? digitsAndDot : digitsAndDot.slice(0, firstDot + 1) + digitsAndDot.slice(firstDot + 1).replace(/\./g, '');
+  return isNegative ? `-${cleaned}` : cleaned;
 }
 
 /** A plain numeric field, or a dropdown backed by the locally-synced
  * pil_contractors table. */
 export type MeasurementFieldConfig =
-  | { key: keyof PileMeasurementFields; label: string; unit: string; type: 'number' }
+  | {
+      key: keyof PileMeasurementFields;
+      label: string;
+      unit: string;
+      type: 'number';
+      /** True for a value that's routinely negative, e.g. F.L. (Founding
+       * Level) below a reference datum — allows a leading "-" and switches
+       * the keyboard to one with a minus key. Defaults to false. */
+      allowNegative?: boolean;
+    }
   | { key: keyof PileMeasurementFields; label: string; type: 'contractor' };
 
 interface Props {
@@ -94,7 +107,8 @@ export default function MeasurementFieldsModal({
       for (const field of fields) {
         if (field.type === 'number') {
           const text = numberText[field.key] ?? '';
-          const parsed = text === '' || text === '.' ? null : Number(text);
+          const incomplete = text === '' || text === '.' || text === '-' || text === '-.';
+          const parsed = incomplete ? null : Number(text);
           (patch as Record<string, number | null>)[field.key] = parsed == null || Number.isNaN(parsed) ? null : parsed;
         }
       }
@@ -171,12 +185,16 @@ export default function MeasurementFieldsModal({
               </Text>
               <TextInput
                 style={styles.input}
-                keyboardType="decimal-pad"
+                // decimal-pad has no minus key on either platform — a field
+                // that allows negative values needs a keyboard that does.
+                keyboardType={
+                  field.allowNegative ? (Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric') : 'decimal-pad'
+                }
                 placeholder="—"
                 placeholderTextColor={colors.textSecondary}
                 value={numberText[field.key] ?? ''}
                 onChangeText={(text) => {
-                  setNumberText((t) => ({ ...t, [field.key]: cleanDecimalText(text) }));
+                  setNumberText((t) => ({ ...t, [field.key]: cleanDecimalText(text, !!field.allowNegative) }));
                 }}
               />
             </View>

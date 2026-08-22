@@ -1,53 +1,64 @@
 // src/screens/Piles/PilesScreen.tsx
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, LayoutAnimation } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import PileStepsModal, { type CompletedStepRow } from '@components/piles/PileStepsModal';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { colors, spacing } from '@theme/theme';
 import {
-  getPilesBySiteWithDimensionsPage,
+  getPilesBySiteFiltered,
+  getPileStatusStatsForSite,
   getPileCountsByLocationForSite,
-  type PileWithDimension,
+  type PileWithStatus,
+  type PileStatusStats,
 } from '@repositories/pilesRepository';
 import { getLocationsBySite } from '@repositories/locationsRepository';
+import { getCompletedStepsForPileOnDate } from '@repositories/planRepository';
 import type { PilingLocation } from '@db/schema';
-import { usePlan } from '@state/PlanContext';
 import { useAuthStore } from '@store/authStore';
-import EmptyState from '@/components/shared/EmptyState';
-import SearchToggleField from '@components/shared/SearchToggleField';
-import LocationFilterPillRow from '@components/shared/LocationFilterPillRow';
-import PileGridCard from '@components/shared/PileGridCard';
 import Pager from '@components/shared/Pager';
-import { derivePileStatus } from '@utils/helpers';
 import { useAppConfig } from '@state/AppConfigContext';
 
-// Steps carry plannedStart/plannedEnd as ISO-ish datetime strings, so a
-// straight ascending string/Date comparison sorts them chronologically.
-// Any step missing a plannedStart sinks to the end rather than throwing
-// off the order of the ones that do have a time.
-function byPlannedStartAsc<T extends { plannedStart?: string }>(a: T, b: T): number {
-  if (!a.plannedStart && !b.plannedStart) return 0;
-  if (!a.plannedStart) return 1;
-  if (!b.plannedStart) return -1;
-  return new Date(a.plannedStart).getTime() - new Date(b.plannedStart).getTime();
+import ScreenHeader from './components/ScreenHeader';
+import SearchInput from '@components/shared/SearchInput';
+import StatsGrid, { type StatFilter } from './components/StatsGrid';
+import FilterBar, { type FilterChipData } from './components/FilterBar';
+import DataList from './components/DataList';
+import FiltersSheet, { type AreaOption } from './components/FiltersSheet';
+import { DEFAULT_FILTERS, STATUS_META, type PilesFiltersState } from './components/types';
+
+// Floor for how long the list's loading spinner stays visible — see its use
+// in the pile-fetch effect below.
+const MIN_LOADING_MS = 300;
+
+function buildFilterChips(filters: PilesFiltersState, locations: PilingLocation[]): FilterChipData[] {
+  const chips: FilterChipData[] = [];
+  for (const areaId of filters.areaIds) {
+    const name = locations.find((l) => l.id === areaId)?.name ?? areaId;
+    chips.push({ key: `area:${areaId}`, label: name });
+  }
+  for (const status of filters.statuses) {
+    chips.push({ key: `status:${status}`, label: STATUS_META[status].label });
+  }
+  return chips;
 }
 
 export default function PilesScreen() {
   const user = useAuthStore((s) => s.user);
   const siteId = user?.siteId;
-  const { checklistPiles, planSteps, actualSteps } = usePlan();
   const { config } = useAppConfig();
 
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [activeLocationId, setActiveLocationId] = useState('all');
+  const [appliedFilters, setAppliedFilters] = useState<PilesFiltersState>(DEFAULT_FILTERS);
+  const [draftFilters, setDraftFilters] = useState<PilesFiltersState>(DEFAULT_FILTERS);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [page, setPage] = useState(1);
-  const [items, setItems] = useState<PileWithDimension[]>([]);
+  const [items, setItems] = useState<PileWithStatus[]>([]);
   const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<PileStatusStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,57 +78,82 @@ export default function PilesScreen() {
     }, []),
   );
 
-  function toggleSearch(): void {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    if (searchOpen) {
-      setSearchInput('');
-      setDebouncedSearch('');
-      setSearchOpen(false);
-    } else {
-      setSearchOpen(true);
-    }
-  }
-
   // Debounce the raw input before it drives a query — every keystroke would
   // otherwise fire a fresh SQL round-trip.
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), config.pilesSearchDebounceMs);
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), config.pilesSearchDebounceMs);
     return () => clearTimeout(t);
-  }, [searchInput, config.pilesSearchDebounceMs]);
+  }, [search, config.pilesSearchDebounceMs]);
 
+  // Keyed off appliedFilters (not draftFilters) — editing checkboxes inside
+  // the still-open sheet must not reset pagination or refetch mid-edit.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, activeLocationId]);
+  }, [debouncedSearch, appliedFilters]);
 
   useEffect(() => {
     if (!siteId) return;
     const requestId = ++requestIdRef.current;
+    const startedAt = Date.now();
     setLoading(true);
-    getPilesBySiteWithDimensionsPage({
+    // The list query is local SQLite, not a network call — it usually
+    // resolves within a handful of milliseconds, faster than React gets a
+    // chance to actually paint the "loading" frame. Without a floor, the
+    // spinner's on/off state changes happen back-to-back in the same tick
+    // and the user never sees it at all. MIN_LOADING_MS pads that out to a
+    // duration a human can actually perceive.
+    const finishNoEarlierThan = (run: () => void) => {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= MIN_LOADING_MS) {
+        run();
+      } else {
+        setTimeout(run, MIN_LOADING_MS - elapsed);
+      }
+    };
+    getPilesBySiteFiltered({
       siteId,
       search: debouncedSearch,
-      locationId: activeLocationId,
+      locationIds: appliedFilters.areaIds,
+      statuses: appliedFilters.statuses,
       page,
       pageSize: config.pilesPageSize,
     })
       .then((result) => {
         if (requestIdRef.current !== requestId) return; // stale response, drop it
-        setItems(result.items);
-        setTotal(result.total);
-        setError(null);
-        setLoading(false);
-        setInitialLoading(false);
+        finishNoEarlierThan(() => {
+          if (requestIdRef.current !== requestId) return;
+          setItems(result.items);
+          setTotal(result.total);
+          setError(null);
+          setLoading(false);
+          setInitialLoading(false);
+        });
       })
       .catch(() => {
         if (requestIdRef.current !== requestId) return;
-        setError('Failed to load piles.');
-        setLoading(false);
-        setInitialLoading(false);
+        finishNoEarlierThan(() => {
+          if (requestIdRef.current !== requestId) return;
+          setError('Failed to load piles.');
+          setLoading(false);
+          setInitialLoading(false);
+        });
       });
-  }, [siteId, debouncedSearch, activeLocationId, page, refreshTick, config.pilesPageSize]);
+  }, [siteId, debouncedSearch, appliedFilters, page, refreshTick, config.pilesPageSize]);
 
-  // Locations + per-location pile counts for the filter pill row — fetched
-  // once per site/focus (not per keystroke/page), independent of search text.
+  // Stat tiles — deliberately independent of the status filter (see
+  // getPileStatusStatsForSite's doc comment) so toggling one status
+  // checkbox doesn't zero out the other three tiles.
+  useEffect(() => {
+    if (!siteId) return;
+    getPileStatusStatsForSite({
+      siteId,
+      search: debouncedSearch,
+      locationIds: appliedFilters.areaIds,
+    }).then(setStats);
+  }, [siteId, debouncedSearch, appliedFilters, refreshTick]);
+
+  // Locations + per-location pile counts for the filter sheet's Area section
+  // and chip labels — fetched once per site/focus, independent of search text.
   useEffect(() => {
     if (!siteId) return;
     let cancelled = false;
@@ -138,65 +174,71 @@ export default function PilesScreen() {
     };
   }, [siteId, refreshTick]);
 
-  const totalPages = Math.max(1, Math.ceil(total / config.pilesPageSize));
-
-  // ── Status lookups (today's checklist only — small, independent of how
-  // many piles are currently paged in) ────────────────────────────────────
-  const checklistPileByPileId = useMemo(
-    () => new Map(checklistPiles.map((cp) => [cp.pileId, cp])),
-    [checklistPiles],
+  const areaOptions: AreaOption[] = useMemo(
+    () => locations.map((l) => ({ id: l.id, name: l.name, count: countByLocationId[l.id] ?? 0 })),
+    [locations, countByLocationId],
   );
-  const planStepsByChecklistPileId = useMemo(() => {
-    const map = new Map<string, typeof planSteps>();
-    for (const s of planSteps) {
-      const list = map.get(s.checklistPileId);
-      if (list) list.push(s);
-      else map.set(s.checklistPileId, [s]);
-    }
-    return map;
-  }, [planSteps]);
-  const actualsByChecklistPileId = useMemo(() => {
-    const map = new Map<string, typeof actualSteps>();
-    for (const a of actualSteps) {
-      const list = map.get(a.checklistPileId);
-      if (list) list.push(a);
-      else map.set(a.checklistPileId, [a]);
-    }
-    return map;
-  }, [actualSteps]);
+  const filterChips = useMemo(() => buildFilterChips(appliedFilters, locations), [appliedFilters, locations]);
+  const activeFilterCount = filterChips.length;
 
-  function statusForPile(pileId: string): 'pending' | 'in_progress' | 'completed' {
-    const cp = checklistPileByPileId.get(pileId);
-    if (!cp) return 'pending';
-    const steps = planStepsByChecklistPileId.get(cp.id) ?? [];
-    const actuals = actualsByChecklistPileId.get(cp.id) ?? [];
-    return derivePileStatus(steps.length, actuals);
+  function openFiltersSheet(): void {
+    setDraftFilters(appliedFilters);
+    setSheetOpen(true);
+  }
+  function applyFilters(): void {
+    setAppliedFilters(draftFilters);
+    setSheetOpen(false);
+  }
+  function cancelFilters(): void {
+    setSheetOpen(false);
+  }
+  function removeFilterChip(key: string): void {
+    const next = { ...appliedFilters };
+    if (key.startsWith('area:')) next.areaIds = next.areaIds.filter((id) => `area:${id}` !== key);
+    else if (key.startsWith('status:')) next.statuses = next.statuses.filter((s) => `status:${s}` !== key);
+    setAppliedFilters(next);
+  }
+  function clearAllFilters(): void {
+    setAppliedFilters(DEFAULT_FILTERS);
   }
 
-  // ── Steps modal (computed lazily, only for the tapped pile) ─────────────
-  const [selectedPile, setSelectedPile] = useState<PileWithDimension | null>(null);
+  // StatsGrid tiles act as a quick single-status filter, radio-button style —
+  // Total clears it, tapping a status selects it (independent of the Filters
+  // sheet's own multi-select statuses, though they share state). Tapping the
+  // already-active tile is a no-op — it stays selected rather than toggling
+  // back to Total.
+  const activeStatFilter: StatFilter = appliedFilters.statuses.length === 1 ? appliedFilters.statuses[0] : 'ALL';
+  function selectStatFilter(filter: StatFilter): void {
+    if (filter === 'ALL') {
+      setAppliedFilters({ ...appliedFilters, statuses: [] });
+    } else {
+      setAppliedFilters({ ...appliedFilters, statuses: [filter] });
+    }
+  }
 
-  const selectedPileSteps = useMemo<CompletedStepRow[]>(() => {
-    if (!selectedPile) return [];
-    const cp = checklistPileByPileId.get(selectedPile.id);
-    if (!cp) return [];
-    const steps = (planStepsByChecklistPileId.get(cp.id) ?? []).slice().sort(byPlannedStartAsc);
-    const actuals = actualsByChecklistPileId.get(cp.id) ?? [];
-    return steps
-      .map((s) => {
-        const actual = actuals.find((a) => a.stepId === s.stepId);
-        return actual?.actualEnd && actual.actualStart
-          ? {
-              id: s.id,
-              name: s.stepName ?? '',
-              track: (s.track ?? 'RIG') as CompletedStepRow['track'],
-              actualStart: actual.actualStart,
-              actualEnd: actual.actualEnd,
-            }
-          : null;
-      })
-      .filter((s): s is CompletedStepRow => s !== null);
-  }, [selectedPile, checklistPileByPileId, planStepsByChecklistPileId, actualsByChecklistPileId]);
+  // ── Steps modal (fetched lazily for the tapped pile, from whichever day
+  // its status/statusDate actually came from — not necessarily today) ─────
+  const [selectedPile, setSelectedPile] = useState<PileWithStatus | null>(null);
+  const [selectedPileSteps, setSelectedPileSteps] = useState<CompletedStepRow[]>([]);
+  const [selectedPileStepsLoading, setSelectedPileStepsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!selectedPile?.statusDate) {
+      setSelectedPileSteps([]);
+      setSelectedPileStepsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSelectedPileStepsLoading(true);
+    getCompletedStepsForPileOnDate(selectedPile.id, selectedPile.statusDate).then((steps) => {
+      if (cancelled) return;
+      setSelectedPileSteps(steps);
+      setSelectedPileStepsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPile]);
 
   // ── Loading ─────────────────────────────────────────────────────────────
   if (initialLoading) {
@@ -210,6 +252,8 @@ export default function PilesScreen() {
     );
   }
 
+  const totalPages = Math.max(1, Math.ceil(total / config.pilesPageSize));
+
   return (
     <LinearGradient
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
@@ -218,85 +262,43 @@ export default function PilesScreen() {
       <SafeAreaView style={styles.flex} edges={['top']}>
         {/* Sticky header */}
         <View style={styles.headerArea}>
-          <View style={styles.titleRow}>
-            <Text style={styles.h1}>Piles</Text>
-            <View style={styles.countBadge}>
-              <Text style={styles.countText}>{total} shown</Text>
-            </View>
-          </View>
-
-          <SearchToggleField
-            value={searchInput}
-            onChangeText={setSearchInput}
-            placeholder="Search piles by code"
-            icon={searchOpen ? 'x' : 'search'}
-            onIconPress={toggleSearch}
-            showField={searchOpen}
-            autoFocus
-            collapsedContent={
-              <LocationFilterPillRow
-                locations={locations}
-                countByLocationId={countByLocationId}
-                totalCount={totalPileCount}
-                activeLocationId={activeLocationId}
-                onLocationChange={setActiveLocationId}
-              />
-            }
+          <ScreenHeader title="Piles" onFilterPress={openFiltersSheet} filterActive={activeFilterCount > 0} />
+          <SearchInput value={search} onChangeText={setSearch} />
+          <StatsGrid stats={stats} activeFilter={activeStatFilter} onSelectFilter={selectStatFilter} />
+          <FilterBar
+            chips={filterChips}
+            activeCount={activeFilterCount}
+            onOpenFilters={openFiltersSheet}
+            onRemoveChip={removeFilterChip}
+            onClear={clearAllFilters}
           />
         </View>
 
-        {/* Paginated grid — the list scrolls in its own bounded area so the
-            pager below stays pinned in view instead of scrolling out of
-            reach at the bottom of a long page (matches PileAssignStep /
-            AddPileModal's list+pinned-pager layout). */}
+        {/* List scrolls in its own bounded area so the pager below stays
+            pinned in view instead of scrolling out of reach. */}
         <View style={styles.listSection}>
-          <FlatList
-            style={styles.list}
-            data={items}
-            keyExtractor={(item) => item.id}
-            numColumns={2}
-            columnWrapperStyle={styles.columnWrapper}
-            renderItem={({ item }) => (
-              <PileGridCard
-                code={item.pileIdCode}
-                dia={item.dia}
-                depth={item.depth}
-                area={item.area}
-                badge="none"
-                completed={statusForPile(item.id) === 'completed'}
-                onPress={() => setSelectedPile(item)}
-              />
-            )}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            ListHeaderComponent={error ? <Text style={styles.errorText}>⚠ {error}</Text> : null}
-            ListEmptyComponent={
-              !error ? (
-                <EmptyState
-                  icon={totalPileCount === 0 ? 'download' : 'search'}
-                  title={totalPileCount === 0 ? 'No piles synced' : 'No matches'}
-                  message={
-                    totalPileCount === 0
-                      ? 'No piles synced yet. Pull data from the Profile tab.'
-                      : 'No piles match your search or filter.'
-                  }
-                />
-              ) : null
-            }
-          />
+          <DataList items={items} error={error} totalPilesSynced={totalPileCount} onPressItem={setSelectedPile} loading={loading} />
 
           <View style={styles.pagerFooter}>
-            {loading && <ActivityIndicator size="small" color={colors.accent} style={styles.pagerSpinner} />}
-            <Pager page={page} totalPages={totalPages} onPageChange={setPage} />
+            <Pager page={Math.min(page, totalPages)} totalPages={totalPages} onPageChange={setPage} />
           </View>
         </View>
+
+        <FiltersSheet
+          visible={sheetOpen}
+          onCancel={cancelFilters}
+          draft={draftFilters}
+          onChangeDraft={setDraftFilters}
+          onApply={applyFilters}
+          areaOptions={areaOptions}
+        />
 
         <PileStepsModal
           visible={!!selectedPile}
           onClose={() => setSelectedPile(null)}
           pileCode={selectedPile?.pileIdCode ?? ''}
           steps={selectedPileSteps}
+          loading={selectedPileStepsLoading}
         />
       </SafeAreaView>
     </LinearGradient>
@@ -313,39 +315,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
 
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-
-  h1: {
-    ...typography.h1,
-    color: colors.textPrimary,
-  },
-
-  countBadge: {
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentSoft,
-  },
-  countText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.accent,
-  },
-
-  columnWrapper: { gap: spacing.sm },
-
   listSection: { flex: 1, minHeight: 0 },
-  list: { flex: 1 },
-  listContent: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.md,
-    gap: spacing.sm,
-  },
 
   pagerFooter: {
     paddingHorizontal: spacing.lg,
@@ -356,19 +326,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
   },
-  pagerSpinner: { marginBottom: spacing.xs },
 
   emptyText: {
-    ...typography.body,
     color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.md,
-  },
-
-  errorText: {
-    ...typography.body,
-    color: colors.warning,
-    textAlign: 'center',
-    marginTop: spacing.lg,
   },
 });

@@ -376,6 +376,15 @@ export async function initDb() {
       ON pil_checklist_piles (checklist_id, pile_id);
   `);
 
+  // Supports the site-wide "has this pile ever been completed" aggregation
+  // (GROUP BY pile_id across every checklist day) used by the Piles list
+  // screen's status/stat computation — the unique index above is keyed by
+  // (checklist_id, pile_id) and isn't useful for a pile_id-first scan.
+  await sqlite.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_checklist_piles_pile
+      ON pil_checklist_piles (pile_id);
+  `);
+
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_plan_steps (
       id                   TEXT PRIMARY KEY NOT NULL,

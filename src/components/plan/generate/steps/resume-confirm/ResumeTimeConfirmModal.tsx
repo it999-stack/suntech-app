@@ -44,23 +44,17 @@ interface ResumeTimeConfirmModalProps {
 
 type Stage = 'status' | 'partial-past' | 'partial-finish' | 'full-past';
 
-/** Today's time-of-day, applied onto the historical checklist's date — a
- * reasonable starting point for "when did this actually stop/finish
- * yesterday" (often close to when the supervisor is filling this in). */
-function seedPastTime(checklistDate: string | undefined): Date {
+/** Today's time-of-day, applied onto the day work actually started (the
+ * source of truth the "stop time" is validated against) — a reasonable
+ * starting point for "when did this actually stop/finish yesterday". Falls
+ * back to the historical checklist's date when there's no logged start yet. */
+function seedPastTime(pastActualStart: string | null | undefined, checklistDate: string | undefined): Date {
   const now = new Date();
-  if (!checklistDate) return now;
-  const [y, m, d] = checklistDate.split('-').map(Number);
-  if (!y || !m || !d) return now;
-  return new Date(y, m - 1, d, now.getHours(), now.getMinutes(), 0, 0);
-}
-
-/** NativeTimerSelectMenu's returned date isn't reliably anchored to the day we
- * care about — only its hour/minute are trustworthy, applied onto our own anchor day. */
-function applyPickedTime(picked: Date, anchorDate: Date): Date {
-  const out = new Date(anchorDate);
-  out.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
-  return out;
+  const anchorSource = pastActualStart ?? (checklistDate ? `${checklistDate}T00:00:00` : null);
+  if (!anchorSource) return now;
+  const anchor = new Date(anchorSource);
+  if (Number.isNaN(anchor.getTime())) return now;
+  return new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate(), now.getHours(), now.getMinutes(), 0, 0);
 }
 
 export default function ResumeTimeConfirmModal({
@@ -76,7 +70,7 @@ export default function ResumeTimeConfirmModal({
     new Date(effectiveStart.getTime() + Math.max(0, resumeWork.remainingMinutes) * 60000);
 
   const [stage, setStage] = useState<Stage>('status');
-  const [pastDate, setPastDate] = useState<Date>(() => seedPastTime(resumeWork.checklistDate));
+  const [pastDate, setPastDate] = useState<Date>(() => seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate));
   const [finishDate, setFinishDate] = useState<Date>(seedFinish);
   // Which field the shared NativeTimerSelectMenu is currently editing — not always
   // implied by `stage` alone, since partial-finish lets you reopen the past
@@ -88,11 +82,11 @@ export default function ResumeTimeConfirmModal({
   useEffect(() => {
     if (!visible) return;
     setStage('status');
-    setPastDate(seedPastTime(resumeWork.checklistDate));
+    setPastDate(seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate));
     setFinishDate(seedFinish());
     setRemarks('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, resumeWork.remainingMinutes, resumeWork.checklistDate, effectiveStart]);
+  }, [visible, resumeWork.remainingMinutes, resumeWork.pastActualStart, resumeWork.checklistDate, effectiveStart]);
 
   const completedSteps = resumeWork.completedSteps ?? [];
   const pastActualStartDate = resumeWork.pastActualStart ? new Date(resumeWork.pastActualStart) : null;
@@ -356,7 +350,7 @@ export default function ResumeTimeConfirmModal({
           if (pickerTarget === 'finish') {
             handleFinishPicked(date);
           } else {
-            setPastDate((prev) => applyPickedTime(date, prev));
+            setPastDate(date);
           }
           setPickerTarget(null);
         }}

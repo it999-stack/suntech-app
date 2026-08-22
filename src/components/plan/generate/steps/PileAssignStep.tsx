@@ -298,7 +298,7 @@ export default function PileAssignStep({
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0 },
-  toolbarSection: { marginBottom: spacing.xs / 2 },
+  toolbarSection: { marginBottom: spacing.sm },
   // Runs the card to the very bottom, under NextStepFab's horizontal range —
   // deliberate now that the pager also responds to swipe (see IndexTable's
   // onSwipeNextPage/onSwipePrevPage), so tapping the last page number/chevron

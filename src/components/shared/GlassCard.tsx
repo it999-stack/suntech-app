@@ -50,7 +50,7 @@ const styles = StyleSheet.create({
   },
   borderless: { borderWidth: 0 },
   inner: {
-    backgroundColor: colors.glassFill,
+    backgroundColor: colors.white,
     padding: 16,
   },
 });

@@ -4,14 +4,7 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 import { PencilLine } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
-import ConfirmDialog from '@components/shared/ConfirmDialog';
-import {
-  formatMinutes12,
-  formatHeaderDate,
-  resolveOvernightDate,
-  toLocalDateStr,
-  toLocalIsoString,
-} from '@utils/formatTime';
+import { resolveOvernightDate, toLocalIsoString } from '@utils/formatTime';
 import { notify } from '@utils/notify';
 import { colors, radius } from '@theme/theme';
 
@@ -52,6 +45,16 @@ interface Props {
    */
   maxBoundIso?: string;
   /**
+   * Earliest/latest real timestamp allowed by the checklist's own plan
+   * window (plan_start_time .. plan_end_time + 1h grace) — an independent
+   * outer bound from minBoundIso/maxBoundIso above (step adjacency),
+   * enforced both by capping the picker's own min/max and, as a backstop,
+   * in confirm(). Omit for no plan-window restriction (e.g. checklist has
+   * no plan yet).
+   */
+  planWindowMinIso?: string;
+  planWindowMaxIso?: string;
+  /**
    * `explicitDate` is set only when the user tapped the picker's header
    * calendar and picked a day other than the seeded default — the caller
    * should use it as-is instead of running its own overnight-rollover
@@ -78,19 +81,16 @@ export default function EditTimeButton({
   pileConflictCheck,
   minBoundIso,
   maxBoundIso,
+  planWindowMinIso,
+  planWindowMaxIso,
   onConfirm,
   anchorIso,
   blocked,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [pendingChange, setPendingChange] = useState<{
-    newMinutes: number;
-    explicitDate?: Date;
-    timeLabel: string;
-  } | null>(null);
 
-  function confirm(newMinutes: number, explicitDate?: Date) {
+  async function confirm(newMinutes: number, explicitDate?: Date) {
     const candidateDate = explicitDate ?? resolveOvernightDate(anchorIso ?? toLocalIsoString(new Date()), newMinutes);
 
     if (minBoundIso && candidateDate.getTime() < new Date(minBoundIso).getTime()) {
@@ -102,21 +102,20 @@ export default function EditTimeButton({
       return;
     }
 
+    if (planWindowMinIso && candidateDate.getTime() < new Date(planWindowMinIso).getTime()) {
+      notify.error('Please select a time within the plan window.');
+      return;
+    }
+    if (planWindowMaxIso && candidateDate.getTime() > new Date(planWindowMaxIso).getTime()) {
+      notify.error('Please select a time within the plan window.');
+      return;
+    }
+
     if (machineConflictCheck?.(candidateDate) || pileConflictCheck?.(candidateDate)) {
       notify.error('Invalid time');
       return;
     }
 
-    const timeLabel = explicitDate
-      ? `${formatMinutes12(newMinutes)} on ${formatHeaderDate(toLocalDateStr(explicitDate), { includeYear: true })}`
-      : formatMinutes12(newMinutes);
-
-    setPendingChange({ newMinutes, explicitDate, timeLabel });
-  }
-
-  async function handleConfirmChange() {
-    if (!pendingChange) return;
-    const { newMinutes, explicitDate } = pendingChange;
     setSaving(true);
     try {
       await onConfirm(newMinutes, explicitDate);
@@ -127,7 +126,6 @@ export default function EditTimeButton({
       });
     } finally {
       setSaving(false);
-      setPendingChange(null);
     }
   }
 
@@ -161,16 +159,8 @@ export default function EditTimeButton({
           d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
           return d;
         })()}
-      />
-
-      <ConfirmDialog
-        visible={!!pendingChange}
-        title="Change time?"
-        message={pendingChange ? `This will change the ${label} to ${pendingChange.timeLabel}.` : ''}
-        confirmLabel="Confirm"
-        confirmDisabled={saving}
-        onConfirm={handleConfirmChange}
-        onCancel={() => setPendingChange(null)}
+        minimumDate={planWindowMinIso ? new Date(planWindowMinIso) : undefined}
+        maximumDate={planWindowMaxIso ? new Date(planWindowMaxIso) : undefined}
       />
     </>
   );

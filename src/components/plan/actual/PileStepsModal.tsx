@@ -24,7 +24,7 @@ import MeasurementFieldsModal, {
   type MeasurementFieldConfig,
 } from '@components/plan/actual/MeasurementFieldsModal';
 import { getMachineEventsForChecklistPile } from '@repositories/machineEventsRepository';
-import type { PilingMachine, PilMachineEvent, PilContractor } from '@db/schema';
+import type { PilingMachine, PilMachineEvent, PilContractor, PilingDailyChecklist } from '@db/schema';
 import type { ActualEntry, PileGroup, PileMeasurementFields } from '@app-types/plan';
 import type { LogMachineEventInput } from '@state/PlanContext';
 import { findMeasurementTrigger, getMeasurementFieldsForStep } from '@utils/pileMeasurementTriggers';
@@ -35,6 +35,8 @@ import {
   formatTimeWithDay,
   formatDuration,
   durationMinutes,
+  addMinutes,
+  toLocalIsoString,
 } from '@utils/formatTime';
 import { hasMachineConflict, hasPileStepConflict, type MachineFloorIndex } from '@utils/machineFloor';
 import { getTrackBadgeColors } from '@utils/helpers';
@@ -77,6 +79,10 @@ interface Props {
   /** Site-scoped contractor master list — backs the "Name of Pile
    * Contractor" / "Name of Cage Contractor" measurement fields. */
   contractors: PilContractor[];
+  /** Caps actual start/finish entry to this checklist's own plan window
+   * (planStartTime .. planEndTime + 1h grace) — null/missing fields mean no
+   * plan generated yet, so no restriction is applied. */
+  checklist: Pick<PilingDailyChecklist, 'planStartTime' | 'planEndTime'> | null;
   onClose: () => void;
   onSetActualTime: (
     stepId: string,
@@ -97,6 +103,7 @@ export default function PileStepsModal({
   machines,
   machineFloorIndex,
   contractors,
+  checklist,
   onClose,
   onSetActualTime,
   onClearActualTime,
@@ -162,6 +169,15 @@ export default function PileStepsModal({
       cancelled = true;
     };
   }, [machineEventFor, group.checklistPileId]);
+
+  // Caps actual start/finish entry to this checklist's own plan window —
+  // plan_start_time through plan_end_time + 1h grace. undefined (no
+  // restriction) when the checklist has no plan yet.
+  const planWindowMinIso = checklist?.planStartTime ?? undefined;
+  const planWindowMaxIso = useMemo(
+    () => (checklist?.planEndTime ? toLocalIsoString(addMinutes(new Date(checklist.planEndTime), 60)) : undefined),
+    [checklist?.planEndTime],
+  );
 
   const currentMachineIdByTrack = useMemo(() => getCurrentMachineIdByTrack(steps), [steps]);
   const currentStep = steps.find((s) => s.stepId === currentStepId);
@@ -427,6 +443,8 @@ export default function PileStepsModal({
                         label="start time"
                         minBoundIso={prevStep?.actualEndIso}
                         maxBoundIso={step.actualEndIso}
+                        planWindowMinIso={planWindowMinIso}
+                        planWindowMaxIso={planWindowMaxIso}
                         machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
                         pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                         onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
@@ -453,6 +471,8 @@ export default function PileStepsModal({
                         label="finish time"
                         minBoundIso={step.actualStartIso}
                         maxBoundIso={nextStep?.actualStartIso}
+                        planWindowMinIso={planWindowMinIso}
+                        planWindowMaxIso={planWindowMaxIso}
                         machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
                         pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
                         onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
@@ -478,6 +498,8 @@ export default function PileStepsModal({
                     label="start time"
                     minBoundIso={prevStep?.actualEndIso}
                     maxBoundIso={step.actualEndIso}
+                    planWindowMinIso={planWindowMinIso}
+                    planWindowMaxIso={planWindowMaxIso}
                     machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
                     pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                     onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
@@ -570,12 +592,13 @@ export default function PileStepsModal({
             {isCurrent && !isStarted && !isBlockedByIdle && (
               <StepTimeControl
                 mode="start"
-                stepName={step.stepName}
                 defaultMinutes={prevStep?.actualEnd ?? step.plannedStart}
                 onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
                 machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
                 pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                 minBoundIso={prevStep?.actualEndIso}
+                planWindowMinIso={planWindowMinIso}
+                planWindowMaxIso={planWindowMaxIso}
                 anchorIso={step.startAnchorIso}
                 blocked={breakdownBlockedNotice}
               />
@@ -584,7 +607,6 @@ export default function PileStepsModal({
             {isCurrent && isStarted && !isDone && !isBlockedByIdle && (
               <StepTimeControl
                 mode="finish"
-                stepName={step.stepName}
                 defaultMinutes={
                   step.plannedEnd != null && step.plannedEnd > step.actualStart!
                     ? step.plannedEnd
@@ -594,6 +616,8 @@ export default function PileStepsModal({
                 machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
                 pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
                 minBoundIso={step.actualStartIso}
+                planWindowMinIso={planWindowMinIso}
+                planWindowMaxIso={planWindowMaxIso}
                 anchorIso={step.endAnchorIso}
                 blocked={breakdownBlockedNotice}
               />
