@@ -18,8 +18,10 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 
 // Full-screen step wizards inside the Home stack render their own bottom
 // action button flush with the screen edge — the tab bar must be hidden
-// underneath them or the button ends up sandwiched above it.
-const HIDE_TAB_BAR_FOR_ROUTES = ['GeneratePlan'];
+// underneath them or the button ends up sandwiched above it. FillActuals is
+// the same case — its own bottom sheet/modal content should own the full
+// screen height instead of sharing it with the tab bar.
+const HIDE_TAB_BAR_FOR_ROUTES = ['GeneratePlan', 'FillActuals'];
 
 function getHomeTabBarStyle(route: RouteProp<MainTabParamList, 'HomeTab'>) {
   const routeName = getFocusedRouteNameFromRoute(route) ?? 'HomeScreen';

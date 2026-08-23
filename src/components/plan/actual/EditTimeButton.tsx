@@ -14,21 +14,23 @@ interface Props {
   /** e.g. "start time" / "finish time" — used in alert copy. */
   label: string;
   /**
-   * Cross-pile overlap check for this step's assigned machine — true if the
-   * candidate time genuinely overlaps another pile's already-recorded
-   * (start-and-end-both-set) interval on the same machine. Applies when
-   * editing either a start or finish time. Checked by real timestamp (not
-   * minutes-of-day) so a conflict on a non-adjacent calendar day still
-   * compares correctly. See src/utils/machineFloor.ts.
-   */
-  machineConflictCheck?: (candidate: Date) => boolean;
-  /**
-   * Within-pile overlap check — true if the candidate time genuinely
-   * overlaps another step's already-recorded (start-and-end-both-set)
-   * interval on this same pile, regardless of machine. See
+   * Cross-pile overlap check for this step's assigned machine — returns a
+   * message describing what's occupying the machine ("Machine already
+   * occupied — P-02 · Casing") if the candidate time genuinely overlaps
+   * another pile's already-recorded (start-and-end-both-set) interval on the
+   * same machine, or null otherwise. Applies when editing either a start or
+   * finish time. Checked by real timestamp (not minutes-of-day) so a
+   * conflict on a non-adjacent calendar day still compares correctly. See
    * src/utils/machineFloor.ts.
    */
-  pileConflictCheck?: (candidate: Date) => boolean;
+  machineConflictCheck?: (candidate: Date) => string | null;
+  /**
+   * Within-pile overlap check — returns a message if the candidate time
+   * genuinely overlaps another step's already-recorded (start-and-end-both-set)
+   * interval on this same pile, regardless of machine, or null otherwise. See
+   * src/utils/machineFloor.ts.
+   */
+  pileConflictCheck?: (candidate: Date) => string | null;
   /**
    * Earliest real timestamp this time may land on (inclusive) — e.g. the
    * previous step's already-recorded end when editing a start, or this
@@ -88,14 +90,6 @@ export default function EditTimeButton({
   blocked,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
-  // Every completed step on a pile renders its own EditTimeButton (x2: start
-  // + finish), each capable of opening a native TimerSelectMenu — but at
-  // most one is ever open at a time. Mounting react-native-date-picker's
-  // native modal picker for every single one up front (even closed) is real,
-  // per-instance native setup cost that scales with completed-step count and
-  // was the dominant cost in opening PileStepsModal. Mounting it lazily on
-  // first open — then leaving it mounted, same as before, for its own normal
-  // close animation to keep working — fixes that without changing behavior.
   const [hasOpenedPicker, setHasOpenedPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -120,8 +114,9 @@ export default function EditTimeButton({
       return;
     }
 
-    if (machineConflictCheck?.(candidateDate) || pileConflictCheck?.(candidateDate)) {
-      notify.error('Invalid time');
+    const conflictMessage = machineConflictCheck?.(candidateDate) ?? pileConflictCheck?.(candidateDate);
+    if (conflictMessage) {
+      notify.error(conflictMessage);
       return;
     }
 

@@ -113,8 +113,29 @@ export function useSequenceEditor(args: {
   const [addPileModalOpen, setAddPileModalOpen] = useState(false);
   const [isSavingSequence, setIsSavingSequence] = useState(false);
 
+  // step_track_overrides is never persisted server-side (see
+  // _resolve_step_execution's own docstring) — each edit-plan request must
+  // resend it or the server re-resolves every step to its nominal track.
+  // Reconstructed here from the pile's current steps: a step whose nominal
+  // track is CRANE but whose current execution track is RIG is, by
+  // definition, an override already in effect.
+  function deriveStepTrackOverrides(pileId: string): string[] {
+    const group = pileGroups.find((g) => g.pileId === pileId);
+    if (!group) return [];
+    return group.steps
+      .filter((s) => (s.businessTrack ?? s.track) === 'CRANE' && s.track === 'RIG')
+      .map((s) => s.stepId);
+  }
+
   function openSequenceModal() {
-    setDraftRows(checklistPiles.map((cp) => ({ pileId: cp.pileId, rigId: cp.rigId, craneId: cp.craneId ?? undefined })));
+    setDraftRows(
+      checklistPiles.map((cp) => ({
+        pileId: cp.pileId,
+        rigId: cp.rigId,
+        craneId: cp.craneId ?? undefined,
+        stepTrackOverrides: deriveStepTrackOverrides(cp.pileId),
+      })),
+    );
     setSequenceModalOpen(true);
   }
 
@@ -127,18 +148,23 @@ export function useSequenceEditor(args: {
   // touch the local draft, so this sends everything accumulated in one go.
   async function handleReorderConfirm(newSubsetOrder: string[]) {
     if (!checklist || !draftRows) return;
+    const byPileId = new Map(draftRows.map((r) => [r.pileId, r]));
+
+    const oldSubsetOrder = sequencePiles.map((p) => p.id);
+    const overridesBySlot = oldSubsetOrder.map((pileId) => byPileId.get(pileId)?.stepTrackOverrides ?? []);
+    const overridesForNewOrder = new Map(newSubsetOrder.map((pileId, i) => [pileId, overridesBySlot[i] ?? []]));
+
     const fullOrder = draftRows.map((r) => r.pileId);
     const merged = mergeOrder(fullOrder, newSubsetOrder);
-    const byPileId = new Map(draftRows.map((r) => [r.pileId, r]));
-    const piles: EditPlanPileInput[] = merged.map((pileId) => byPileId.get(pileId)!);
+    const piles: EditPlanPileInput[] = merged.map((pileId) => {
+      const row = byPileId.get(pileId)!;
+      return overridesForNewOrder.has(pileId)
+        ? { ...row, stepTrackOverrides: overridesForNewOrder.get(pileId) }
+        : row;
+    });
 
     setIsSavingSequence(true);
     try {
-      // Dry-run first — same validation edit_checklist_plan_mid_day runs for
-      // real, but nothing is written. Lets a rejection (a pile with logged
-      // progress, reassigning a running pile's own machine, the plan window
-      // having elapsed, or a schedule that can't fit) surface here without
-      // ever touching the real plan.
       await previewEditPlanMidDay(siteId, checklist.id, piles);
       await editPlanMidDay(siteId, checklist.id, workingDate, piles);
       setDraftRows(null);
@@ -159,8 +185,6 @@ export function useSequenceEditor(args: {
 
   function handleAddPileConfirm(input: EditPlanPileInput) {
     setDraftRows((prev) => [...(prev ?? []), input]);
-    // Forces ReorderPilesOverlay to remount so it picks up the newly added
-    // pile (it only reads its `piles` prop once, on mount).
     setSequenceRemountKey((k) => k + 1);
     setAddPileModalOpen(false);
   }

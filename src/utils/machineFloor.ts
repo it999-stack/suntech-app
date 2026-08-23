@@ -31,6 +31,10 @@ type MachineInterval = {
   checklistPileId: string;
   start: string;
   end: string;
+  /** Carried along purely so a conflict can be reported by name — "Machine
+   * already occupied — P-02 · Casing" — instead of a bare "Invalid time". */
+  pileCode: string;
+  stepName: string;
 };
 
 /** assignedMachineId -> that machine's CLOSED actual-time intervals across the
@@ -55,6 +59,8 @@ export function buildMachineFloorIndex(pileGroups: PileGroup[]): MachineFloorInd
         checklistPileId: group.checklistPileId,
         start: step.actualStartIso,
         end: step.actualEndIso,
+        pileCode: group.pileCode,
+        stepName: step.stepName,
       };
       const list = index.get(step.assignedMachineId);
       if (list) list.push(entry);
@@ -80,10 +86,13 @@ function candidateRange(candidateStart: Date, candidateEnd?: Date): [number, num
 }
 
 /**
- * True when `[candidateStart, candidateEnd)` genuinely overlaps any *other*
- * closed interval recorded on `machineId` (excluding the entry's own
+ * Returns the *other* closed interval recorded on `machineId` that genuinely
+ * overlaps `[candidateStart, candidateEnd)` (excluding the entry's own
  * checklist-pile + step, so re-checking a step's own start/end never
- * self-blocks against a value derived from its own already-set fields).
+ * self-blocks against a value derived from its own already-set fields), or
+ * null if nothing conflicts. The returned interval carries `pileCode`/
+ * `stepName` so callers can report exactly what it's occupied by, instead of
+ * a bare yes/no.
  *
  * `excludeStepId` alone is NOT enough to identify "this step" — it's the
  * shared step-DEFINITION id (e.g. every pile's "BORING" step has the same
@@ -92,46 +101,50 @@ function candidateRange(candidateStart: Date, candidateEnd?: Date): [number, num
  * between two different piles. `excludeChecklistPileId` (unique per pile)
  * is what actually disambiguates.
  */
-export function hasMachineConflict(
+export function findMachineConflict(
   index: MachineFloorIndex,
   machineId: string | null | undefined,
   excludeChecklistPileId: string,
   excludeStepId: string,
   candidateStart: Date,
   candidateEnd?: Date,
-): boolean {
-  if (!machineId) return false;
+): MachineInterval | null {
+  if (!machineId) return null;
   const intervals = index.get(machineId);
-  if (!intervals) return false;
+  if (!intervals) return null;
 
   const [start, end] = candidateRange(candidateStart, candidateEnd);
-  return intervals.some((interval) => {
-    if (interval.checklistPileId === excludeChecklistPileId && interval.stepId === excludeStepId) return false;
-    const otherStart = new Date(interval.start).getTime();
-    const otherEnd = new Date(interval.end).getTime();
-    return intervalsOverlap(start, end, otherStart, otherEnd);
-  });
+  return (
+    intervals.find((interval) => {
+      if (interval.checklistPileId === excludeChecklistPileId && interval.stepId === excludeStepId) return false;
+      const otherStart = new Date(interval.start).getTime();
+      const otherEnd = new Date(interval.end).getTime();
+      return intervalsOverlap(start, end, otherStart, otherEnd);
+    }) ?? null
+  );
 }
 
 /**
- * True when `[candidateStart, candidateEnd)` genuinely overlaps any *other*
- * step within the same pile that already has both an actual start and end
- * recorded — the within-pile counterpart to `hasMachineConflict`. Regardless
- * of which machine each step is assigned to; this is purely "does this pile's
- * own timeline already have something recorded here".
+ * The within-pile counterpart to `findMachineConflict` — the *other* step
+ * within the same pile (regardless of which machine it's assigned to) whose
+ * already-recorded actual interval genuinely overlaps
+ * `[candidateStart, candidateEnd)`, or null if none does. Purely "does this
+ * pile's own timeline already have something recorded here".
  */
-export function hasPileStepConflict(
+export function findPileStepConflict(
   steps: ActualEntry[],
   excludeStepId: string,
   candidateStart: Date,
   candidateEnd?: Date,
-): boolean {
+): ActualEntry | null {
   const [start, end] = candidateRange(candidateStart, candidateEnd);
-  return steps.some((step) => {
-    if (step.stepId === excludeStepId) return false;
-    if (!step.actualStartIso || !step.actualEndIso) return false;
-    const otherStart = new Date(step.actualStartIso).getTime();
-    const otherEnd = new Date(step.actualEndIso).getTime();
-    return intervalsOverlap(start, end, otherStart, otherEnd);
-  });
+  return (
+    steps.find((step) => {
+      if (step.stepId === excludeStepId) return false;
+      if (!step.actualStartIso || !step.actualEndIso) return false;
+      const otherStart = new Date(step.actualStartIso).getTime();
+      const otherEnd = new Date(step.actualEndIso).getTime();
+      return intervalsOverlap(start, end, otherStart, otherEnd);
+    }) ?? null
+  );
 }

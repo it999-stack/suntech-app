@@ -38,7 +38,7 @@ import {
   addMinutes,
   toLocalIsoString,
 } from '@utils/formatTime';
-import { hasMachineConflict, hasPileStepConflict, type MachineFloorIndex } from '@utils/machineFloor';
+import { findMachineConflict, findPileStepConflict, type MachineFloorIndex } from '@utils/machineFloor';
 import { getTrackBadgeColors } from '@utils/helpers';
 
 /** Current time-of-day as minutes-since-midnight. */
@@ -47,16 +47,6 @@ function nowMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-/** Current assigned machine per *business* track, derived from this pile's
- * steps — the not-done step with the earliest sequence order per business
- * track (or, if every step of that track is done, the last one), since
- * that's "what's actually assigned right now" for a breakdown report.
- * Grouped by businessTrack (the step definition's fixed nominal track), not
- * the live `track` (whichever machine currently executes it) — otherwise a
- * step's group key would itself change identity the moment it's replaced,
- * making the resulting map impossible to look back up by its original
- * track (see isEligibleReplacementType in eventLabels.ts for why this
- * matters for Replace Machine specifically). */
 function getCurrentMachineIdByTrack(steps: ActualEntry[]): Partial<Record<ActualEntry['track'], string>> {
   const result: Partial<Record<ActualEntry['track'], string>> = {};
   const tracks: ActualEntry['track'][] = ['RIG', 'CRANE', 'COMPRESSOR'];
@@ -115,16 +105,6 @@ export default function PileStepsModal({
   const currentStepId = steps.find((s) => s.actualEnd === undefined)?.stepId;
   const allDone = !currentStepId;
 
-  // Jumps to the current (needs-actuals) step's card the moment it reports
-  // its layout — happens at most once per pile opened (re-armed below
-  // whenever a different pile's group is shown), so re-renders from e.g.
-  // ticking the clock or saving a time don't yank the scroll position back.
-  // Not animated — the sheet's own slide-up is already the entrance motion;
-  // a second animated scroll on top of that just reads as extra lag. Left
-  // short of the card's exact top so the tail end of the previous (done)
-  // step's card still peeks in above it, giving context instead of the
-  // current card sitting flush at the very top edge. See AppModal's
-  // forwarded ScrollView ref.
   const scrollRef = useRef<ScrollView>(null);
   const hasScrolledToCurrentRef = useRef(false);
   useEffect(() => {
@@ -211,49 +191,48 @@ export default function PileStepsModal({
   const currentMachineIdByTrack = useMemo(() => getCurrentMachineIdByTrack(steps), [steps]);
   const currentStep = steps.find((s) => s.stepId === currentStepId);
 
-  // Cross-pile "does this candidate time overlap another pile's already-recorded
-  // busy interval on this step's assigned machine" checkers — see
-  // src/utils/machineFloor.ts. `forStart`/`forFinish` each close over whichever
-  // of this step's own bounds is currently fixed (undefined when filling for the
-  // first time, the already-saved value when editing), so the same pair covers
-  // both the first-time-fill controls (StepTimeControl) and the edit-existing-
-  // value controls (EditTimeButton) for this step.
+  // Both maps below return a specific "occupied by <pile> — <step>" message
+  // (or null when there's no conflict) instead of a bare boolean, so
+  // StepTimeControl/EditTimeButton can surface exactly what's blocking the
+  // candidate time instead of a generic "Invalid time".
   const machineConflictChecksByStepId = useMemo(() => {
-    const map = new Map<string, { forStart: (c: Date) => boolean; forFinish: (c: Date) => boolean }>();
+    const map = new Map<string, { forStart: (c: Date) => string | null; forFinish: (c: Date) => string | null }>();
     for (const step of steps) {
       if (!step.assignedMachineId) continue;
       const machineId = step.assignedMachineId;
       const ownStart = step.actualStartIso ? new Date(step.actualStartIso) : undefined;
       const ownEnd = step.actualEndIso ? new Date(step.actualEndIso) : undefined;
+      const describe = (candidateStart: Date, candidateEnd?: Date) => {
+        const conflict = findMachineConflict(
+          machineFloorIndex,
+          machineId,
+          group.checklistPileId,
+          step.stepId,
+          candidateStart,
+          candidateEnd,
+        );
+        return conflict ? `Machine already occupied — ${conflict.pileCode} · ${conflict.stepName}` : null;
+      };
       map.set(step.stepId, {
-        forStart: (candidate) =>
-          hasMachineConflict(machineFloorIndex, machineId, group.checklistPileId, step.stepId, candidate, ownEnd),
-        forFinish: (candidate) =>
-          hasMachineConflict(
-            machineFloorIndex,
-            machineId,
-            group.checklistPileId,
-            step.stepId,
-            ownStart ?? candidate,
-            candidate,
-          ),
+        forStart: (candidate) => describe(candidate, ownEnd),
+        forFinish: (candidate) => describe(ownStart ?? candidate, candidate),
       });
     }
     return map;
   }, [steps, machineFloorIndex, group.checklistPileId]);
 
-  // Within-pile "does this candidate time overlap another step's already-
-  // recorded interval on this same pile" checkers — the pile-sequence
-  // counterpart to machineConflictChecksByStepId above, regardless of which
-  // machine each step is assigned to. See src/utils/machineFloor.ts.
   const pileConflictChecksByStepId = useMemo(() => {
-    const map = new Map<string, { forStart: (c: Date) => boolean; forFinish: (c: Date) => boolean }>();
+    const map = new Map<string, { forStart: (c: Date) => string | null; forFinish: (c: Date) => string | null }>();
     for (const step of steps) {
       const ownStart = step.actualStartIso ? new Date(step.actualStartIso) : undefined;
       const ownEnd = step.actualEndIso ? new Date(step.actualEndIso) : undefined;
+      const describe = (candidateStart: Date, candidateEnd?: Date) => {
+        const conflict = findPileStepConflict(steps, step.stepId, candidateStart, candidateEnd);
+        return conflict ? `This pile already has a recorded time for ${conflict.stepName}` : null;
+      };
       map.set(step.stepId, {
-        forStart: (candidate) => hasPileStepConflict(steps, step.stepId, candidate, ownEnd),
-        forFinish: (candidate) => hasPileStepConflict(steps, step.stepId, ownStart ?? candidate, candidate),
+        forStart: (candidate) => describe(candidate, ownEnd),
+        forFinish: (candidate) => describe(ownStart ?? candidate, candidate),
       });
     }
     return map;
@@ -297,6 +276,7 @@ export default function PileStepsModal({
       subtitle={subtitle || undefined}
       onClose={onClose}
       avoidKeyboard={false}
+      showCloseButton={false}
     >
       {!contentReady ? (
         <View style={modalStyles.loadingWrap}>

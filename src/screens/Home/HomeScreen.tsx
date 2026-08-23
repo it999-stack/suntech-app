@@ -5,7 +5,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { NotebookPen, Sparkles, Pencil, Cylinder, Truck, Users } from 'lucide-react-native';
+import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import ProgressRing from '@components/shared/ProgressRing';
 import GradientTile from '@components/shared/GradientTile';
@@ -17,9 +17,10 @@ import { useAuthStore } from '@store/authStore';
 import { useWorkingDate } from '@store/workingDateStore';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getChecklistPersonnel } from '@repositories/checklistRepository';
+import { getMachinesBySite } from '@repositories/machinesRepository';
 import { formatTime } from '@utils/formatTime';
 import { derivePileStatus } from '@utils/helpers';
-import type { PilingSitePersonnel, PilingChecklistPersonnel } from '@db/schema';
+import type { PilingSitePersonnel, PilingChecklistPersonnel, PilingMachine } from '@db/schema';
 
 function getDateParts(dateStr: string): { day: string; month: string } {
   const d = new Date(`${dateStr}T00:00:00`);
@@ -136,7 +137,8 @@ function ActivePlanCard({
           hitSlop={10}
           style={styles.editCircle}
         >
-          <Pencil size={16} color={colors.white} />
+          <Text style={styles.editCircleText}>Edit Plan</Text>
+          <PencilLine size={14} color={colors.white} />
         </Pressable>
       </View>
 
@@ -164,10 +166,17 @@ function ActivePlanCard({
   );
 }
 
-// TODO: wired with dummy values for now — replace with real counts once the
-// machines/crew repositories are hooked up (likely siteEquipmentRepository
-// and getPersonnelBySite filtered by today's shift assignments).
-function SiteSnapshotRow() {
+function SiteSnapshotRow({
+  plannedMachines,
+  totalMachines,
+  completedPiles,
+  totalPiles,
+}: {
+  plannedMachines: number;
+  totalMachines: number;
+  completedPiles: number;
+  totalPiles: number;
+}) {
   return (
     <View style={styles.snapshotSection}>
       <Text style={styles.sectionLabel}>Site snapshot</Text>
@@ -177,17 +186,21 @@ function SiteSnapshotRow() {
             <Truck size={15} color={colors.white} />
           </View>
           <View>
-            <Text style={styles.snapshotValue}>6</Text>
+            <Text style={styles.snapshotValue}>
+              {plannedMachines}/{totalMachines}
+            </Text>
             <Text style={styles.snapshotLabel}>Machines</Text>
           </View>
         </View>
         <View style={styles.snapshotCard}>
           <View style={[styles.snapshotIconCircle, { backgroundColor: colors.accentPink }]}>
-            <Users size={15} color={colors.white} />
+            <Layers size={15} color={colors.white} />
           </View>
           <View>
-            <Text style={styles.snapshotValue}>18</Text>
-            <Text style={styles.snapshotLabel}>Crew today</Text>
+            <Text style={styles.snapshotValue}>
+              {completedPiles}/{totalPiles}
+            </Text>
+            <Text style={styles.snapshotLabel}>Piles</Text>
           </View>
         </View>
       </View>
@@ -211,6 +224,13 @@ export default function HomeScreen() {
   useEffect(() => {
     if (user?.siteId) {
       getPersonnelBySite(user.siteId).then(setPersonnel).catch(() => {});
+    }
+  }, [user?.siteId]);
+
+  const [machines, setMachines] = useState<PilingMachine[]>([]);
+  useEffect(() => {
+    if (user?.siteId) {
+      getMachinesBySite(user.siteId).then(setMachines).catch(() => {});
     }
   }, [user?.siteId]);
 
@@ -243,6 +263,26 @@ export default function HomeScreen() {
       return derivePileStatus(pileSteps.length, pileActuals) === 'in_progress';
     }).length;
   }, [planStatus, checklistPiles, planSteps, actualSteps]);
+
+  const completedPilesCount = useMemo(() => {
+    if (planStatus === 'none') return 0;
+    return checklistPiles.filter((cp) => {
+      const pileSteps = planSteps.filter((s) => s.checklistPileId === cp.id);
+      const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
+      return derivePileStatus(pileSteps.length, pileActuals) === 'completed';
+    }).length;
+  }, [planStatus, checklistPiles, planSteps, actualSteps]);
+
+  // Distinct rig/crane ids actually assigned to today's checklist piles —
+  // "planned" as in "in use by today's plan", not the site's full fleet.
+  const plannedMachinesCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const cp of checklistPiles) {
+      ids.add(cp.rigId);
+      if (cp.craneId) ids.add(cp.craneId);
+    }
+    return ids.size;
+  }, [checklistPiles]);
 
   const userName = user?.name ?? 'User';
   const siteName = user?.siteName ?? 'Your Site';
@@ -311,7 +351,12 @@ export default function HomeScreen() {
             />
           </View>
 
-          <SiteSnapshotRow />
+          <SiteSnapshotRow
+            plannedMachines={plannedMachinesCount}
+            totalMachines={machines.length}
+            completedPiles={completedPilesCount}
+            totalPiles={checklistPiles.length}
+          />
         </ScrollView>
       </SafeAreaView>
 
@@ -446,16 +491,22 @@ const styles = StyleSheet.create({
   planHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
 
   editCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    backgroundColor: colors.accent,
-    justifyContent: 'center',
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+  },
+  editCircleText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.white,
   },
 
   progressSection: {

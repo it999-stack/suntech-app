@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { HomeStackParamList } from '@app-types/navigation';
 import { ChevronLeft } from 'lucide-react-native';
@@ -45,6 +45,14 @@ type FillActualsRouteProp = RouteProp<HomeStackParamList, 'FillActuals'>;
 export default function FillActualsScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<FillActualsRouteProp>();
+  // useSafeAreaInsets (reactive to inset updates) instead of SafeAreaView —
+  // a freshly-pushed native-stack screen can briefly report a stale/zero top
+  // inset before the native side finishes measuring; SafeAreaView's own
+  // internal layout didn't reliably re-apply once the real value arrived,
+  // leaving the header rendered flush under the status bar until something
+  // else forced a re-render. Reading the hook directly re-renders as soon as
+  // the context updates.
+  const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const siteId = user?.siteId ?? '';
   const deviceWorkingDate = useWorkingDate();
@@ -216,7 +224,7 @@ export default function FillActualsScreen() {
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
       style={styles.flex}
     >
-      <SafeAreaView style={styles.flex} edges={['top']}>
+      <View style={[styles.flex, { paddingTop: insets.top }]}>
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
             <Pressable onPress={() => navigation.goBack()} hitSlop={12}>
@@ -227,72 +235,70 @@ export default function FillActualsScreen() {
           </View>
         </View>
 
-        <ScrollView
-          ref={scrollViewRef}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {(isLoading || lookupsLoading) && (
-            <ActivityIndicator
-              size="large"
-              color={colors.accent}
-              style={{ marginTop: spacing.xxl }}
-            />
-          )}
+        {isLoading || lookupsLoading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator size="large" color={colors.accent} />
+          </View>
+        ) : (
+          <ScrollView
+            ref={scrollViewRef}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {!checklist && (
+              <EmptyState
+                icon="calendar"
+                title="No plan generated"
+                message="No plan has been created for today yet."
+              />
+            )}
 
-          {!isLoading && !lookupsLoading && !checklist && (
-            <EmptyState
-              icon="calendar"
-              title="No plan generated"
-              message="No plan has been created for today yet."
-            />
-          )}
+            {checklist && pileGroups.length === 0 && (
+              <EmptyState
+                icon="layers"
+                title="No piles in plan"
+                message="Today's plan doesn't include any piles yet."
+              />
+            )}
 
-          {!isLoading && !lookupsLoading && checklist && pileGroups.length === 0 && (
-            <EmptyState
-              icon="layers"
-              title="No piles in plan"
-              message="Today's plan doesn't include any piles yet."
-            />
-          )}
-
-          {!isLoading && !lookupsLoading && activeMachines.length > 0 && (
-            <SwipeableTabBar
-              items={machineBadgeItems}
-              value={selectedMachineId ?? activeMachines[0].id}
-              onChange={setSelectedMachineId}
-              scrollHint="dots"
-              pillVariant="piles"
-              dividerStyle={{ marginTop: spacing.md }}
-              renderPage={(item) => {
-                const page = machinePagesById.get(item.value) ?? {
-                  activeGroups: EMPTY_PILE_GROUPS,
-                  upcomingGroups: EMPTY_PILE_GROUPS,
-                };
-                const machine = activeMachines.find((m) => m.id === item.value);
-                if (!machine) return null;
-                return (
-                  <MachinePilesPage
-                    machine={machine}
-                    status={machineStatusById.get(machine.id)}
-                    railColor={TRACK_META[machine.type].color}
-                    activeGroups={page.activeGroups}
-                    upcomingGroups={page.upcomingGroups}
-                    openIdle={idleSessionByMachineId.get(item.value)}
-                    hasActiveStep={currentStepByMachineId.has(machine.id)}
-                    onOpenPile={setOpenCpId}
-                    onIdleBlockedPilePress={scrollToTop}
-                    onBreakdown={() => handleOpenMachineEvent(machine.id, machine.type, 'BREAKDOWN')}
-                    onStartIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_START')}
-                    onEndIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_END')}
-                    onEditSequence={openSequenceModal}
-                  />
-                );
-              }}
-            />
-          )}
-        </ScrollView>
-      </SafeAreaView>
+            {activeMachines.length > 0 && (
+              <SwipeableTabBar
+                items={machineBadgeItems}
+                value={selectedMachineId ?? activeMachines[0].id}
+                onChange={setSelectedMachineId}
+                scrollHint="dots"
+                pillVariant="piles"
+                dividerStyle={{ marginTop: spacing.md }}
+                renderPage={(item) => {
+                  const page = machinePagesById.get(item.value) ?? {
+                    activeGroups: EMPTY_PILE_GROUPS,
+                    upcomingGroups: EMPTY_PILE_GROUPS,
+                  };
+                  const machine = activeMachines.find((m) => m.id === item.value);
+                  if (!machine) return null;
+                  return (
+                    <MachinePilesPage
+                      machine={machine}
+                      status={machineStatusById.get(machine.id)}
+                      railColor={TRACK_META[machine.type].color}
+                      activeGroups={page.activeGroups}
+                      upcomingGroups={page.upcomingGroups}
+                      openIdle={idleSessionByMachineId.get(item.value)}
+                      hasActiveStep={currentStepByMachineId.has(machine.id)}
+                      onOpenPile={setOpenCpId}
+                      onIdleBlockedPilePress={scrollToTop}
+                      onBreakdown={() => handleOpenMachineEvent(machine.id, machine.type, 'BREAKDOWN')}
+                      onStartIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_START')}
+                      onEndIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_END')}
+                      onEditSequence={openSequenceModal}
+                    />
+                  );
+                }}
+              />
+            )}
+          </ScrollView>
+        )}
+      </View>
 
       {openGroup && (
         <PileStepsModal
@@ -382,6 +388,7 @@ export default function FillActualsScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   headerArea: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   headerTopRow: {
     flexDirection: 'row',

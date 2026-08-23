@@ -21,20 +21,22 @@ interface Props {
    */
   onConfirm: (minutes: number, explicitDate?: Date) => void | Promise<void>;
   /**
-   * Cross-pile overlap check for this step's assigned machine — true if the
-   * candidate time genuinely overlaps another pile's already-recorded
-   * (start-and-end-both-set) interval on the same machine. Checked by real
-   * timestamp (not minutes-of-day) so a conflict on a non-adjacent calendar
-   * day still compares correctly. See src/utils/machineFloor.ts.
+   * Cross-pile overlap check for this step's assigned machine — returns a
+   * message describing what's occupying the machine ("Machine already
+   * occupied — P-02 · Casing") if the candidate time genuinely overlaps
+   * another pile's already-recorded (start-and-end-both-set) interval on the
+   * same machine, or null otherwise. Checked by real timestamp (not
+   * minutes-of-day) so a conflict on a non-adjacent calendar day still
+   * compares correctly. See src/utils/machineFloor.ts.
    */
-  machineConflictCheck?: (candidate: Date) => boolean;
+  machineConflictCheck?: (candidate: Date) => string | null;
   /**
-   * Within-pile overlap check — true if the candidate time genuinely
-   * overlaps another step's already-recorded (start-and-end-both-set)
-   * interval on this same pile, regardless of machine. See
+   * Within-pile overlap check — returns a message if the candidate time
+   * genuinely overlaps another step's already-recorded (start-and-end-both-set)
+   * interval on this same pile, regardless of machine, or null otherwise. See
    * src/utils/machineFloor.ts.
    */
-  pileConflictCheck?: (candidate: Date) => boolean;
+  pileConflictCheck?: (candidate: Date) => string | null;
   /**
    * Earliest real timestamp this time may land on (inclusive) — e.g. the
    * previous step's already-recorded end when filling a start, or this
@@ -100,8 +102,9 @@ export default function StepTimeControl({
       return;
     }
 
-    if (machineConflictCheck?.(candidateDate) || pileConflictCheck?.(candidateDate)) {
-      notify.error('Invalid time');
+    const conflictMessage = machineConflictCheck?.(candidateDate) ?? pileConflictCheck?.(candidateDate);
+    if (conflictMessage) {
+      notify.error(conflictMessage);
       return;
     }
 

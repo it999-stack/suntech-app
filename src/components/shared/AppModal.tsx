@@ -42,6 +42,10 @@ interface Props {
   topOffset?: number;
   scrollable?: boolean;
   avoidKeyboard?: boolean;
+  /** Set false to hide the header's X close button — e.g. when a caller wants
+   * swipe-down-to-dismiss to be the only way to close. Defaults to true; the
+   * drag gesture itself is unaffected either way. */
+  showCloseButton?: boolean;
 }
 
 export default forwardRef<ScrollView, Props>(function AppModal(
@@ -56,6 +60,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
     topOffset = DEFAULT_TOP_OFFSET,
     scrollable = true,
     avoidKeyboard = true,
+    showCloseButton = true,
   },
   scrollRef,
 ) {
@@ -133,9 +138,11 @@ export default forwardRef<ScrollView, Props>(function AppModal(
                       {title && <Text style={styles.title}>{title}</Text>}
                       {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
                     </View>
-                    <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
-                      <X size={18} color={colors.textSecondary} />
-                    </Pressable>
+                    {showCloseButton && (
+                      <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
+                        <X size={18} color={colors.textSecondary} />
+                      </Pressable>
+                    )}
                   </View>
                 )}
               </View>
