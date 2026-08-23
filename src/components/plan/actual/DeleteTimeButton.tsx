@@ -22,6 +22,12 @@ interface Props {
 export default function DeleteTimeButton({ label, cascadeWarning, onConfirm }: Props) {
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // See EditTimeButton's identical hasOpenedPicker — every completed step
+  // renders its own DeleteTimeButton (x2), each capable of opening a
+  // ConfirmDialog (which sets up its own AppModal/Reanimated state on
+  // mount). Mounting it lazily on first open avoids paying that cost for
+  // every closed instance up front.
+  const [hasOpenedConfirm, setHasOpenedConfirm] = useState(false);
 
   async function handleConfirmClear() {
     setBusy(true);
@@ -42,23 +48,28 @@ export default function DeleteTimeButton({ label, cascadeWarning, onConfirm }: P
       <Pressable
         style={styles.btn}
         disabled={busy}
-        onPress={() => setConfirmOpen(true)}
+        onPress={() => {
+          setHasOpenedConfirm(true);
+          setConfirmOpen(true);
+        }}
         hitSlop={8}
         accessibilityLabel={`Clear ${label}`}
       >
         <Trash2 size={14} color={colors.danger} />
       </Pressable>
 
-      <ConfirmDialog
-        visible={confirmOpen}
-        title="Clear time?"
-        message={`This will remove the logged ${label}.${cascadeWarning ? ` ${cascadeWarning}` : ''}`}
-        confirmLabel="Clear"
-        destructive
-        confirmDisabled={busy}
-        onConfirm={handleConfirmClear}
-        onCancel={() => setConfirmOpen(false)}
-      />
+      {hasOpenedConfirm && (
+        <ConfirmDialog
+          visible={confirmOpen}
+          title="Clear time?"
+          message={`This will remove the logged ${label}.${cascadeWarning ? ` ${cascadeWarning}` : ''}`}
+          confirmLabel="Clear"
+          destructive
+          confirmDisabled={busy}
+          onConfirm={handleConfirmClear}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      )}
     </>
   );
 }

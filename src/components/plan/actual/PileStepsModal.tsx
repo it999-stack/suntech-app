@@ -1,7 +1,7 @@
 // src/components/plan/actual/PileStepsModal.tsx
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
 import {
   CheckCircle2,
   Circle,
@@ -114,6 +114,35 @@ export default function PileStepsModal({
   const steps = [...group.steps].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
   const currentStepId = steps.find((s) => s.actualEnd === undefined)?.stepId;
   const allDone = !currentStepId;
+
+  // Jumps to the current (needs-actuals) step's card the moment it reports
+  // its layout — happens at most once per pile opened (re-armed below
+  // whenever a different pile's group is shown), so re-renders from e.g.
+  // ticking the clock or saving a time don't yank the scroll position back.
+  // Not animated — the sheet's own slide-up is already the entrance motion;
+  // a second animated scroll on top of that just reads as extra lag. Left
+  // short of the card's exact top so the tail end of the previous (done)
+  // step's card still peeks in above it, giving context instead of the
+  // current card sitting flush at the very top edge. See AppModal's
+  // forwarded ScrollView ref.
+  const scrollRef = useRef<ScrollView>(null);
+  const hasScrolledToCurrentRef = useRef(false);
+  useEffect(() => {
+    hasScrolledToCurrentRef.current = false;
+  }, [group.checklistPileId]);
+  const SCROLL_PEEK_OFFSET = 200;
+  function handleStepCardLayout(stepId: string, y: number) {
+    if (stepId !== currentStepId || hasScrolledToCurrentRef.current) return;
+    hasScrolledToCurrentRef.current = true;
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(y - SCROLL_PEEK_OFFSET, 0), animated: false });
+    }, 50);
+  }
+
+  const [contentReady, setContentReady] = useState(false);
+  useEffect(() => {
+    setContentReady(true);
+  }, []);
 
   const [remarksFor, setRemarksFor] = useState<{
     stepId: string;
@@ -262,12 +291,19 @@ export default function PileStepsModal({
 
   return (
     <AppModal
+      ref={scrollRef}
       visible
       title={group.pileCode}
       subtitle={subtitle || undefined}
       onClose={onClose}
       avoidKeyboard={false}
     >
+      {!contentReady ? (
+        <View style={modalStyles.loadingWrap}>
+          <ActivityIndicator size="large" color={colors.accent} />
+        </View>
+      ) : (
+      <>
       {currentStepHasBreakdown && currentStep && (
         <Pressable
           style={modalStyles.warningBanner}
@@ -313,9 +349,6 @@ export default function PileStepsModal({
         const isCurrent = step.stepId === currentStepId;
         const isLocked = !isDone && !isCurrent;
         const isBlockedByIdle = isCurrent && !!currentStepBlockedByIdle;
-        // Completed on a *previous* day's checklist (see FillActualScreen) — a
-        // frozen historical record, shown faded with no edit/remarks/machine-
-        // event controls since there's no local row here to attach edits to.
         const isHistorical = !!step.isHistorical;
         const lateMinutes =
           isDone && step.plannedEndIso != null
@@ -327,6 +360,7 @@ export default function PileStepsModal({
         return (
           <View
             key={`${isHistorical ? 'hist' : 'cur'}-${step.stepId}`}
+            onLayout={(e) => handleStepCardLayout(step.stepId, e.nativeEvent.layout.y)}
             style={[modalStyles.card, (isLocked || isBlockedByIdle || isHistorical) && modalStyles.cardLocked]}
           >
             <View style={modalStyles.headerRow}>
@@ -642,6 +676,8 @@ export default function PileStepsModal({
           </Text>
         </View>
       )}
+      </>
+      )}
 
       {remarksFor && (
         <RemarksModal
@@ -909,6 +945,7 @@ const modalStyles = StyleSheet.create({
     fontWeight: '700',
     color: colors.accent,
   },
+  loadingWrap: { alignItems: 'center', paddingVertical: spacing.xxl },
   allDoneWrap: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
   allDoneText: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
   warningBanner: {

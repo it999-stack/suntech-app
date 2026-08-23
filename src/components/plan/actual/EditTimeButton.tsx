@@ -88,6 +88,15 @@ export default function EditTimeButton({
   blocked,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Every completed step on a pile renders its own EditTimeButton (x2: start
+  // + finish), each capable of opening a native TimerSelectMenu — but at
+  // most one is ever open at a time. Mounting react-native-date-picker's
+  // native modal picker for every single one up front (even closed) is real,
+  // per-instance native setup cost that scales with completed-step count and
+  // was the dominant cost in opening PileStepsModal. Mounting it lazily on
+  // first open — then leaving it mounted, same as before, for its own normal
+  // close animation to keep working — fixes that without changing behavior.
+  const [hasOpenedPicker, setHasOpenedPicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function confirm(newMinutes: number, explicitDate?: Date) {
@@ -139,6 +148,7 @@ export default function EditTimeButton({
             notify.error(blocked.message, { title: blocked.title });
             return;
           }
+          setHasOpenedPicker(true);
           setPickerOpen(true);
         }}
         hitSlop={8}
@@ -147,6 +157,7 @@ export default function EditTimeButton({
         <PencilLine size={14} color={colors.textSecondary} />
       </Pressable>
 
+      {hasOpenedPicker && (
       <TimerSelectMenu
         visible={pickerOpen}
         onClose={() => setPickerOpen(false)}
@@ -162,6 +173,7 @@ export default function EditTimeButton({
         minimumDate={planWindowMinIso ? new Date(planWindowMinIso) : undefined}
         maximumDate={planWindowMaxIso ? new Date(planWindowMaxIso) : undefined}
       />
+      )}
     </>
   );
 }

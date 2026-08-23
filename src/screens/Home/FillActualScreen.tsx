@@ -66,6 +66,7 @@ export default function FillActualsScreen() {
     setPileMeasurement,
     logMachineEvent,
     editPlanMidDay,
+    previewEditPlanMidDay,
   } = usePlan();
 
   // ── Load the working date's checklist on mount ─────────────────────────
@@ -165,6 +166,7 @@ export default function FillActualsScreen() {
     activeMachines,
     selectedMachineId,
     editPlanMidDay,
+    previewEditPlanMidDay,
   });
 
   const { handleSetActualTime, handleClearActualTime, handleSaveRemarks, handleSaveMeasurements } =

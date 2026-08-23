@@ -1,6 +1,6 @@
 // src/components/shared/AppModal.tsx
 
-import React, { useEffect } from 'react';
+import React, { forwardRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -38,46 +38,31 @@ interface Props {
   subtitle?: string;
   children: React.ReactNode;
   contentContainerStyle?: ViewStyle;
-  /** Anchors the sheet to the top/bottom edge, or floats it centered with a
-   * fade+scale entrance. Defaults to 'bottom'. */
   position?: 'bottom' | 'top' | 'center';
-  /** For position="top": distance from the screen top, clearing the status bar / notch. */
   topOffset?: number;
-  /**
-   * Set false to render children in a plain View instead of a ScrollView —
-   * required when children contain their own FlatList/VirtualizedList (e.g.
-   * a wheel picker), since nesting same-orientation VirtualizedLists inside
-   * a ScrollView breaks touch handling. Defaults to true.
-   */
   scrollable?: boolean;
-  /**
-   * Set false when this modal has no direct text input and only hosts
-   * nested child modals (which have their own keyboard avoidance) — avoids
-   * this modal's KeyboardAvoidingView reacting to a child modal's keyboard
-   * events and visibly resizing the sheet. Defaults to true.
-   */
   avoidKeyboard?: boolean;
 }
 
-export default function AppModal({
-  visible,
-  onClose,
-  title,
-  subtitle,
-  children,
-  contentContainerStyle,
-  position = 'bottom',
-  topOffset = DEFAULT_TOP_OFFSET,
-  scrollable = true,
-  avoidKeyboard = true,
-}: Props) {
+export default forwardRef<ScrollView, Props>(function AppModal(
+  {
+    visible,
+    onClose,
+    title,
+    subtitle,
+    children,
+    contentContainerStyle,
+    position = 'bottom',
+    topOffset = DEFAULT_TOP_OFFSET,
+    scrollable = true,
+    avoidKeyboard = true,
+  },
+  scrollRef,
+) {
   const isTop = position === 'top';
   const isCenter = position === 'center';
   const hiddenValue = isTop ? -SCREEN_HEIGHT : SCREEN_HEIGHT;
 
-  // Edge-anchored sheets slide via translateY; center uses its own
-  // 0→1 progress value driving fade+scale instead (translateY has no
-  // meaningful "hidden" position for a floating, content-sized box).
   const translateY = useSharedValue(hiddenValue);
   const centerProgress = useSharedValue(0);
 
@@ -89,11 +74,6 @@ export default function AppModal({
     }
   }, [visible, hiddenValue, isCenter, centerProgress, translateY]);
 
-  // Swipe-down-to-dismiss, scoped to the grabber/header zone only — the
-  // scrollable body below keeps its own native scroll untouched, so there's
-  // no gesture arbitration needed between this and the content ScrollView.
-  // Only meaningful for a bottom sheet; top and center don't have an edge
-  // to drag back toward.
   const dragGesture = Gesture.Pan()
     .enabled(!isTop && !isCenter)
     .onUpdate((e) => {
@@ -124,9 +104,6 @@ export default function AppModal({
 
   return (
     <Modal visible={visible} animationType="none" transparent onRequestClose={onClose} statusBarTranslucent>
-      {/* RN's Modal renders into its own native root, which the app-level
-          GestureHandlerRootView (in App.tsx) doesn't extend into — without
-          this, the drag gesture below silently does nothing inside a Modal. */}
       <GestureHandlerRootView style={styles.flexContainer}>
       <KeyboardAvoidingView
         style={styles.flexContainer}
@@ -135,8 +112,6 @@ export default function AppModal({
       >
         <Pressable style={styles.backdrop} onPress={onClose} />
 
-        {/* Center mode centers via flex (content-sized box, no known edge to
-            anchor from); top/bottom keep their existing absolute anchoring. */}
         <View
           style={isCenter ? styles.centerWrap : styles.flexContainer}
           pointerEvents="box-none"
@@ -168,6 +143,7 @@ export default function AppModal({
 
             {scrollable ? (
               <ScrollView
+                ref={scrollRef}
                 contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
@@ -185,7 +161,7 @@ export default function AppModal({
       </GestureHandlerRootView>
     </Modal>
   );
-}
+});
 
 const styles = StyleSheet.create({
   flexContainer: { flex: 1 },

@@ -79,6 +79,7 @@ export default function StepTimeControl({
   blocked,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [hasOpenedPicker, setHasOpenedPicker] = useState(false);
   const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
   const [saving, setSaving] = useState(false);
 
@@ -129,6 +130,7 @@ export default function StepTimeControl({
                 return;
               }
               setDraftMinutes(defaultMinutes);
+              setHasOpenedPicker(true);
               setPickerOpen(true);
             }}
           >
@@ -136,6 +138,7 @@ export default function StepTimeControl({
           </Pressable>
         </View>
 
+        {hasOpenedPicker && (
         <TimerSelectMenu
           visible={pickerOpen}
           onClose={() => setPickerOpen(false)}
@@ -155,6 +158,7 @@ export default function StepTimeControl({
           minimumDate={planWindowMinIso ? new Date(planWindowMinIso) : undefined}
           maximumDate={planWindowMaxIso ? new Date(planWindowMaxIso) : undefined}
         />
+        )}
     </>
   );
 }

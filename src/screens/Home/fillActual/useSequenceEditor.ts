@@ -7,7 +7,7 @@
 
 import { useMemo, useState } from 'react';
 import type { ReorderPile } from '@components/plan/generate/preview/ReorderPilesOverlay';
-import type { EditPlanPileInput, EditPlanSummary } from '@state/PlanContext';
+import type { EditPlanPileInput, EditPlanPreview, EditPlanSummary } from '@state/PlanContext';
 import type { PilingChecklistPile, PilingDailyChecklist, PilingMachine, PilingPile } from '@db/schema';
 import type { PileGroup } from '@app-types/plan';
 import type { MachineBadge } from './useMachinePages';
@@ -38,6 +38,15 @@ export function useSequenceEditor(args: {
     date: string,
     piles: EditPlanPileInput[],
   ) => Promise<EditPlanSummary>;
+  /** Dry-run check before actually committing — same call AddPileModal uses
+   * for its own live preview, reused here so a rejection (a pile with logged
+   * progress, the plan window having elapsed, etc.) surfaces before writing
+   * anything, instead of the user only finding out after Save Changes. */
+  previewEditPlanMidDay: (
+    siteId: string,
+    checklistId: string,
+    piles: EditPlanPileInput[],
+  ) => Promise<EditPlanPreview>;
 }): {
   rigs: PilingMachine[];
   cranes: PilingMachine[];
@@ -56,7 +65,7 @@ export function useSequenceEditor(args: {
   handleRemovePile: (pileId: string) => void;
   handleAddPileConfirm: (input: EditPlanPileInput) => void;
 } {
-  const { siteId, checklist, workingDate, checklistPiles, pileGroups, pileMap, machines, activeMachines, selectedMachineId, editPlanMidDay } = args;
+  const { siteId, checklist, workingDate, checklistPiles, pileGroups, pileMap, machines, activeMachines, selectedMachineId, editPlanMidDay, previewEditPlanMidDay } = args;
 
   const rigs = useMemo(() => machines.filter((m) => m.type === 'RIG'), [machines]);
   const cranes = useMemo(() => machines.filter((m) => m.type === 'CRANE'), [machines]);
@@ -125,6 +134,12 @@ export function useSequenceEditor(args: {
 
     setIsSavingSequence(true);
     try {
+      // Dry-run first — same validation edit_checklist_plan_mid_day runs for
+      // real, but nothing is written. Lets a rejection (a pile with logged
+      // progress, reassigning a running pile's own machine, the plan window
+      // having elapsed, or a schedule that can't fit) surface here without
+      // ever touching the real plan.
+      await previewEditPlanMidDay(siteId, checklist.id, piles);
       await editPlanMidDay(siteId, checklist.id, workingDate, piles);
       setDraftRows(null);
     } catch (err) {
