@@ -17,7 +17,36 @@ import AppModal from '@components/shared/AppModal';
 import type { PilContractor } from '@db/schema';
 import type { PileMeasurementFields } from '@app-types/plan';
 import { notify } from '@utils/notify';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+
+// Field-key pairs that render side-by-side in one row instead of stacked —
+// explicit by key (not inferred from array order) so a future reordering in
+// pileMeasurementTriggers.ts can't silently break the pairing. Only applies
+// when both keys are actually present in the current field list.
+const ROW_PAIRS: [string, string][] = [
+  ['pileContractorId', 'cageContractorId'],
+  ['ctlM', 'colM'],
+];
+
+function groupFieldsIntoRows(fields: MeasurementFieldConfig[]): MeasurementFieldConfig[][] {
+  const consumed = new Set<string>();
+  const rows: MeasurementFieldConfig[][] = [];
+  for (const field of fields) {
+    if (consumed.has(field.key)) continue;
+    const pair = ROW_PAIRS.find(([a, b]) => a === field.key || b === field.key);
+    const partnerKey = pair ? (pair[0] === field.key ? pair[1] : pair[0]) : undefined;
+    const partner = partnerKey ? fields.find((f) => f.key === partnerKey) : undefined;
+    if (partner) {
+      rows.push([field, partner]);
+      consumed.add(field.key);
+      consumed.add(partner.key);
+    } else {
+      rows.push([field]);
+      consumed.add(field.key);
+    }
+  }
+  return rows;
+}
 
 /** Strips anything but digits, ".", and (when `allowNegative`) a single
  * leading "-", and collapses every "." after the first into nothing — so
@@ -123,83 +152,97 @@ export default function MeasurementFieldsModal({
     }
   };
 
+  function renderField(field: MeasurementFieldConfig, inRow: boolean) {
+    const wrapStyle = [styles.fieldWrap, inRow && styles.fieldWrapInRow];
+
+    if (field.type === 'contractor') {
+      const selectedId = values[field.key] as string | null | undefined;
+      const selected = contractors.find((c) => c.id === selectedId);
+      const isPicking = contractorPickerFor === field.key;
+
+      return (
+        <View key={field.key} style={wrapStyle}>
+          <Text style={styles.label}>{field.label}</Text>
+          <Pressable
+            style={styles.contractorSelectRow}
+            onPress={() => setContractorPickerFor(isPicking ? null : field.key)}
+          >
+            <Text
+              style={selected ? styles.contractorSelectedText : styles.contractorPlaceholderText}
+              numberOfLines={1}
+            >
+              {selected?.name ?? 'Not set — tap to choose'}
+            </Text>
+          </Pressable>
+          {isPicking && (
+            <View style={styles.contractorList}>
+              {activeContractors.length === 0 && (
+                <Text style={styles.emptyText}>No contractors synced for this site yet.</Text>
+              )}
+              {activeContractors.map((c) => {
+                const active = c.id === selectedId;
+                return (
+                  <Pressable
+                    key={c.id}
+                    style={[styles.contractorRow, active && styles.contractorRowActive]}
+                    onPress={() => {
+                      setValues((v) => ({ ...v, [field.key]: c.id }));
+                      setContractorPickerFor(null);
+                    }}
+                  >
+                    <Text style={[styles.contractorRowText, active && styles.contractorRowTextActive]} numberOfLines={1}>
+                      {c.name}
+                    </Text>
+                    {active && <Check size={16} color={colors.accent} />}
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </View>
+      );
+    }
+
+    return (
+      <View key={field.key} style={wrapStyle}>
+        <Text style={styles.label}>
+          {field.label} ({field.unit})
+        </Text>
+        <TextInput
+          style={styles.input}
+          // decimal-pad has no minus key on either platform — a field
+          // that allows negative values needs a keyboard that does.
+          keyboardType={
+            field.allowNegative ? (Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric') : 'decimal-pad'
+          }
+          placeholder="—"
+          placeholderTextColor={colors.textSecondary}
+          value={numberText[field.key] ?? ''}
+          onChangeText={(text) => {
+            setNumberText((t) => ({ ...t, [field.key]: cleanDecimalText(text, !!field.allowNegative) }));
+          }}
+        />
+      </View>
+    );
+  }
+
   return (
     <AppModal
       visible={visible}
       onClose={onClose}
       title={title}
-      position="center"
+      position="bottom"
       subtitle="Optional — skip any field you don't have yet"
     >
       <View style={styles.content}>
-        {fields.map((field) => {
-          if (field.type === 'contractor') {
-            const selectedId = values[field.key] as string | null | undefined;
-            const selected = contractors.find((c) => c.id === selectedId);
-            const isPicking = contractorPickerFor === field.key;
-
-            return (
-              <View key={field.key} style={styles.fieldWrap}>
-                <Text style={styles.label}>{field.label}</Text>
-                <Pressable
-                  style={styles.contractorSelectRow}
-                  onPress={() => setContractorPickerFor(isPicking ? null : field.key)}
-                >
-                  <Text style={selected ? styles.contractorSelectedText : styles.contractorPlaceholderText}>
-                    {selected?.name ?? 'Not set — tap to choose'}
-                  </Text>
-                </Pressable>
-                {isPicking && (
-                  <View style={styles.contractorList}>
-                    {activeContractors.length === 0 && (
-                      <Text style={styles.emptyText}>No contractors synced for this site yet.</Text>
-                    )}
-                    {activeContractors.map((c) => {
-                      const active = c.id === selectedId;
-                      return (
-                        <Pressable
-                          key={c.id}
-                          style={[styles.contractorRow, active && styles.contractorRowActive]}
-                          onPress={() => {
-                            setValues((v) => ({ ...v, [field.key]: c.id }));
-                            setContractorPickerFor(null);
-                          }}
-                        >
-                          <Text style={[styles.contractorRowText, active && styles.contractorRowTextActive]}>
-                            {c.name}
-                          </Text>
-                          {active && <Check size={16} color={colors.accent} />}
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                )}
-              </View>
-            );
-          }
-
-          return (
-            <View key={field.key} style={styles.fieldWrap}>
-              <Text style={styles.label}>
-                {field.label} ({field.unit})
-              </Text>
-              <TextInput
-                style={styles.input}
-                // decimal-pad has no minus key on either platform — a field
-                // that allows negative values needs a keyboard that does.
-                keyboardType={
-                  field.allowNegative ? (Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric') : 'decimal-pad'
-                }
-                placeholder="—"
-                placeholderTextColor={colors.textSecondary}
-                value={numberText[field.key] ?? ''}
-                onChangeText={(text) => {
-                  setNumberText((t) => ({ ...t, [field.key]: cleanDecimalText(text, !!field.allowNegative) }));
-                }}
-              />
-            </View>
-          );
-        })}
+        {groupFieldsIntoRows(fields).map((row) => (
+          <View
+            key={row.map((f) => f.key).join('+')}
+            style={row.length === 2 ? styles.fieldRow : undefined}
+          >
+            {row.map((field) => renderField(field, row.length === 2))}
+          </View>
+        ))}
 
         <Pressable style={[styles.saveBtn, saving && styles.saveBtnDisabled]} disabled={saving} onPress={handleSave}>
           <Text style={styles.saveBtnText}>Save Measurements</Text>
@@ -211,7 +254,11 @@ export default function MeasurementFieldsModal({
 
 const styles = StyleSheet.create({
   content: { flex: 1 },
-  fieldWrap: { marginBottom: spacing.md },
+  fieldRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  // position:'relative' anchors the floating contractorList dropdown below
+  // whichever field opened it (see contractorList below).
+  fieldWrap: { marginBottom: spacing.md, position: 'relative' },
+  fieldWrapInRow: { flex: 1, marginBottom: 0 },
   label: { ...typography.caption, fontWeight: '700', color: colors.textSecondary, marginBottom: spacing.xs },
   input: {
     ...typography.body,
@@ -229,12 +276,24 @@ const styles = StyleSheet.create({
   },
   contractorSelectedText: { ...typography.body, color: colors.textPrimary, fontWeight: '700' },
   contractorPlaceholderText: { ...typography.body, color: colors.textSecondary },
+  // Floats over whatever's below instead of pushing it down — absolute
+  // relative to fieldWrap/fieldWrapInRow's position:'relative' above, right
+  // under the select row (fieldWrap's own height, with this removed from
+  // flow, is just the label+select row).
   contractorList: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
     marginTop: spacing.xs,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
+    backgroundColor: colors.white,
+    zIndex: 30,
+    ...shadow.soft,
+    elevation: 8,
   },
   contractorRow: {
     flexDirection: 'row',

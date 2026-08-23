@@ -31,8 +31,8 @@ export const MEASUREMENT_TRIGGERS: MeasurementTrigger[] = [
     title: 'Casing — Start Measurements',
     fields: [
       { key: 'eglM', label: 'E.G.L. (Existing Ground Level)', unit: 'm', type: 'number' },
-      { key: 'pileContractorId', label: 'Name of Pile Contractor', type: 'contractor' },
-      { key: 'cageContractorId', label: 'Name of Cage Contractor', type: 'contractor' },
+      { key: 'pileContractorId', label: 'Pile Contractor', type: 'contractor' },
+      { key: 'cageContractorId', label: 'Cage Contractor', type: 'contractor' },
       { key: 'pileLengthM', label: 'Pile Length', unit: 'm', type: 'number' },
       { key: 'cageWeightKg', label: 'Cage Weight', unit: 'kg', type: 'number' },
     ],

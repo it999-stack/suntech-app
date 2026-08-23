@@ -39,6 +39,7 @@ import {
   toLocalIsoString,
 } from '@utils/formatTime';
 import { findMachineConflict, findPileStepConflict, type MachineFloorIndex } from '@utils/machineFloor';
+import { formatOccupiedNotice, type ConflictNotice } from '@utils/timeValidation';
 import { getTrackBadgeColors } from '@utils/helpers';
 
 /** Current time-of-day as minutes-since-midnight. */
@@ -191,12 +192,14 @@ export default function PileStepsModal({
   const currentMachineIdByTrack = useMemo(() => getCurrentMachineIdByTrack(steps), [steps]);
   const currentStep = steps.find((s) => s.stepId === currentStepId);
 
-  // Both maps below return a specific "occupied by <pile> — <step>" message
-  // (or null when there's no conflict) instead of a bare boolean, so
-  // StepTimeControl/EditTimeButton can surface exactly what's blocking the
-  // candidate time instead of a generic "Invalid time".
+  // Both maps below return a "Machine occupied" notice naming exactly what's
+  // blocking the candidate time (or null when there's no conflict), instead
+  // of a bare boolean, so StepTimeControl/EditTimeButton can surface it
+  // instead of a generic "Invalid time". Same shared format as the
+  // minBoundConflict/maxBoundConflict notices built below, via
+  // formatOccupiedNotice.
   const machineConflictChecksByStepId = useMemo(() => {
-    const map = new Map<string, { forStart: (c: Date) => string | null; forFinish: (c: Date) => string | null }>();
+    const map = new Map<string, { forStart: (c: Date) => ConflictNotice | null; forFinish: (c: Date) => ConflictNotice | null }>();
     for (const step of steps) {
       if (!step.assignedMachineId) continue;
       const machineId = step.assignedMachineId;
@@ -211,7 +214,7 @@ export default function PileStepsModal({
           candidateStart,
           candidateEnd,
         );
-        return conflict ? `Machine already occupied — ${conflict.pileCode} · ${conflict.stepName}` : null;
+        return conflict ? formatOccupiedNotice(conflict.pileCode, conflict.stepName, conflict.start, conflict.end) : null;
       };
       map.set(step.stepId, {
         forStart: (candidate) => describe(candidate, ownEnd),
@@ -222,13 +225,15 @@ export default function PileStepsModal({
   }, [steps, machineFloorIndex, group.checklistPileId]);
 
   const pileConflictChecksByStepId = useMemo(() => {
-    const map = new Map<string, { forStart: (c: Date) => string | null; forFinish: (c: Date) => string | null }>();
+    const map = new Map<string, { forStart: (c: Date) => ConflictNotice | null; forFinish: (c: Date) => ConflictNotice | null }>();
     for (const step of steps) {
       const ownStart = step.actualStartIso ? new Date(step.actualStartIso) : undefined;
       const ownEnd = step.actualEndIso ? new Date(step.actualEndIso) : undefined;
       const describe = (candidateStart: Date, candidateEnd?: Date) => {
         const conflict = findPileStepConflict(steps, step.stepId, candidateStart, candidateEnd);
-        return conflict ? `This pile already has a recorded time for ${conflict.stepName}` : null;
+        return conflict
+          ? formatOccupiedNotice(group.pileCode, conflict.stepName, conflict.actualStartIso, conflict.actualEndIso)
+          : null;
       };
       map.set(step.stepId, {
         forStart: (candidate) => describe(candidate, ownEnd),
@@ -456,7 +461,13 @@ export default function PileStepsModal({
                         minutes={step.actualStart!}
                         label="start time"
                         minBoundIso={prevStep?.actualEndIso}
+                        minBoundConflict={
+                          prevStep
+                            ? formatOccupiedNotice(group.pileCode, prevStep.stepName, prevStep.actualStartIso, prevStep.actualEndIso)
+                            : undefined
+                        }
                         maxBoundIso={step.actualEndIso}
+                        maxBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
                         planWindowMinIso={planWindowMinIso}
                         planWindowMaxIso={planWindowMaxIso}
                         machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
@@ -484,7 +495,13 @@ export default function PileStepsModal({
                         minutes={step.actualEnd!}
                         label="finish time"
                         minBoundIso={step.actualStartIso}
+                        minBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
                         maxBoundIso={nextStep?.actualStartIso}
+                        maxBoundConflict={
+                          nextStep
+                            ? formatOccupiedNotice(group.pileCode, nextStep.stepName, nextStep.actualStartIso, nextStep.actualEndIso)
+                            : undefined
+                        }
                         planWindowMinIso={planWindowMinIso}
                         planWindowMaxIso={planWindowMaxIso}
                         machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
@@ -511,7 +528,13 @@ export default function PileStepsModal({
                     minutes={step.actualStart!}
                     label="start time"
                     minBoundIso={prevStep?.actualEndIso}
+                    minBoundConflict={
+                      prevStep
+                        ? formatOccupiedNotice(group.pileCode, prevStep.stepName, prevStep.actualStartIso, prevStep.actualEndIso)
+                        : undefined
+                    }
                     maxBoundIso={step.actualEndIso}
+                    maxBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
                     planWindowMinIso={planWindowMinIso}
                     planWindowMaxIso={planWindowMaxIso}
                     machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
@@ -611,6 +634,11 @@ export default function PileStepsModal({
                 machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
                 pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                 minBoundIso={prevStep?.actualEndIso}
+                minBoundConflict={
+                  prevStep
+                    ? formatOccupiedNotice(group.pileCode, prevStep.stepName, prevStep.actualStartIso, prevStep.actualEndIso)
+                    : undefined
+                }
                 planWindowMinIso={planWindowMinIso}
                 planWindowMaxIso={planWindowMaxIso}
                 anchorIso={step.startAnchorIso}
@@ -630,6 +658,7 @@ export default function PileStepsModal({
                 machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
                 pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
                 minBoundIso={step.actualStartIso}
+                minBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
                 planWindowMinIso={planWindowMinIso}
                 planWindowMaxIso={planWindowMaxIso}
                 anchorIso={step.endAnchorIso}

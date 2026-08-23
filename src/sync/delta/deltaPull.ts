@@ -26,6 +26,7 @@ import {
   hydrateChecklistFromServer,
   purgeChecklistPilesByIds,
   purgeChecklistsByIds,
+  getPileIdsForChecklistIds,
 } from '@repositories/checklistRepository';
 import { getDirtyChecklistIds } from '@repositories/syncQueueRepository';
 
@@ -200,9 +201,22 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
   );
   await purgeChecklistsByIds(deletedChecklistIds);
 
+  // Same guard as the checklist skip above, one hop further: pile
+  // measurements are keyed by pileId rather than checklistId, so resolve the
+  // already-computed dirtyIds to the physical piles they cover and skip
+  // those — saveMeasurementsBatch wholesale-replaces every field for a pile,
+  // so applying it here while a local edit for that pile is still unconfirmed
+  // would silently erase it (the bug this fixes). Reconciled on a later pull
+  // once the checklist has been flushed clean, same as above.
+  const dirtyPileIds = new Set(
+    dirtyIds.size > 0 ? await getPileIdsForChecklistIds([...dirtyIds]) : [],
+  );
+  const pileMeasurementRows = ((data.pile_measurements as any[]) ?? []).filter(
+    (m) => !dirtyPileIds.has(m.pile_id),
+  );
   // No deleted-ids list — pile measurements are never independently
   // hard-deleted (see the server contract / syncPileMeasurements.ts).
-  await applyPileMeasurementsPull(data.pile_measurements as any[] | undefined);
+  await applyPileMeasurementsPull(pileMeasurementRows);
 
   return { serverTime: data.server_time as string, checklistsApplied: checklists.length };
 }

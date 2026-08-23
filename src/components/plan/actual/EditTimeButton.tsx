@@ -5,6 +5,7 @@ import { Pressable, StyleSheet } from 'react-native';
 import { PencilLine } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { resolveOvernightDate, toLocalIsoString } from '@utils/formatTime';
+import { validateCandidateTime, type ConflictNotice } from '@utils/timeValidation';
 import { notify } from '@utils/notify';
 import { colors, radius } from '@theme/theme';
 
@@ -15,22 +16,21 @@ interface Props {
   label: string;
   /**
    * Cross-pile overlap check for this step's assigned machine — returns a
-   * message describing what's occupying the machine ("Machine already
-   * occupied — P-02 · Casing") if the candidate time genuinely overlaps
-   * another pile's already-recorded (start-and-end-both-set) interval on the
-   * same machine, or null otherwise. Applies when editing either a start or
-   * finish time. Checked by real timestamp (not minutes-of-day) so a
-   * conflict on a non-adjacent calendar day still compares correctly. See
-   * src/utils/machineFloor.ts.
+   * "Machine occupied" notice naming what's occupying it if the candidate
+   * time genuinely overlaps another pile's already-recorded
+   * (start-and-end-both-set) interval on the same machine, or null
+   * otherwise. Applies when editing either a start or finish time. Checked
+   * by real timestamp (not minutes-of-day) so a conflict on a non-adjacent
+   * calendar day still compares correctly. See src/utils/machineFloor.ts.
    */
-  machineConflictCheck?: (candidate: Date) => string | null;
+  machineConflictCheck?: (candidate: Date) => ConflictNotice | null;
   /**
-   * Within-pile overlap check — returns a message if the candidate time
+   * Within-pile overlap check — returns a notice if the candidate time
    * genuinely overlaps another step's already-recorded (start-and-end-both-set)
    * interval on this same pile, regardless of machine, or null otherwise. See
    * src/utils/machineFloor.ts.
    */
-  pileConflictCheck?: (candidate: Date) => string | null;
+  pileConflictCheck?: (candidate: Date) => ConflictNotice | null;
   /**
    * Earliest real timestamp this time may land on (inclusive) — e.g. the
    * previous step's already-recorded end when editing a start, or this
@@ -39,6 +39,10 @@ interface Props {
    * Omit for no lower bound.
    */
   minBoundIso?: string;
+  /** What's occupying minBoundIso, for the rejection notice. Omit to fall
+   * back to a bare "Invalid time" for this bound. See
+   * src/utils/timeValidation.ts. */
+  minBoundConflict?: ConflictNotice;
   /**
    * Latest real timestamp this time may land on (inclusive) — e.g. this
    * step's own already-recorded end when editing a start, or the next
@@ -46,6 +50,9 @@ interface Props {
    * bound.
    */
   maxBoundIso?: string;
+  /** What's occupying maxBoundIso, for the rejection notice. Omit to fall
+   * back to a bare "Invalid time" for this bound. */
+  maxBoundConflict?: ConflictNotice;
   /**
    * Earliest/latest real timestamp allowed by the checklist's own plan
    * window (plan_start_time .. plan_end_time + 1h grace) — an independent
@@ -82,7 +89,9 @@ export default function EditTimeButton({
   machineConflictCheck,
   pileConflictCheck,
   minBoundIso,
+  minBoundConflict,
   maxBoundIso,
+  maxBoundConflict,
   planWindowMinIso,
   planWindowMaxIso,
   onConfirm,
@@ -96,27 +105,19 @@ export default function EditTimeButton({
   async function confirm(newMinutes: number, explicitDate?: Date) {
     const candidateDate = explicitDate ?? resolveOvernightDate(anchorIso ?? toLocalIsoString(new Date()), newMinutes);
 
-    if (minBoundIso && candidateDate.getTime() < new Date(minBoundIso).getTime()) {
-      notify.error('Invalid time');
-      return;
-    }
-    if (maxBoundIso && candidateDate.getTime() > new Date(maxBoundIso).getTime()) {
-      notify.error('Invalid time');
-      return;
-    }
-
-    if (planWindowMinIso && candidateDate.getTime() < new Date(planWindowMinIso).getTime()) {
-      notify.error('Please select a time within the plan window.');
-      return;
-    }
-    if (planWindowMaxIso && candidateDate.getTime() > new Date(planWindowMaxIso).getTime()) {
-      notify.error('Please select a time within the plan window.');
-      return;
-    }
-
-    const conflictMessage = machineConflictCheck?.(candidateDate) ?? pileConflictCheck?.(candidateDate);
-    if (conflictMessage) {
-      notify.error(conflictMessage);
+    const conflict = validateCandidateTime({
+      candidateDate,
+      minBoundIso,
+      minBoundConflict,
+      maxBoundIso,
+      maxBoundConflict,
+      planWindowMinIso,
+      planWindowMaxIso,
+      machineConflictCheck,
+      pileConflictCheck,
+    });
+    if (conflict) {
+      notify.error(conflict.message, { title: conflict.title });
       return;
     }
 

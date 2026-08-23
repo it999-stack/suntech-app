@@ -35,13 +35,30 @@ function notifyListeners(): void {
   listeners.forEach((listener) => listener());
 }
 
+let inFlight: Promise<DeltaSyncResult> | null = null;
+
 /**
  * No-ops (returns `{ ran: false }`) if no cursor has been established yet —
  * that's bootstrap's job, not this function's. Push errors don't block the
  * pull or the cursor advance: a push conflict is resolved by the pull that
  * immediately follows, not by refusing to proceed.
+ *
+ * Callers (SyncManager.ts's automatic triggers, useSyncStore's manual one)
+ * can fire independently and close together — e.g. a periodic trigger while
+ * a just-edited write's debounced cycle is still awaiting a slow push.
+ * Without this guard, two overlapping cycles could interleave their own
+ * push/pull ordering; piggybacking a concurrent call onto whichever cycle is
+ * already running keeps push-then-pull a true single-cycle guarantee.
  */
-export async function runDeltaSync(siteId: string): Promise<DeltaSyncResult> {
+export function runDeltaSync(siteId: string): Promise<DeltaSyncResult> {
+  if (inFlight) return inFlight;
+  inFlight = runDeltaSyncInner(siteId).finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function runDeltaSyncInner(siteId: string): Promise<DeltaSyncResult> {
   const cursor = await getCursor(siteId);
   if (!cursor) return { ran: false };
 

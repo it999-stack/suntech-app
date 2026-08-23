@@ -1,19 +1,26 @@
 // src/components/shared/AppModal.tsx
 
-import React, { forwardRef, useEffect } from 'react';
+import React, { forwardRef, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
-  Modal,
   ScrollView,
   ViewStyle,
-  KeyboardAvoidingView,
   Platform,
   Dimensions,
 } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+// RN core's KeyboardAvoidingView tracks the keyboard via JS-side `Keyboard`
+// events + Android window-resize heuristics, which is unreliable inside a
+// <Modal> — the modal's own window doesn't always get the same resize
+// behavior the Activity root does, so the sheet can end up not shrinking
+// enough and the keyboard covers/cuts off its bottom content. This one
+// (backed by react-native-keyboard-controller's native keyboard tracking,
+// already provided app-wide via KeyboardProvider in App.tsx) is a drop-in
+// replacement that measures the real keyboard height directly.
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -24,12 +31,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import { X } from 'lucide-react-native';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
+import { useModalHost } from '@components/shared/ModalHost';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const DEFAULT_TOP_OFFSET = Platform.OS === 'ios' ? 64 : 44;
 // Swipe-down-to-dismiss thresholds for the header/grabber drag zone.
 const DISMISS_DISTANCE = 120;
 const DISMISS_VELOCITY = 800;
+
+let modalIdCounter = 0;
 
 interface Props {
   visible: boolean;
@@ -48,6 +58,12 @@ interface Props {
   showCloseButton?: boolean;
 }
 
+/** Renders nothing itself — registers its sheet content into the single
+ * shared ModalHost (see ModalHost.tsx) instead of rendering its own native
+ * <Modal>, so any number of AppModal instances open at once (e.g. one
+ * opening another) become layers inside ONE native window instead of
+ * stacking independent native windows, which is what used to make closing
+ * an inner one able to break/close the outer one on Android. */
 export default forwardRef<ScrollView, Props>(function AppModal(
   {
     visible,
@@ -107,67 +123,89 @@ export default forwardRef<ScrollView, Props>(function AppModal(
     return { transform: [{ translateY: translateY.value }] };
   });
 
-  return (
-    <Modal visible={visible} animationType="none" transparent onRequestClose={onClose} statusBarTranslucent>
-      <GestureHandlerRootView style={styles.flexContainer}>
-      <KeyboardAvoidingView
-        style={styles.flexContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        enabled={avoidKeyboard}
+  const content = (
+    <KeyboardAvoidingView
+      style={styles.flexContainer}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      enabled={avoidKeyboard}
+    >
+      <Pressable style={styles.backdrop} onPress={onClose} />
+
+      <View
+        style={isCenter ? styles.centerWrap : styles.flexContainer}
+        pointerEvents="box-none"
       >
-        <Pressable style={styles.backdrop} onPress={onClose} />
-
-        <View
-          style={isCenter ? styles.centerWrap : styles.flexContainer}
-          pointerEvents="box-none"
+        <Animated.View
+          style={[
+            styles.sheet,
+            isCenter ? styles.sheetCenter : isTop ? [styles.sheetTop, { top: topOffset }] : styles.sheetBottom,
+            sheetAnimatedStyle,
+          ]}
         >
-          <Animated.View
-            style={[
-              styles.sheet,
-              isCenter ? styles.sheetCenter : isTop ? [styles.sheetTop, { top: topOffset }] : styles.sheetBottom,
-              sheetAnimatedStyle,
-            ]}
-          >
-            <GestureDetector gesture={dragGesture}>
-              <View>
-                {!isTop && !isCenter && <View style={styles.grabber} />}
+          <GestureDetector gesture={dragGesture}>
+            <View>
+              {!isTop && !isCenter && <View style={styles.grabber} />}
 
-                {(title || subtitle) && (
-                  <View style={styles.headerRow}>
-                    <View style={styles.headerTextWrap}>
-                      {title && <Text style={styles.title}>{title}</Text>}
-                      {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
-                    </View>
-                    {showCloseButton && (
-                      <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
-                        <X size={18} color={colors.textSecondary} />
-                      </Pressable>
-                    )}
+              {(title || subtitle) && (
+                <View style={styles.headerRow}>
+                  <View style={styles.headerTextWrap}>
+                    {title && <Text style={styles.title}>{title}</Text>}
+                    {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
                   </View>
-                )}
-              </View>
-            </GestureDetector>
+                  {showCloseButton && (
+                    <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
+                      <X size={18} color={colors.textSecondary} />
+                    </Pressable>
+                  )}
+                </View>
+              )}
+            </View>
+          </GestureDetector>
 
-            {scrollable ? (
-              <ScrollView
-                ref={scrollRef}
-                contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-              >
-                {children}
-              </ScrollView>
-            ) : (
-              <View style={[styles.scrollContent, contentContainerStyle]}>{children}</View>
-            )}
+          {scrollable ? (
+            <ScrollView
+              ref={scrollRef}
+              contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
+          ) : (
+            <View style={[styles.scrollContent, contentContainerStyle]}>{children}</View>
+          )}
 
-            {isTop && <View style={styles.grabberTop} />}
-          </Animated.View>
-        </View>
-      </KeyboardAvoidingView>
-      </GestureHandlerRootView>
-    </Modal>
+          {isTop && <View style={styles.grabberTop} />}
+        </Animated.View>
+      </View>
+    </KeyboardAvoidingView>
   );
+
+  const idRef = useRef<string | undefined>(undefined);
+  if (!idRef.current) idRef.current = `app-modal-${++modalIdCounter}`;
+  const { push, remove } = useModalHost();
+
+  // Re-registers on every render while visible so the host always holds
+  // current content/closures (not a stale snapshot from first open) —
+  // removes itself the moment visible turns false. No dependency array is
+  // intentional here: content is a fresh element every render.
+  useEffect(() => {
+    if (visible) {
+      push(idRef.current!, content, onClose);
+    } else {
+      remove(idRef.current!);
+    }
+  });
+
+  // Separate mount-only effect purely for the unmount case — a no-deps
+  // effect's own cleanup would fire before every re-render too (removing
+  // and immediately re-adding on each render), which this avoids.
+  useEffect(() => {
+    return () => remove(idRef.current!);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return null;
 });
 
 const styles = StyleSheet.create({
