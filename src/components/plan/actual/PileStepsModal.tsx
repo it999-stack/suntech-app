@@ -354,7 +354,7 @@ export default function PileStepsModal({
                 </View>
               </View>
 
-              {(isStarted || isDone || isCurrent) && !isHistorical && (
+              {(isStarted || isDone || isCurrent) && !isHistorical && !isLocked && (
                 <View style={modalStyles.headerActions}>
                   <Pressable
                     style={modalStyles.iconBtn}
@@ -533,7 +533,7 @@ export default function PileStepsModal({
               </View>
             )}
 
-            {(isStarted || isDone) && (() => {
+            {(isStarted || isDone) && !isLocked && (() => {
               const applicableFields = getMeasurementFieldsForStep(step.stepName);
               if (applicableFields.length === 0) return null;
               const measurements = group.measurements;
