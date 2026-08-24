@@ -51,7 +51,7 @@ function MachineRow({
       <Switch
         value={active}
         onValueChange={onToggle}
-        trackColor={{ true: colors.accent }}
+        trackColor={{ true: iconColor }}
         thumbColor={active ? colors.white : undefined}
       />
     </Pressable>
@@ -125,7 +125,7 @@ export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: Mac
       {/* Rigs */}
       <GlassCard innerStyle={styles.groupPad}>
         <View style={styles.groupHeader}>
-          <Drill size={16} color={colors.accent} />
+          <Drill size={16} color={TRACK_META.RIG.color} />
           <Text style={styles.groupLabel}>Rigs</Text>
           <Text style={styles.groupCount}>{rigsActiveCount} active</Text>
         </View>
@@ -137,8 +137,8 @@ export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: Mac
               key={r.id}
               machine={r}
               active={draft.activeRigIds.includes(r.id)}
-              iconColor={colors.accent}
-              icon={<Drill size={16} color={draft.activeRigIds.includes(r.id) ? colors.accent : colors.textSecondary} />}
+              iconColor={TRACK_META.RIG.color}
+              icon={<Drill size={16} color={draft.activeRigIds.includes(r.id) ? TRACK_META.RIG.color : colors.textSecondary} />}
               onToggle={() => toggleMachine(r.id, 'RIG')}
             />
           ))

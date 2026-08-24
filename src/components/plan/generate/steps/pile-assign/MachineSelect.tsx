@@ -20,10 +20,6 @@ interface MachineSelectProps {
   options: SimpleMachine[];
   valueId: string | null;
   onSelect: (id: string) => void;
-  /** Shows an unassign ("X") button on the active row instead of the usual
-   * check mark — same pattern as PersonnelPickerList's onUnassign. Only
-   * meaningful for an optional field (e.g. Crane), never passed for a
-   * mandatory Rig picker. */
   onClear?: () => void;
 }
 
