@@ -1,69 +1,68 @@
 // src/screens/Profile/site-settings/MachinesScreen.tsx
-// Displays the list of machines synced for the current site.
+// Displays the site's machines grouped by track (Rigs/Cranes/Compressors),
+// with a tap-to-filter stats row on top — no search/filter bar, no add
+// button; this screen is status-at-a-glance + report breakdown/resume only.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
+  Pressable,
   StyleSheet,
-  FlatList,
+  ScrollView,
   ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ChevronRight } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
 import { getMachinesBySite } from '@repositories/machinesRepository';
-import { TRACK_META } from '@utils/helpers';
+import { TRACK_META, STATUS_META, type MachineKind, type MachineStatus } from '@utils/helpers';
 import { useAuthStore } from '@store/authStore';
 import type { PilingMachine } from '@db/schema';
+import MachineReportModal from './MachineReportModal';
+import MachineStatsGrid, { type MachineStatFilter, type MachineStats } from './MachineStatsGrid';
 
-// Status → dot/text style + label. Unrecognized values (server/enum drift)
-// fall back to the INACTIVE treatment rather than crashing or looking "active".
-function statusMeta(status: string): { dot: object; text: object; label: string } {
-  if (status === 'ACTIVE') return { dot: styles.dotActive, text: styles.statusTextActive, label: 'Active' };
-  if (status === 'BREAKDOWN') return { dot: styles.dotBreakdown, text: styles.statusTextBreakdown, label: 'Reported Down' };
-  if (status === 'IDLE') return { dot: styles.dotIdle, text: styles.statusTextIdle, label: 'Idle' };
-  return { dot: styles.dotInactive, text: styles.statusTextInactive, label: 'Inactive' };
-}
+// The Machines screen only offers the ACTIVE<->BREAKDOWN toggle (report /
+// resume) — IDLE/INACTIVE are set elsewhere (plan generation's machine
+// status editor), not from this fleet list.
+const REPORTABLE_STATUSES = new Set(['ACTIVE', 'BREAKDOWN']);
 
-function MachineCard({ machine }: { machine: PilingMachine }) {
-  const meta = TRACK_META[machine.type as keyof typeof TRACK_META] ?? TRACK_META.RIG;
+const GROUP_ORDER: MachineKind[] = ['RIG', 'CRANE', 'COMPRESSOR'];
+const GROUP_LABEL: Record<MachineKind, string> = { RIG: 'Rigs', CRANE: 'Cranes', COMPRESSOR: 'Compressors' };
+
+function MachineRow({ machine, onPress }: { machine: PilingMachine; onPress: () => void }) {
+  const meta = TRACK_META[machine.type as MachineKind] ?? TRACK_META.RIG;
   const Icon = meta.icon;
-  const status = statusMeta(machine.status);
+  const status = STATUS_META[machine.status as MachineStatus] ?? STATUS_META.INACTIVE;
+  const reportable = REPORTABLE_STATUSES.has(machine.status);
 
-  return (
-    <GlassCard innerStyle={styles.card}>
-      {/* Left: identity + status */}
-      <View style={styles.cardBody}>
-        <View style={styles.row}>
-          <Text style={styles.machineName} numberOfLines={1}>
-            {machine.machineNo}
-          </Text>
-        </View>
-
-        <View style={[styles.badge, { backgroundColor: meta.soft }]}>
-          <Text style={[styles.badgeText, { color: meta.color }]}>{meta.label}</Text>
-        </View>
-
-        <View style={styles.statusRow}>
-          <View style={[styles.statusDot, status.dot]} />
-          <Text style={[styles.statusText, status.text]}>{status.label}</Text>
-        </View>
+  const card = (
+    <GlassCard innerStyle={styles.row}>
+      <View style={[styles.rowIcon, { backgroundColor: meta.soft }]}>
+        <Icon color={meta.color} size={20} strokeWidth={1.75} />
       </View>
-
-      {/* Right: type icon avatar */}
-      <View style={[styles.iconAvatar, { backgroundColor: meta.soft }]}>
-        <Icon color={meta.color} size={28} strokeWidth={1.75} />
+      <View style={styles.rowTextWrap}>
+        <Text style={styles.rowName} numberOfLines={1}>
+          {machine.machineNo}
+        </Text>
+        <Text style={[styles.rowStatus, { color: status.color }]}>{status.label}</Text>
       </View>
+      <ChevronRight size={18} color={colors.textSecondary} />
     </GlassCard>
   );
+
+  if (!reportable) return card;
+  return <Pressable onPress={onPress}>{card}</Pressable>;
 }
 
 export default function MachinesScreen() {
   const siteId = useAuthStore((s) => s.user?.siteId);
   const [machines, setMachines] = useState<PilingMachine[]>([]);
   const [loading, setLoading] = useState(true);
+  const [statFilter, setStatFilter] = useState<MachineStatFilter>('ALL');
+  const [reportTarget, setReportTarget] = useState<PilingMachine | null>(null);
 
   useEffect(() => {
     if (!siteId) { setLoading(false); return; }
@@ -73,6 +72,33 @@ export default function MachinesScreen() {
       .finally(() => setLoading(false));
   }, [siteId]);
 
+  function handleReported(machineId: string, status: 'ACTIVE' | 'BREAKDOWN') {
+    setMachines((prev) => prev.map((m) => (m.id === machineId ? { ...m, status } : m)));
+  }
+
+  const stats: MachineStats = useMemo(
+    () => ({
+      total: machines.length,
+      active: machines.filter((m) => m.status === 'ACTIVE').length,
+      idle: machines.filter((m) => m.status === 'IDLE').length,
+      breakdown: machines.filter((m) => m.status === 'BREAKDOWN').length,
+    }),
+    [machines],
+  );
+
+  const filteredMachines = useMemo(
+    () => (statFilter === 'ALL' ? machines : machines.filter((m) => m.status === statFilter)),
+    [machines, statFilter],
+  );
+
+  const groups = useMemo(
+    () =>
+      GROUP_ORDER.map((type) => ({ type, items: filteredMachines.filter((m) => m.type === type) })).filter(
+        (g) => g.items.length > 0,
+      ),
+    [filteredMachines],
+  );
+
   return (
     <LinearGradient
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
@@ -81,9 +107,7 @@ export default function MachinesScreen() {
       <SafeAreaView style={styles.flex} edges={[]}>
         <View style={styles.headerArea}>
           <Text style={styles.pageTitle}>Machines</Text>
-          <Text style={styles.pageSubtitle}>
-            {machines.length} machine{machines.length === 1 ? '' : 's'} on site
-          </Text>
+          <MachineStatsGrid stats={stats} activeFilter={statFilter} onSelectFilter={setStatFilter} />
         </View>
 
         {loading ? (
@@ -92,18 +116,39 @@ export default function MachinesScreen() {
             size="large"
             style={{ marginTop: spacing.xxxl }}
           />
-        ) : machines.length === 0 ? (
+        ) : groups.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No machines synced yet.</Text>
-            <Text style={styles.emptyHint}>Pull a fresh sync from the home screen.</Text>
+            <Text style={styles.emptyText}>
+              {machines.length === 0 ? 'No machines synced yet.' : 'No machines match this filter.'}
+            </Text>
+            {machines.length === 0 && <Text style={styles.emptyHint}>Pull a fresh sync from the home screen.</Text>}
           </View>
         ) : (
-          <FlatList
-            data={machines}
-            keyExtractor={(m) => m.id}
-            renderItem={({ item }) => <MachineCard machine={item} />}
-            contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
+          <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+            {groups.map((g) => (
+              <View key={g.type} style={styles.group}>
+                <Text style={styles.groupHeader}>
+                  {GROUP_LABEL[g.type]} ({g.items.length})
+                </Text>
+                <View style={styles.groupRows}>
+                  {g.items.map((m) => (
+                    <MachineRow key={m.id} machine={m} onPress={() => setReportTarget(m)} />
+                  ))}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        )}
+
+        {reportTarget && (
+          <MachineReportModal
+            visible
+            machineId={reportTarget.id}
+            machineLabel={reportTarget.machineNo}
+            track={reportTarget.type as 'RIG' | 'CRANE' | 'COMPRESSOR'}
+            currentStatus={reportTarget.status}
+            onClose={() => setReportTarget(null)}
+            onReported={handleReported}
           />
         )}
       </SafeAreaView>
@@ -117,88 +162,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
+    gap: spacing.sm,
   },
   pageTitle: {
     ...typography.h1,
     color: colors.textPrimary,
   },
-  pageSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-    marginBottom: spacing.md,
-  },
   list: {
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.xxxl,
-    gap: spacing.md,
   },
-  card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: spacing.md,
-    width: '100%',
+  group: {
+    marginBottom: spacing.md,
   },
-  cardBody: {
-    flex: 1,
-    gap: spacing.xs,
-    paddingRight: spacing.md,
+  groupHeader: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: spacing.sm,
+  },
+  groupRows: {
+    gap: spacing.sm,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    width: '100%',
   },
-  machineName: {
-    ...typography.body,
-    fontWeight: '700',
-    fontSize: 17,
-    color: colors.textPrimary,
-  },
-  badge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-  },
-  badgeText: {
-    ...typography.caption,
-    color: colors.white,
-    fontWeight: '700',
-    fontSize: 10,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 2,
-  },
-  statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  dotActive: { backgroundColor: '#4ade80' },
-  dotInactive: { backgroundColor: '#f87171' },
-  dotBreakdown: { backgroundColor: colors.danger },
-  dotIdle: { backgroundColor: colors.warning },
-  statusText: {
-    ...typography.caption,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  statusTextActive: { color: '#4ade80' },
-  statusTextInactive: { color: '#f87171' },
-  statusTextBreakdown: { color: colors.danger },
-  statusTextIdle: { color: colors.warning },
-  iconAvatar: {
-    width: 64,
-    height: 64,
+  rowIcon: {
+    width: 40,
+    height: 40,
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  rowTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rowName: {
+    ...typography.body,
+    fontWeight: '700',
+    fontSize: 15,
+    color: colors.textPrimary,
+  },
+  rowStatus: {
+    ...typography.caption,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
   },
   empty: {
     flex: 1,

@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ArrowDownUp, Coffee, AlertTriangle, Play, Clock3 } from 'lucide-react-native';
+import { ArrowDownUp, Coffee, AlertTriangle, Play, Clock3, CalendarClock } from 'lucide-react-native';
 import { colors, spacing, typography, radius } from '@theme/theme';
 import { formatElapsedHMS, formatTime } from '@utils/formatTime';
 import { TRACK_META } from '@utils/helpers';
@@ -24,6 +24,15 @@ function pileScreenStatusMeta(status: string | undefined): { label: string; colo
   if (status === 'BREAKDOWN') return { label: 'Reported Down', color: colors.danger };
   if (status === 'IDLE') return { label: 'Idle', color: colors.warning };
   return { label: 'Inactive', color: colors.textSecondary };
+}
+
+/** Short muted sub-status next to the status dot — only for the plain
+ * "Online" case, where it's useful context (does this machine actually have
+ * work queued right now?). Idle and breakdown already say enough via the
+ * status label itself (plus the idle timer box below), so nothing extra. */
+function subStatusLabel(status: string | undefined, isIdle: boolean, hasActiveStep: boolean): string | undefined {
+  if (isIdle || status !== 'ACTIVE') return undefined;
+  return hasActiveStep ? 'Ready for work' : undefined;
 }
 
 export default function MachineInfoCard({
@@ -49,9 +58,11 @@ export default function MachineInfoCard({
   const Icon = meta.icon;
   const statusMeta = pileScreenStatusMeta(status);
   const isIdle = !!openIdle;
+  const isDown = status === 'BREAKDOWN';
   const idleElapsedSeconds = useElapsedSeconds(openIdle?.since ?? null);
   const statusLabel = isIdle ? 'Idle' : statusMeta.label;
   const statusColor = isIdle ? colors.warning : statusMeta.color;
+  const subLabel = subStatusLabel(status, isIdle, hasActiveStep);
 
   return (
     <GlassCard
@@ -70,6 +81,7 @@ export default function MachineInfoCard({
             <View style={styles.machineStatusRow}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <Text style={[styles.machineStatusText, { color: statusColor }]}>{statusLabel}</Text>
+              {subLabel && <Text style={styles.machineSubStatusText}> · {subLabel}</Text>}
             </View>
           </View>
         </View>
@@ -89,15 +101,26 @@ export default function MachineInfoCard({
         </View>
       )}
 
-      <Text style={styles.logEventLabel}>Log machine event</Text>
+      <View style={styles.logEventHeader}>
+        <View style={styles.logEventIconWrap}>
+          <CalendarClock size={18} color={colors.accentBlue} />
+        </View>
+        <View style={styles.logEventTextWrap}>
+          <Text style={styles.logEventTitle}>Log machine event</Text>
+          <Text style={styles.logEventSubtitle}>Report an issue or set idle if required.</Text>
+        </View>
+      </View>
       <View style={styles.actionRow}>
-        <MachineActionPill
-          icon={AlertTriangle}
-          label="Breakdown"
-          variant="danger"
-          disabled={!hasActiveStep}
-          onPress={onBreakdown}
-        />
+        {isDown ? (
+          <MachineActionPill icon={Play} label="Resume" variant="primary" onPress={onBreakdown} />
+        ) : (
+          <MachineActionPill
+            icon={AlertTriangle}
+            label="Report issue"
+            variant="danger"
+            onPress={onBreakdown}
+          />
+        )}
         {isIdle ? (
           <MachineActionPill icon={Play} label="End idle" variant="primary" onPress={onEndIdle} />
         ) : (
@@ -105,7 +128,6 @@ export default function MachineInfoCard({
             icon={Coffee}
             label="Start idle"
             variant="outline"
-            disabled={!hasActiveStep}
             onPress={onStartIdle}
           />
         )}
@@ -134,8 +156,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   divider: {
-    height: 1,
-    backgroundColor: colors.border,
+    borderBottomWidth: 1,
+    borderStyle: 'dashed',
+    borderBottomColor: colors.border,
   },
   machineInfoLeft: {
     flexDirection: 'row',
@@ -168,6 +191,10 @@ const styles = StyleSheet.create({
   machineStatusText: {
     ...typography.caption,
     fontWeight: '700',
+  },
+  machineSubStatusText: {
+    ...typography.caption,
+    color: colors.textSecondary,
   },
   reorderPill: {
     flexDirection: 'row',
@@ -207,13 +234,30 @@ const styles = StyleSheet.create({
     color: colors.warning,
     fontVariant: ['tabular-nums'],
   },
-  logEventLabel: {
+  logEventHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  logEventIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logEventTextWrap: {
+    flex: 1,
+  },
+  logEventTitle: {
+    ...typography.cardTitle,
+    color: colors.textPrimary,
+  },
+  logEventSubtitle: {
     ...typography.caption,
-    fontWeight: '700',
     color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    textAlign: 'left',
+    marginTop: 2,
   },
   actionRow: {
     flexDirection: 'row',

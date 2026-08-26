@@ -10,7 +10,6 @@ import { colors, spacing, radius, typography } from '@theme/theme';
 export interface IndexTableColumn<T> {
   key: string;
   header: string;
-  /** Fixed width in px. Leave unset on exactly one column to let it fill remaining space. */
   width?: number;
   render: (item: T) => React.ReactNode;
 }
@@ -34,25 +33,14 @@ interface IndexTableProps<T extends { id: string }> {
   emptyText?: string;
   onScrollBegin?: () => void;
   style?: ViewStyle;
-  /** Return true to render this row faded and make its checkbox/tap-to-select inert. */
   isRowDisabled?: (item: T) => boolean;
-  /** Pinned below the scrollable rows (not part of the scroll) — e.g. a Pager. */
   footer?: React.ReactElement | null;
-  /**
-   * A horizontal swipe over the row area advances/returns a page — wire
-   * directly to whatever page state drives the `footer` Pager. Omit either
-   * (e.g. already on the first/last page) to make that direction a no-op.
-   * Swipe stays out of the vertical FlatList's way (activeOffsetX/failOffsetY
-   * below), so it never fights the list's own scroll.
-   */
   onSwipeNextPage?: () => void;
   onSwipePrevPage?: () => void;
 }
 
 const CHECKBOX_SIZE = 18;
 const MENU_WIDTH = 32;
-// A swipe must clear one of these before it's treated as a page change,
-// so an ordinary scroll flick or row tap never accidentally pages.
 const SWIPE_DISTANCE_THRESHOLD = 50;
 const SWIPE_VELOCITY_THRESHOLD = 500;
 
@@ -73,17 +61,11 @@ export default function IndexTable<T extends { id: string }>({
   const canSwipeNext = !!onSwipeNextPage;
   const canSwipePrev = !!onSwipePrevPage;
 
-  // activeOffsetX/failOffsetY: only takes over once the drag is clearly more
-  // horizontal than vertical — anything more vertical falls through untouched
-  // to the FlatList's native scroll, so the two gestures never fight.
   const swipeGesture = Gesture.Pan()
     .enabled(canSwipeNext || canSwipePrev)
     .activeOffsetX([-20, 20])
     .failOffsetY([-10, 10])
     .onUpdate((e) => {
-      // On the first/last page there's nowhere for that direction to go —
-      // stay put instead of a rubber-band shift, so it doesn't look like
-      // it's paging to a duplicate of the page already on screen.
       const blocked = (e.translationX < 0 && !canSwipeNext) || (e.translationX > 0 && !canSwipePrev);
       translateX.value = blocked ? 0 : e.translationX;
     })
@@ -101,19 +83,10 @@ export default function IndexTable<T extends { id: string }>({
 
       const exitX = goingNext ? -viewportWidth : viewportWidth;
       translateX.value = withTiming(exitX, { duration: 180 });
-      // Fade tracks the same exit so the row area is fully invisible, not
-      // just off-position, by the time the reset below runs — only the
-      // opacity animation carries the completion callback so it only fires
-      // once regardless of which of the two finishes last.
       contentOpacity.value = withTiming(0, { duration: 180 }, (finished) => {
         if (!finished) return;
         if (goingNext) runOnJS(onSwipeNextPage!)();
         else runOnJS(onSwipePrevPage!)();
-        // Plain (non-animated) reset — content is fully faded out and
-        // off-position here, so the jump back to center is invisible. Doing
-        // this as a direct assignment rather than another chained animation
-        // is what keeps this reliable: nothing is left running that could
-        // get interrupted mid-flight and leave the table stuck off-center.
         translateX.value = 0;
         contentOpacity.value = withTiming(1, { duration: 200 });
       });
@@ -154,7 +127,7 @@ export default function IndexTable<T extends { id: string }>({
               const disabled = isRowDisabled?.(item) ?? false;
               const visibleActions = rowActions?.filter((a) => !a.show || a.show(item)) ?? [];
               return (
-                <View style={[styles.row, disabled && styles.rowDisabled]}>
+                <View style={[styles.row, selected && styles.rowSelected, disabled && styles.rowDisabled]}>
                   <Pressable
                     style={styles.rowMain}
                     onPress={selectable && !disabled ? () => onToggleRow?.(item.id) : undefined}
@@ -212,9 +185,7 @@ export default function IndexTable<T extends { id: string }>({
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.xs, flex: 1, minHeight: 0 },
-  // Clips the drag-follow/slide transition to the card's own bounds so rows
-  // disappear at its edge instead of spilling out over the screen padding.
+  card: { backgroundColor: colors.white, borderRadius: radius.lg, flex: 1, minHeight: 0 },
   listViewport: { flex: 1, overflow: 'hidden' },
   list: { flex: 1 },
   footer: {
@@ -225,12 +196,12 @@ const styles = StyleSheet.create({
 
   headerRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    backgroundColor: colors.white, paddingHorizontal: spacing.sm, paddingBottom: spacing.sm,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(28,28,46,0.08)', marginBottom: spacing.xs,
+    backgroundColor: colors.white, paddingTop: spacing.sm, paddingHorizontal: spacing.sm, borderBottomWidth: 1, borderRadius: radius.lg, borderBottomColor: 'rgba(28,28,46,0.08)', paddingBottom : spacing.sm,
   },
   headerLabel: { ...typography.caption, fontWeight: '700', color: colors.textSecondary },
 
-  row: { position: 'relative', flexDirection: 'row', alignItems: 'center', borderRadius: radius.sm, marginBottom: spacing.xs },
+  row: { position: 'relative', flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: 'rgba(28,28,46,0.08)' },
+  rowSelected: { backgroundColor: colors.accentSoft },
   rowDisabled: { opacity: 0.5 },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md, paddingHorizontal: spacing.sm },
 

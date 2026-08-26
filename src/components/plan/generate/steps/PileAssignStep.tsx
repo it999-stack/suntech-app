@@ -7,11 +7,14 @@
 // step so this bar lands in the exact same screen position).
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
-import { colors, spacing } from '@theme/theme';
+import { View, Text, Pressable, ScrollView, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { Server, ChevronRight } from 'lucide-react-native';
+import { colors, spacing, radius, typography } from '@theme/theme';
 import type { PlanDraft } from '@/types/plan';
 import IndexTable from '@components/shared/IndexTable';
 import Pager from '@components/shared/Pager';
+import AppModal from '@components/shared/AppModal';
+import MachineBadge from '@components/shared/MachineBadge';
 import NextStepFab from '@components/plan/generate/NextStepFab';
 import { useAppConfig } from '@state/AppConfigContext';
 
@@ -19,6 +22,8 @@ import PileListToolbar, { type LocationFilterOption } from './pile-assign/PileLi
 import BulkAssignBar from './pile-assign/BulkAssignBar';
 import { buildColumns } from './pile-assign/pileTableColumns';
 import { ALL_LOCATIONS_ID, type EligiblePile, type MachineKind, type PileFilter, type SimpleMachine } from './pile-assign/types';
+
+const ACCENT_SOLID = '#5B5FEF';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -35,10 +40,6 @@ interface PileAssignStepProps {
   continueDisabled: boolean;
 }
 
-// Crane is intentionally NOT tracked here — pre-filling it into a later bulk
-// assignment silently carried a stale/unintended crane onto piles the user
-// meant to leave rig-only. Only the rig (always mandatory) is worth
-// remembering as a convenience default.
 function mostCommonRigId(assignments: PlanDraft['assignments']): string | null {
   const counts = new Map<string, number>();
   Object.values(assignments).forEach((a) => {
@@ -77,6 +78,7 @@ export default function PileAssignStep({
   const [bulkRigId, setBulkRigId] = useState<string | null>(null);
   const [bulkCraneId, setBulkCraneId] = useState<string | null>(null);
   const [lastUsedRigId, setLastUsedRigId] = useState(() => mostCommonRigId(draft.assignments));
+  const [viewAssignedOpen, setViewAssignedOpen] = useState(false);
 
   function machineLabel(kind: MachineKind, machineId: string): string {
     return (kind === 'rig' ? activeRigs : activeCranes).find((m) => m.id === machineId)?.machineNo ?? '—';
@@ -144,6 +146,33 @@ export default function PileAssignStep({
   );
 
   const pendingCount = piles.filter((p) => !p.completed && !isPileFullyAssigned(p.id)).length;
+
+  const allAssignedPiles = useMemo(
+    () =>
+      piles
+        .filter((p) => isPileFullyAssigned(p.id))
+        .map((p) => {
+          const a = draft.assignments[p.id];
+          return {
+            id: p.id,
+            code: p.code,
+            dia: p.dia,
+            depth: p.depth,
+            rigLabel: a?.rig ? machineLabel('rig', a.rig) : null,
+            craneLabel: a?.crane ? machineLabel('crane', a.crane) : null,
+          };
+        })
+        .sort((a, b) => a.code.localeCompare(b.code)),
+    [piles, draft.assignments, activeRigs, activeCranes],
+  );
+
+  const selectedCodesLabel = useMemo(() => {
+    const codes = piles.filter((p) => selectedIds.has(p.id)).map((p) => p.code).sort();
+    const limit = 4;
+    return codes.length <= limit
+      ? codes.join(', ')
+      : `${codes.slice(0, limit).join(', ')} +${codes.length - limit} more`;
+  }, [piles, selectedIds]);
   // "Select all" applies to the current page only, matching Pager's per-page scope.
   const selectableVisiblePiles = useMemo(() => pagedPiles.filter((p) => !p.completed), [pagedPiles]);
   const allVisibleSelected = selectableVisiblePiles.length > 0 && selectableVisiblePiles.every((p) => selectedIds.has(p.id));
@@ -251,6 +280,21 @@ export default function PileAssignStep({
         />
       </View>
 
+      <Pressable style={styles.infoCard} onPress={() => setViewAssignedOpen(true)}>
+        <View style={styles.infoCardIconWrap}>
+          <Server size={20} color={ACCENT_SOLID} />
+        </View>
+        <View style={styles.infoCardTextWrap}>
+          <Text style={styles.infoCardTitle}>Assign piles to machines</Text>
+          <Text style={styles.infoCardSubtitle}>Select one or more piles</Text>
+        </View>
+        <View style={styles.infoCardDivider} />
+        <View style={styles.infoCardAssignedWrap}>
+          <Text style={styles.infoCardSummaryText}>{allAssignedPiles.length} piles assigned</Text>
+        </View>
+        <ChevronRight size={20} color={ACCENT_SOLID} />
+      </Pressable>
+
       <View style={styles.listSection}>
         <IndexTable
           data={pagedPiles}
@@ -263,8 +307,8 @@ export default function PileAssignStep({
           isRowDisabled={(p) => !!p.completed}
           emptyText={piles.length === 0 ? 'No piles found for this site.' : 'No piles match this view.'}
           footer={<Pager page={currentPage} totalPages={totalPages} onPageChange={handlePageChange} />}
-          onSwipeNextPage={swipeToNextPage}
-          onSwipePrevPage={swipeToPrevPage}
+          onSwipeNextPage={currentPage < totalPages ? swipeToNextPage : undefined}
+          onSwipePrevPage={currentPage > 1 ? swipeToPrevPage : undefined}
         />
       </View>
 
@@ -272,6 +316,7 @@ export default function PileAssignStep({
         <View style={styles.footer}>
           <BulkAssignBar
             selectedCount={selectedIds.size}
+            selectedCodesLabel={selectedCodesLabel}
             onClear={clearSelection}
             panelOpen={bulkOpen}
             onTogglePanel={toggleBulkPanel}
@@ -287,11 +332,34 @@ export default function PileAssignStep({
           />
         </View>
       ) : (
-        // GeneratePlanScreen's pilesStepContainer already applies
-        // paddingHorizontal: spacing.lg around this step — cancel the FAB's
-        // own right offset so it lines up with every other step's copy.
         <NextStepFab onPress={onContinue} disabled={continueDisabled} style={styles.nextFabOffset} />
       )}
+
+      <AppModal
+        visible={viewAssignedOpen}
+        onClose={() => setViewAssignedOpen(false)}
+        title={`Assigned Piles (${allAssignedPiles.length})`}
+        position="center"
+        scrollable={false}
+      >
+        <ScrollView style={styles.assignedList} showsVerticalScrollIndicator={false}>
+          {allAssignedPiles.map((p) => (
+            <View key={p.id} style={styles.assignedRow}>
+              <View style={styles.assignedRowBody}>
+                <Text style={styles.assignedRowCode}>{p.code}</Text>
+                <Text style={styles.assignedRowSpec}>Ø{p.dia}mm · {p.depth}m</Text>
+              </View>
+              <View style={styles.assignedRowBadges}>
+                {p.rigLabel && <MachineBadge track="RIG" label={p.rigLabel} />}
+                {p.craneLabel && <MachineBadge track="CRANE" label={p.craneLabel} />}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+        <Pressable style={styles.closeBtn} onPress={() => setViewAssignedOpen(false)}>
+          <Text style={styles.closeBtnText}>Close</Text>
+        </Pressable>
+      </AppModal>
     </View>
   );
 }
@@ -299,10 +367,30 @@ export default function PileAssignStep({
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0 },
   toolbarSection: { marginBottom: spacing.sm },
-  // Runs the card to the very bottom, under NextStepFab's horizontal range —
-  // deliberate now that the pager also responds to swipe (see IndexTable's
-  // onSwipeNextPage/onSwipePrevPage), so tapping the last page number/chevron
-  // in that exact corner is no longer the only way to reach it.
+  infoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  infoCardIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoCardTextWrap: { flex: 1 },
+  infoCardTitle: { ...typography.cardTitle, color: colors.textPrimary },
+  infoCardSubtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  infoCardDivider: { width: 1, height: 32, backgroundColor: 'rgba(91,95,239,0.25)' },
+  infoCardAssignedWrap: { alignItems: 'flex-end' },
+  infoCardSummaryText: { ...typography.smallTxt, fontWeight: '700', color: ACCENT_SOLID, textAlign: 'right' },
   listSection: { flex: 1, minHeight: 0 },
   footer: {
     marginHorizontal: -spacing.lg,
@@ -313,4 +401,27 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(28,28,46,0.08)',
   },
   nextFabOffset: { right: 0 },
+
+  assignedList: { maxHeight: 360 },
+  assignedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm + 2,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  assignedRowBody: { flex: 1, minWidth: 0 },
+  assignedRowCode: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
+  assignedRowSpec: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  assignedRowBadges: { flexDirection: 'row', gap: spacing.xs },
+  closeBtn: {
+    marginTop: spacing.md,
+    backgroundColor: 'rgba(28,28,46,0.06)',
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm + 2,
+    alignItems: 'center',
+  },
+  closeBtnText: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
 });

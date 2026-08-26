@@ -24,13 +24,25 @@ interface TilePickerProps {
   /** Optional heading shown once above every section (e.g. "Replacement"). */
   label?: string;
   sections: TileSection[];
-  valueId: string | null;
-  onSelect: (id: string) => void;
+  /** Single-select mode (existing behaviour). */
+  valueId?: string | null;
+  onSelect?: (id: string) => void;
+  /** Multi-select mode — takes priority over valueId/onSelect when provided. */
+  selectedIds?: string[];
+  onToggle?: (id: string) => void;
   /** Tiles per row, forwarded to every section's TileGroup. Defaults to 3. */
   columns?: number;
 }
 
-export default function TilePicker({ label, sections, valueId, onSelect, columns = 3 }: TilePickerProps) {
+export default function TilePicker({
+  label,
+  sections,
+  valueId,
+  onSelect,
+  selectedIds,
+  onToggle,
+  columns = 3,
+}: TilePickerProps) {
   const visibleSections = sections.filter((s) => s.options.length > 0);
 
   return (
@@ -43,6 +55,8 @@ export default function TilePicker({ label, sections, valueId, onSelect, columns
           options={section.options}
           valueId={valueId}
           onSelect={onSelect}
+          selectedIds={selectedIds}
+          onToggle={onToggle}
           columns={columns}
         />
       ))}

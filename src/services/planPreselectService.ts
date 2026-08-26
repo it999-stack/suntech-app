@@ -54,18 +54,13 @@ export function buildResumeWorkByPileId(
 }
 
 /**
- * Picks up to `maxPiles` pending piles to auto-add to the plan and auto-assign last
- * rig/crane when still active. Does NOT limit resume-work tracking itself — see
- * buildResumeWorkByPileId for the uncapped version every selected pile needs, regardless
- * of whether it came from here or a manual pick.
- *
- * Genuinely in-progress piles (wasStarted — actualStart set, no actualEnd on their
- * pending step) always win a slot ahead of merely-queued ones (wasStarted false, never
- * touched): remainingMinutes is only ever a step's template duration, never derived from
- * real elapsed time (see resumeWorkService.ts), so sorting on it alone would let five
- * short, never-started piles bump out one long-running pile that's actually mid-step
- * right now — the most urgent case this preselection exists for. remainingMinutes is
- * still the tie-break within each of those two groups.
+ * Auto-preselection is a UI convenience only — it never forces a pile into
+ * the plan that it can't also auto-assign a rig for. A carry-over pile whose
+ * last-used rig isn't active today is simply left off the auto-selected list
+ * entirely (not added to selectedPileIds with no assignment); the supervisor
+ * can still add and assign it manually like any other pile, same as one that
+ * never had resume work at all. Without this, an unassignable pile would sit
+ * in the plan invisibly and permanently block Continue.
  */
 export function buildResumePreselection({
   pendingItems,
@@ -76,36 +71,37 @@ export function buildResumePreselection({
   const activeRigSet = new Set(activeRigIds);
   const activeCraneSet = new Set(activeCraneIds);
 
-  const sorted = [...pendingItems].sort((a, b) => {
+  const withProgress = pendingItems.filter(
+    (item) => item.wasStarted || item.completedStepNames.length > 0,
+  );
+
+  const sorted = [...withProgress].sort((a, b) => {
     if (a.wasStarted !== b.wasStarted) return a.wasStarted ? -1 : 1;
     return a.remainingMinutes - b.remainingMinutes;
   });
-  const selected = sorted.slice(0, maxPiles);
 
   const resumeWorkByPileId: Record<string, ResumeWork> = {};
   const selectedPileIds: string[] = [];
   const assignments: Record<string, PileAssignment> = {};
 
-  for (const item of selected) {
-    resumeWorkByPileId[item.pileId] = toResumeWork(item);
-    selectedPileIds.push(item.pileId);
+  for (const item of sorted) {
+    if (selectedPileIds.length >= maxPiles) break;
 
     const rigActive = item.lastRigId != null && activeRigSet.has(item.lastRigId);
+    if (!rigActive) continue;
+
     const craneActive = item.lastCraneId != null && activeCraneSet.has(item.lastCraneId);
-    // Crane is optional — re-assign whenever the rig alone is still active,
-    // carrying the crane along only if it's also still active.
-    if (rigActive) {
-      assignments[item.pileId] = {
-        rig: item.lastRigId!,
-        crane: craneActive ? item.lastCraneId! : undefined,
-      };
-    }
+    resumeWorkByPileId[item.pileId] = toResumeWork(item);
+    selectedPileIds.push(item.pileId);
+    assignments[item.pileId] = {
+      rig: item.lastRigId!,
+      crane: craneActive ? item.lastCraneId! : undefined,
+    };
   }
 
   return { resumeWorkByPileId, selectedPileIds, assignments };
 }
 
-/** Pending step ids required by selected carry-over piles — not removable in StepSelectStep. */
 export function getLockedStepIds(
   selectedPileIds: string[],
   resumeWorkByPileId: Record<string, ResumeWork>,
@@ -118,7 +114,6 @@ export function getLockedStepIds(
   return locked;
 }
 
-/** Re-includes missing locked steps while preserving canonical step order. */
 export function mergeLockedSteps(
   selectedStepIds: string[],
   missingLockedIds: string[],

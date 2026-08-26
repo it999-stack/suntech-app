@@ -435,15 +435,19 @@ export type NewPileActualStep = typeof pileActualSteps.$inferInsert;
 // ─── Machine Events (audit log for swap/breakdown reporting) ─────────────────
 
 /**
- * User-logged machine breakdown/replacement/resume/idle events, recorded
- * against a pile (and optionally a specific step) within a checklist day.
+ * User-logged machine breakdown/replacement/resume/idle events. Normally
+ * recorded against a pile (and optionally a specific step) within a
+ * checklist day; checklistId/pileId are null instead for a fleet-level
+ * BREAKDOWN/RESUMED report made directly from the Machines screen (see
+ * machinesRepository's reportMachineEvent), which has no pile/step to
+ * attach to.
  * eventType: 'BREAKDOWN' | 'REPLACED' | 'RESUMED' | 'IDLE_START' | 'IDLE_END'
  * occurredAt is an ISO timestamp string (editable by the user, not always "now").
  */
 export const pilMachineEvents = sqliteTable('pil_machine_events', {
   id: text('id').primaryKey(),
-  checklistId: text('checklist_id').notNull(),
-  pileId: text('pile_id').notNull(),
+  checklistId: text('checklist_id'),
+  pileId: text('pile_id'),
   stepId: text('step_id'),
   track: text('track').notNull(),
   eventType: text('event_type').notNull(),

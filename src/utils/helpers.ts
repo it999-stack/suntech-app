@@ -49,6 +49,33 @@ export function getTrackBadgeColors(track: MachineKind): { bg: string; fg: strin
   return { bg: TRACK_META.COMPRESSOR.soft, fg: TRACK_META.COMPRESSOR.color };
 }
 
+// ---------------------------------------------------------------------------
+// Machine status metadata — mirrors TRACK_META's pattern, colors matched to
+// what MachineDownModal (breakdown, danger) / MachineIdleModal (idle,
+// warning) already use for these same concepts elsewhere in the app.
+// ---------------------------------------------------------------------------
+
+export type MachineStatus = 'ACTIVE' | 'INACTIVE' | 'BREAKDOWN' | 'IDLE';
+
+export interface StatusMeta {
+  label: string;
+  color: string;
+  soft: string;
+}
+
+export const STATUS_META: Record<MachineStatus, StatusMeta> = {
+  ACTIVE: { label: 'Active', color: colors.success, soft: colors.successSoft },
+  IDLE: { label: 'Idle', color: colors.warning, soft: colors.warningSoft },
+  BREAKDOWN: { label: 'Breakdown', color: colors.danger, soft: colors.dangerSoft },
+  INACTIVE: { label: 'Inactive', color: colors.textSecondary, soft: 'rgba(28,28,46,0.06)' },
+};
+
+/** Statuses a machine can be included in a new plan with — BREAKDOWN and
+ * INACTIVE machines can't be toggled on in MachineSelectStep. */
+export function isMachinePlannable(status: string): boolean {
+  return status === 'ACTIVE' || status === 'IDLE';
+}
+
 /** Converts a `#rrggbb` hex color to an `rgba(...)` string at the given opacity. */
 export function hexToRgba(hex: string, alpha: number): string {
   const clean = hex.replace('#', '');

@@ -27,6 +27,7 @@ import { getPrimaryShiftType, combineDateAndTime, isWithinGenerationGrace } from
 import { toLocalDateStr, formatHeaderDate } from '@utils/formatTime';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import { useAppConfig } from '@state/AppConfigContext';
+import { useWorkingDate, useWorkingDateStore } from '@store/workingDateStore';
 
 const DEFAULT_START_TIME = '08:00';
 
@@ -47,14 +48,29 @@ interface Props {
 
 export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, onConfirm }: Props) {
   const { config } = useAppConfig();
+  // TESTING ONLY: when a tester has the working-date override on (see
+  // workingDateStore.ts), this sheet should default/anchor to that date
+  // instead of the device's real today — same "operate on the picked date"
+  // behavior WorkingDateSheet already promises for Home/Fill Actuals.
+  const workingDate = useWorkingDate();
+  const workingDateOverrideEnabled = useWorkingDateStore((s) => s.overrideEnabled);
+  // isWithinGenerationGrace always compares against the device's real clock,
+  // so a picked working date that isn't real-today would otherwise look
+  // "closed" and get silently bumped to tomorrow — the override means "let me
+  // freely operate on this exact date," same intent allowAnyPlanDate already
+  // carries elsewhere in this file, so it's folded into the same bypass.
+  const testingModeActive = workingDateOverrideEnabled || config.allowAnyPlanDate;
 
   // Recomputed each time the sheet opens (keyed on `visible`) rather than once
   // at mount, so a day boundary crossed while the app stays open doesn't leave
   // this stuck on a stale "today."
-  const today = useMemo(() => toLocalDateStr(new Date()), [visible]);
+  const today = useMemo(() => workingDate, [visible, workingDate]);
   const rangeDates = useMemo(
-    () => Array.from({ length: config.futureDaysAhead + 1 }, (_, i) => toLocalDateStr(addDays(new Date(), i))),
-    [visible, config.futureDaysAhead],
+    () =>
+      Array.from({ length: config.futureDaysAhead + 1 }, (_, i) =>
+        toLocalDateStr(addDays(new Date(`${workingDate}T00:00:00`), i)),
+      ),
+    [visible, config.futureDaysAhead, workingDate],
   );
 
   const [selectedDate, setSelectedDate] = useState(today);
@@ -107,9 +123,13 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
 
         // Don't default the selection onto "today" if it's neither planned
         // nor still within its own generation grace window — land on
-        // tomorrow instead, which is always open.
+        // tomorrow instead, which is always open. Skipped entirely in
+        // testing mode — the whole point there is to stay on the exact date
+        // picked/overridden, not have it second-guessed against real-world time.
         const todayUsable =
-          planned.has(today) || isWithinGenerationGrace(today, startTime, config.generationGraceHours);
+          testingModeActive ||
+          planned.has(today) ||
+          isWithinGenerationGrace(today, startTime, config.generationGraceHours);
         if (!todayUsable && rangeDates[1]) setSelectedDate(rangeDates[1]);
       } catch {
         if (!cancelled) {
@@ -122,11 +142,11 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
     return () => {
       cancelled = true;
     };
-  }, [visible, siteId, rangeDates, today, config.generationGraceHours]);
+  }, [visible, siteId, rangeDates, today, config.generationGraceHours, testingModeActive]);
 
   function getDayState(dateStr: string): DayVisualState {
     const idx = rangeDates.indexOf(dateStr);
-    if (idx === -1 && !config.allowAnyPlanDate) return { disabled: true };
+    if (idx === -1 && !testingModeActive) return { disabled: true };
 
     if (plannedDates.has(dateStr)) {
       return {
@@ -138,12 +158,12 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
     }
 
     // A failed server check always disables — no offline guessing, even in
-    // allowAnyPlanDate testing mode.
+    // testing mode.
     if (loadError) {
       return { disabled: true, tone: 'muted', a11yLabel: 'Unavailable' };
     }
 
-    if (config.allowAnyPlanDate) {
+    if (testingModeActive) {
       return { selected: dateStr === selectedDate, tone: 'default' };
     }
 

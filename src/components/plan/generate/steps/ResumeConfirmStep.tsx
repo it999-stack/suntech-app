@@ -24,6 +24,7 @@ import { Clock, PencilLine } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MachineBadge from '@components/shared/MachineBadge';
 import type { PlanDraft } from '@/types/plan';
+import type { PilingStep } from '@/db/schema';
 import GlassCard from '@components/shared/GlassCard';
 import ResumeTimeConfirmModal from './resume-confirm/ResumeTimeConfirmModal';
 import { useResumeConfirmQueue, pileNeedsResumeConfirm } from './resume-confirm/useResumeConfirmQueue';
@@ -52,13 +53,17 @@ interface ResumeConfirmStepProps {
   /** Where a resume step effectively starts in the new plan — see
    * pilingPlannerService.ts's resolveEffectiveDayStart. */
   effectiveDayStart: Date;
+  /** Global step catalog — passed through to useResumeConfirmQueue so a step
+   * confirmed "fully completed" can be recorded with its real track/
+   * sequenceOrder (see that hook's confirmFull). */
+  allSteps?: PilingStep[];
 }
 
 const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepProps>(function ResumeConfirmStep({
   draft, onUpdate, piles = [], activeRigs = [], activeCranes = [],
-  effectiveDayStart,
+  effectiveDayStart, allSteps = [],
 }, ref) {
-  const resumeConfirm = useResumeConfirmQueue(draft, onUpdate);
+  const resumeConfirm = useResumeConfirmQueue(draft, onUpdate, allSteps);
   const flatListRef = useRef<FlatList<EligiblePile>>(null);
 
   function machineLabel(kind: MachineKind, machineId: string): string {

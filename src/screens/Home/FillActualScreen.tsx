@@ -1,6 +1,6 @@
 // src/screens/Home/FillActualScreen.tsx
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import {
   View,
   Text,
@@ -89,15 +89,6 @@ export default function FillActualsScreen() {
     //   { text: 'OK', onPress: dismissConflictNotice },
     // ]);
   }, [conflictNotice, dismissConflictNotice]);
-
-  // Tapping a pile that's idle-blocked has nothing to act on there anymore
-  // (see MachinePilesPage) — scroll up to the machine card's End Idle
-  // action instead, since it's the first thing in the selected machine's
-  // page content.
-  const scrollViewRef = useRef<ScrollView>(null);
-  const scrollToTop = useCallback(() => {
-    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-  }, []);
 
   const {
     machines,
@@ -241,7 +232,6 @@ export default function FillActualsScreen() {
           </View>
         ) : (
           <ScrollView
-            ref={scrollViewRef}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
@@ -286,7 +276,6 @@ export default function FillActualsScreen() {
                       openIdle={idleSessionByMachineId.get(item.value)}
                       hasActiveStep={currentStepByMachineId.has(machine.id)}
                       onOpenPile={setOpenCpId}
-                      onIdleBlockedPilePress={scrollToTop}
                       onBreakdown={() => handleOpenMachineEvent(machine.id, machine.type, 'BREAKDOWN')}
                       onStartIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_START')}
                       onEndIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_END')}
@@ -322,7 +311,6 @@ export default function FillActualsScreen() {
           pileCode={machineEventPileCode!}
           stepName={machineEventStepName!}
           defaultTrack={machineEventFor.track}
-          initialEventType="BREAKDOWN"
           machines={machines}
           currentMachineIdByTrack={{ [machineEventFor.track]: machineEventFor.machineId }}
           history={machineEventHistory}

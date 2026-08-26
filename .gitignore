@@ -49,3 +49,7 @@ yarn-error.*
 # Generated native folders
 /ios
 /android
+
+# Agent-authored planning/architecture docs (local reference only, not shared via git)
+ARCHITECTURE.md
+IGNITE_COMPARISON.md

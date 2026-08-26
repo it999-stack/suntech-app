@@ -448,6 +448,7 @@ export default function GeneratePlanScreen() {
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
                 effectiveDayStart={effectiveDayStart}
+                allSteps={steps}
               />
             )}
           </View>

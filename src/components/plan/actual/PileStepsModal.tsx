@@ -249,22 +249,29 @@ export default function PileStepsModal({
     !!currentStep.assignedMachineId &&
     machines.find((m) => m.id === currentStep.assignedMachineId)?.status === 'BREAKDOWN';
 
-  // Blocks the fill/edit time controls on the current step (see
-  // StepTimeControl/EditTimeButton's `blocked` prop) without locking the
-  // whole card — Replace Machine and the warning banner above must stay
-  // reachable so the user has a way to resolve this.
-  const breakdownBlockedNotice = currentStepHasBreakdown
-    ? {
-        title: `${machines.find((m) => m.id === currentStep!.assignedMachineId)?.machineNo ?? 'Machine'} is down`,
-        message: 'Replace the machine or mark it resumed to continue.',
-      }
-    : undefined;
-
   const currentStepBlockedByIdle =
     group.isBlockedByIdle &&
     !!currentStep &&
     !!currentStep.assignedMachineId &&
     machines.find((m) => m.id === currentStep.assignedMachineId)?.status === 'IDLE';
+
+  // Single centralized "why is time entry blocked right now" notice — covers
+  // breakdown and idle the same way (see StepTimeControl/EditTimeButton's
+  // `blocked` prop): the fill/edit buttons still render and stay tappable,
+  // tapping one just surfaces this via notify.error instead of opening the
+  // picker. Never locks the whole card — Replace Machine / the banners above
+  // must stay reachable so the user has a way to resolve it either way.
+  const currentStepBlockedNotice: ConflictNotice | undefined = currentStepHasBreakdown
+    ? {
+        title: `${machines.find((m) => m.id === currentStep!.assignedMachineId)?.machineNo ?? 'Machine'} is down`,
+        message: 'Replace the machine or mark it resumed to continue.',
+      }
+    : currentStepBlockedByIdle
+      ? {
+          title: `${machines.find((m) => m.id === currentStep!.assignedMachineId)?.machineNo ?? 'Machine'} is idle`,
+          message: 'End the idle session to continue.',
+        }
+      : undefined;
 
   const subtitle = [
     group.rigs.length > 0 && `Rig ${group.rigs.join(', ')}`,
@@ -333,7 +340,6 @@ export default function PileStepsModal({
         const isStarted = step.actualStart !== undefined;
         const isCurrent = step.stepId === currentStepId;
         const isLocked = !isDone && !isCurrent;
-        const isBlockedByIdle = isCurrent && !!currentStepBlockedByIdle;
         const isHistorical = !!step.isHistorical;
         const lateMinutes =
           isDone && step.plannedEndIso != null
@@ -346,7 +352,7 @@ export default function PileStepsModal({
           <View
             key={`${isHistorical ? 'hist' : 'cur'}-${step.stepId}`}
             onLayout={(e) => handleStepCardLayout(step.stepId, e.nativeEvent.layout.y)}
-            style={[modalStyles.card, (isLocked || isBlockedByIdle || isHistorical) && modalStyles.cardLocked]}
+            style={[modalStyles.card, (isLocked || isHistorical) && modalStyles.cardLocked]}
           >
             <View style={modalStyles.headerRow}>
               <View style={modalStyles.headerLeft}>
@@ -376,7 +382,7 @@ export default function PileStepsModal({
               {(isStarted || isDone || isCurrent) && !isHistorical && !isLocked && (
                 <View style={modalStyles.headerActions}>
                   <Pressable
-                    style={modalStyles.iconBtn}
+                    style={modalStyles.remarksBtn}
                     hitSlop={8}
                     accessibilityLabel={step.remarks ? 'Edit remarks' : 'Add remarks'}
                     onPress={() =>
@@ -384,6 +390,7 @@ export default function PileStepsModal({
                     }
                   >
                     <MessageSquarePlus size={16} color={colors.accent} />
+                    <Text style={modalStyles.remarksBtnText}>Remarks</Text>
                   </Pressable>
                   <Pressable
                     style={modalStyles.iconBtn}
@@ -519,7 +526,7 @@ export default function PileStepsModal({
               </>
             )}
 
-            {isCurrent && isStarted && !isDone && !isBlockedByIdle && (
+            {isCurrent && isStarted && !isDone && (
               <View style={modalStyles.fieldRow}>
                 <Text style={modalStyles.fieldLabel}>Start</Text>
                 <Text style={modalStyles.fieldValue}>{formatTimeWithDay(step.actualStartIso)}</Text>
@@ -541,7 +548,7 @@ export default function PileStepsModal({
                     pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                     onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
                     anchorIso={step.startAnchorIso}
-                    blocked={breakdownBlockedNotice}
+                    blocked={currentStepBlockedNotice}
                   />
                   <DeleteTimeButton
                     label="start time"
@@ -626,7 +633,7 @@ export default function PileStepsModal({
               );
             })()}
 
-            {isCurrent && !isStarted && !isBlockedByIdle && (
+            {isCurrent && !isStarted && (
               <StepTimeControl
                 mode="start"
                 defaultMinutes={prevStep?.actualEnd ?? step.plannedStart}
@@ -642,11 +649,11 @@ export default function PileStepsModal({
                 planWindowMinIso={planWindowMinIso}
                 planWindowMaxIso={planWindowMaxIso}
                 anchorIso={step.startAnchorIso}
-                blocked={breakdownBlockedNotice}
+                blocked={currentStepBlockedNotice}
               />
             )}
 
-            {isCurrent && isStarted && !isDone && !isBlockedByIdle && (
+            {isCurrent && isStarted && !isDone && (
               <StepTimeControl
                 mode="finish"
                 defaultMinutes={
@@ -662,16 +669,12 @@ export default function PileStepsModal({
                 planWindowMinIso={planWindowMinIso}
                 planWindowMaxIso={planWindowMaxIso}
                 anchorIso={step.endAnchorIso}
-                blocked={breakdownBlockedNotice}
+                blocked={currentStepBlockedNotice}
               />
             )}
 
             {isLocked && (
               <Text style={modalStyles.lockedText}>Waiting on previous step</Text>
-            )}
-
-            {isBlockedByIdle && (
-              <Text style={modalStyles.lockedText}>Machine idle — end idle to continue</Text>
             )}
           </View>
         );
@@ -797,6 +800,22 @@ const modalStyles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  remarksBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    height: 32,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  remarksBtnText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.accent,
+    marginLeft: spacing.xs
   },
   divider: {
     height: 1,

@@ -64,7 +64,7 @@ export type ShiftTeamAssignment = {
   shiftInchargeId: string | null;
   /** machineId -> personnelId. Rigs only — mandatory: every active rig needs one this shift. */
   engineerByMachineId: Record<string, string>;
-  /** machineId -> personnelId. Rigs only — mandatory: every active rig needs one this shift. No pairing/cap — one supervisor may cover many rigs. */
+  /** machineId -> personnelId. Rigs only — optional: any subset of active rigs (including none) may have one this shift. No pairing/cap — one supervisor may cover many rigs. */
   supervisorByMachineId: Record<string, string>;
   /** machineId -> personnelId. Rigs + cranes — mandatory: every active machine needs one this shift. */
   operatorByMachineId: Record<string, string>;

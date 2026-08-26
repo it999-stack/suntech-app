@@ -93,7 +93,7 @@ export default function NativeTimerSelectMenu({
     setTimeout(() => {
       onTimeSelect?.(date);
       onConfirm?.(date, dateWasExplicit);
-    }, 50);
+    }, 300);
   }
 
   return (

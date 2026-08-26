@@ -100,16 +100,21 @@ export default function MachineReplaceModal({
   });
 
   return (
-    <AppModal visible={visible} onClose={onClose} title={pileCode} subtitle={stepName} position="center">
+    <AppModal visible={visible} onClose={onClose} title={pileCode} subtitle={stepName} position="bottom">
       <View style={styles.page}>
         <View style={styles.divider} />
 
-        <View style={styles.iconCircle}>
-          <RefreshCw size={24} color={colors.accent} />
+        <View style={styles.promptRow}>
+          <View style={styles.promptIconWrap}>
+            <RefreshCw size={22} color={colors.accent} />
+          </View>
+          <View style={styles.promptTextWrap}>
+            <Text style={styles.promptTitle}>Replace {machineLabel}?</Text>
+            <Text style={styles.promptSubtitle}>Choose a replacement machine</Text>
+          </View>
         </View>
 
-        <Text style={styles.promptTitle}>Replace {machineLabel}?</Text>
-        <Text style={styles.promptSubtitle}>Choose a replacement machine</Text>
+        <View style={styles.divider} />
 
         <View style={styles.fieldsWrap}>
           <View style={styles.machineSelectWrap}>
@@ -141,40 +146,41 @@ export default function MachineReplaceModal({
 
 const styles = StyleSheet.create({
   page: {
-    alignItems: 'center',
     paddingBottom: spacing.sm,
   },
   divider: {
-    alignSelf: 'stretch',
     height: 1,
     backgroundColor: colors.border,
     marginBottom: spacing.lg,
   },
-  iconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: radius.pill,
+  promptRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  promptIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.lg,
     backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.md,
+  },
+  promptTextWrap: {
+    flex: 1,
   },
   promptTitle: {
     ...typography.cardTitle,
     fontWeight: '700',
     color: colors.textPrimary,
-    textAlign: 'center',
   },
   promptSubtitle: {
     ...typography.caption,
     color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: spacing.lg,
+    marginTop: 2,
   },
-  fieldsWrap: {
-    alignSelf: 'stretch',
-  },
+  fieldsWrap: {},
   machineSelectWrap: {
     marginBottom: spacing.md,
   },

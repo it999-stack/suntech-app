@@ -22,10 +22,6 @@ interface MachinePilesPageProps {
   openIdle?: OpenIdleSession;
   hasActiveStep: boolean;
   onOpenPile: (checklistPileId: string) => void;
-  /** Tapped a pile whose current step is idle-blocked — instead of opening
-   * that pile's steps (which has nothing to act on until idle ends), scroll
-   * up to the machine card's End Idle action instead. */
-  onIdleBlockedPilePress: () => void;
   onBreakdown: () => void;
   onStartIdle: () => void;
   onEndIdle: () => void;
@@ -41,7 +37,6 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
   openIdle,
   hasActiveStep,
   onOpenPile,
-  onIdleBlockedPilePress,
   onBreakdown,
   onStartIdle,
   onEndIdle,
@@ -75,12 +70,9 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
                 rigs={group.rigs}
                 cranes={group.cranes}
                 steps={group.steps}
-                hasBreakdownWarning={group.hasBreakdownWarning}
                 circleVariant={hasUpNext && i === 0 ? 'upNext' : 'rail'}
                 railColor={railColor}
-                onPress={() =>
-                  group.isBlockedByIdle ? onIdleBlockedPilePress() : onOpenPile(group.checklistPileId)
-                }
+                onPress={() => onOpenPile(group.checklistPileId)}
               />
             ))}
           </View>

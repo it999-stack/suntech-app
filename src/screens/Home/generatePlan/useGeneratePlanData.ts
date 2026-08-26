@@ -19,7 +19,7 @@ export type EligiblePile = PileWithDimension & {
   code: string;
 };
 
-export type SimpleMachine = { id: string; machineNo: string; description?: string | null };
+export type SimpleMachine = { id: string; machineNo: string; description?: string | null; status: string };
 
 export function useGeneratePlanData(siteId: string): {
   piles: EligiblePile[];
@@ -66,8 +66,8 @@ export function useGeneratePlanData(siteId: string): {
           })),
         );
         setSteps(stepsRaw);
-        setRigs(rigsRaw.map((r: typeof rigsRaw[0]) => ({ id: r.id, machineNo: r.machineNo })));
-        setCranes(cranesRaw.map((c: typeof cranesRaw[0]) => ({ id: c.id, machineNo: c.machineNo })));
+        setRigs(rigsRaw.map((r: typeof rigsRaw[0]) => ({ id: r.id, machineNo: r.machineNo, status: r.status })));
+        setCranes(cranesRaw.map((c: typeof cranesRaw[0]) => ({ id: c.id, machineNo: c.machineNo, status: c.status })));
         setPersonnel(personnelRaw);
         setShifts(shiftsRaw);
         setLocations(locationsRaw);

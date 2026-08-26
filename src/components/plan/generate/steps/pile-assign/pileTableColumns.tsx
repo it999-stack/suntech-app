@@ -64,7 +64,7 @@ const styles = StyleSheet.create({
   spec: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
   completedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   completedText: { ...typography.caption, color: colors.success, fontWeight: '700' },
-  pillRow: { flexDirection: 'column', gap: spacing.xs },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   pillEmpty: { borderWidth: 1, borderColor: 'rgba(28,28,46,0.15)', borderStyle: 'dashed', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 3, alignSelf: 'flex-start' },
   pillEmptyText: { ...typography.caption, color: colors.textSecondary },
 });

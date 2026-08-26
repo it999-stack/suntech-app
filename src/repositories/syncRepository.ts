@@ -178,7 +178,10 @@ export async function getChecklistsForSync(
       })),
       machine_events: machineEvents.map((e) => ({
         id: e.id,
-        pile_id: e.pileId,
+        // Always set here — this fetch is scoped to eq(checklistId), which a
+        // fleet-level report (checklistId/pileId both null — see
+        // reportMachineEvent) never matches.
+        pile_id: e.pileId as string,
         step_id: e.stepId ?? undefined,
         track: e.track,
         event_type: e.eventType,

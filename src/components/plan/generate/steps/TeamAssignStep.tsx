@@ -1,18 +1,4 @@
 // src/components/plan/generate/steps/TeamAssignStep.tsx
-//
-// Shift Incharge, Engineers, Supervisors, and Machine Operators — all
-// assigned for a single shift, in one open card (no per-section collapse).
-// Merges the former separate TeamAssignStep + ShiftInchargeStep into one
-// screen. GeneratePlanScreen mounts this once per shift (`team` then
-// `teamNight` in STEP_ORDER, picked via the `shiftSlot` prop) so Continue
-// on the Day shift always lands the user on a dedicated Night shift screen
-// rather than silently skipping past it. Supervisors are rig-only now — no
-// crane pairing, no "1 rig max" cap; one supervisor may cover any number
-// of rigs.
-//
-// Exposes an imperative handle (focusFirstMissing) so GeneratePlanScreen's
-// Continue button can, instead of just staying disabled, scroll the user to
-// whichever row of this shift's roster is still unfilled.
 
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
@@ -25,8 +11,10 @@ import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { PlanDraft, ShiftTeamAssignment } from '@/types/plan';
 import {
   matchesRoleDesignation,
+  getEngineerOrSupervisorCandidates,
   getOperatorMachineCandidates,
   getMachineRoleDisabledIds,
+  getCrossRoleDisabledIds,
   getShiftInchargeDisabledIds,
   formatAssignmentLocation,
   findFirstMissingTeamField,
@@ -144,12 +132,10 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
     () => personnel.filter((p) => matchesRoleDesignation('SHIFT_INCHARGE', p.designation)),
     [personnel],
   );
-  const engineers = useMemo(
-    () => personnel.filter((p) => matchesRoleDesignation('ENGINEER', p.designation)),
-    [personnel],
-  );
-  const supervisors = useMemo(
-    () => personnel.filter((p) => matchesRoleDesignation('SUPERVISOR', p.designation)),
+  // Engineer and Supervisor share one candidate pool — either designation can cover either
+  // role (see getEngineerOrSupervisorCandidates).
+  const engineerOrSupervisorCandidates = useMemo(
+    () => getEngineerOrSupervisorCandidates(personnel),
     [personnel],
   );
 
@@ -239,34 +225,40 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
       case 'ENGINEER':
         return {
           title: 'Assign Engineer',
-          personnel: engineers,
+          personnel: engineerOrSupervisorCandidates,
           selectedId: team.engineerByMachineId[pickerTarget.machineId] ?? null,
           allowNone: false,
           emptyLabel: 'No matching engineers synced for this site.',
           disabledDetails: toDisabledDetails(
-            getMachineRoleDisabledIds(
-              pickerTarget.machineId,
-              team.engineerByMachineId,
-              otherTeam.engineerByMachineId,
-              { excludeSameShiftOtherMachines: false },
-            ),
+            new Map([
+              ...getMachineRoleDisabledIds(
+                pickerTarget.machineId,
+                team.engineerByMachineId,
+                otherTeam.engineerByMachineId,
+                { excludeSameShiftOtherMachines: false },
+              ),
+              ...getCrossRoleDisabledIds(team.supervisorByMachineId),
+            ]),
           ),
           onSelect: (id: string | null) => setEngineer(pickerTarget.machineId, id),
         };
       case 'SUPERVISOR':
         return {
           title: 'Assign Supervisor',
-          personnel: supervisors,
+          personnel: engineerOrSupervisorCandidates,
           selectedId: team.supervisorByMachineId[pickerTarget.machineId] ?? null,
           allowNone: true,
           emptyLabel: 'No matching supervisors synced for this site.',
           disabledDetails: toDisabledDetails(
-            getMachineRoleDisabledIds(
-              pickerTarget.machineId,
-              team.supervisorByMachineId,
-              otherTeam.supervisorByMachineId,
-              { excludeSameShiftOtherMachines: false },
-            ),
+            new Map([
+              ...getMachineRoleDisabledIds(
+                pickerTarget.machineId,
+                team.supervisorByMachineId,
+                otherTeam.supervisorByMachineId,
+                { excludeSameShiftOtherMachines: false },
+              ),
+              ...getCrossRoleDisabledIds(team.engineerByMachineId),
+            ]),
           ),
           onSelect: (id: string | null) => setSupervisor(pickerTarget.machineId, id),
         };
@@ -291,8 +283,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
   }, [
     pickerTarget,
     shiftIncharges,
-    engineers,
-    supervisors,
+    engineerOrSupervisorCandidates,
     operatorCandidates,
     team,
     otherTeam,
@@ -340,7 +331,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
         </View>
 
         <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Supervisors</Text>
+          <Text style={styles.sectionLabel}>Supervisors (Optional)</Text>
           {activeRigs.length === 0 ? (
             <Text style={styles.emptyText}>No active rigs — go back and activate at least one rig.</Text>
           ) : (

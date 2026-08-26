@@ -1,62 +1,26 @@
 // src/components/plan/generate/steps/MachineSelectStep.tsx
 //
-// Step 3 — all synced rigs + cranes are listed. Tapping a row toggles it
-// in/out of today's active plan (activeRigIds/activeCraneIds) — a plain
-// on/off switch, nothing else. Personnel (engineer/supervisor/operator) are
-// assigned per-shift in the Team step; deactivating a machine here clears
-// its role rows from both shifts so a re-activated machine starts clean.
+// Step 3 — all synced rigs + cranes are listed as tiles. Tapping a tile
+// toggles it in/out of today's active plan (activeRigIds/activeCraneIds).
+// A machine's real, persisted status is a separate concern from that
+// toggle: each tile shows a status chip (STATUS_META), tapping it opens
+// MachineStatusModal to actually change the machine's status directly.
+// BREAKDOWN/INACTIVE machines can't be toggled into the plan at all (tile
+// disabled for selection) — see isMachinePlannable. Personnel (engineer/
+// supervisor/operator) are assigned per-shift in the Team step;
+// deactivating a machine here clears its role rows from both shifts so a
+// re-activated machine starts clean.
 
-import React from 'react';
-import { View, Text, Pressable, Switch, StyleSheet } from 'react-native';
-import { Drill, Forklift } from 'lucide-react-native';
+import React, { useState } from 'react';
+import { StyleSheet } from 'react-native';
 import GlassCard from '@components/shared/GlassCard';
-import { colors, spacing, radius, typography } from '@/theme/theme';
+import TilePicker, { type TileSection } from '@components/shared/TilePicker';
+import type { TileGroupOption } from '@components/shared/TileGroup';
+import { spacing } from '@/theme/theme';
 import type { PlanDraft } from '@/types/plan';
-import { TRACK_META } from '@/utils/helpers';
-
-export interface SimpleMachine {
-  id: string;
-  machineNo: string;
-  description?: string | null;
-}
-
-interface MachineSelectStepProps {
-  draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
-  rigs: SimpleMachine[];
-  cranes: SimpleMachine[];
-}
-
-function MachineRow({
-  machine,
-  active,
-  iconColor,
-  icon,
-  onToggle,
-}: {
-  machine: SimpleMachine;
-  active: boolean;
-  iconColor: string;
-  icon: React.ReactNode;
-  onToggle: () => void;
-}) {
-  return (
-    <Pressable style={styles.machineRow} onPress={onToggle}>
-      <View style={[styles.machineIcon, { backgroundColor: active ? `${iconColor}1F` : 'rgba(28,28,46,0.06)' }]}>
-        {icon}
-      </View>
-      <Text style={[styles.machineName, active && styles.machineNameActive]} numberOfLines={1}>
-        {machine.machineNo}
-      </Text>
-      <Switch
-        value={active}
-        onValueChange={onToggle}
-        trackColor={{ true: iconColor }}
-        thumbColor={active ? colors.white : undefined}
-      />
-    </Pressable>
-  );
-}
+import { TRACK_META, STATUS_META, isMachinePlannable, type MachineStatus } from '@/utils/helpers';
+import type { SimpleMachine } from '@screens/Home/generatePlan/useGeneratePlanData';
+import MachineStatusModal from './MachineStatusModal';
 
 // Deactivating a machine must not leave a pile's assignment pointing at it —
 // PileAssignStep/ResumeConfirmStep only "look" correct because they filter
@@ -85,7 +49,26 @@ function scrubAssignmentsForMachine(
   return changed ? next : assignments;
 }
 
+interface MachineSelectStepProps {
+  draft: PlanDraft;
+  onUpdate: (patch: Partial<PlanDraft>) => void;
+  rigs: SimpleMachine[];
+  cranes: SimpleMachine[];
+}
+
 export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: MachineSelectStepProps) {
+  // Local mirror of status changes made via MachineStatusModal — the rigs/
+  // cranes props only refresh from SQLite on the next machines sync, so
+  // this is what makes a status change reflect immediately in this step.
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, MachineStatus>>({});
+  const [statusTarget, setStatusTarget] = useState<{ id: string; label: string; status: MachineStatus } | null>(
+    null,
+  );
+
+  function statusFor(m: SimpleMachine): MachineStatus {
+    return (statusOverrides[m.id] ?? m.status) as MachineStatus;
+  }
+
   function clearMachineRoles(id: string) {
     function stripFromTeam(team: PlanDraft['checklistPersonnel']['shift1']) {
       const { [id]: _op, ...operatorByMachineId } = team.operatorByMachineId;
@@ -117,115 +100,71 @@ export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: Mac
     }
   }
 
+  function handleToggle(id: string) {
+    const isRig = rigs.some((r) => r.id === id);
+    toggleMachine(id, isRig ? 'RIG' : 'CRANE');
+  }
+
+  // A status change to BREAKDOWN/INACTIVE must drop the machine out of the
+  // plan if it was already included — not just block re-selecting it.
+  function handleStatusChanged(machineId: string, status: MachineStatus) {
+    setStatusOverrides((prev) => ({ ...prev, [machineId]: status }));
+    if (!isMachinePlannable(status)) {
+      if (draft.activeRigIds.includes(machineId)) toggleMachine(machineId, 'RIG');
+      if (draft.activeCraneIds.includes(machineId)) toggleMachine(machineId, 'CRANE');
+    }
+  }
+
+  function toOption(m: SimpleMachine, type: 'RIG' | 'CRANE'): TileGroupOption {
+    const meta = TRACK_META[type];
+    const status = statusFor(m);
+    const statusMeta = STATUS_META[status];
+    return {
+      id: m.id,
+      label: m.machineNo,
+      icon: meta.icon,
+      color: meta.color,
+      soft: meta.soft,
+      disabled: !isMachinePlannable(status),
+      statusBadge: {
+        text: statusMeta.label,
+        color: statusMeta.color,
+        soft: statusMeta.soft,
+        onPress: () => setStatusTarget({ id: m.id, label: m.machineNo, status }),
+      },
+    };
+  }
+
   const rigsActiveCount = rigs.filter((r) => draft.activeRigIds.includes(r.id)).length;
   const cranesActiveCount = cranes.filter((c) => draft.activeCraneIds.includes(c.id)).length;
 
+  const sections: TileSection[] = [
+    { key: 'RIG', label: `Rigs · ${rigsActiveCount} active`, options: rigs.map((r) => toOption(r, 'RIG')) },
+    { key: 'CRANE', label: `Cranes · ${cranesActiveCount} active`, options: cranes.map((c) => toOption(c, 'CRANE')) },
+  ];
+
+  const selectedIds = [...draft.activeRigIds, ...draft.activeCraneIds];
+
   return (
     <>
-      {/* Rigs */}
       <GlassCard innerStyle={styles.groupPad}>
-        <View style={styles.groupHeader}>
-          <Drill size={16} color={TRACK_META.RIG.color} />
-          <Text style={styles.groupLabel}>Rigs</Text>
-          <Text style={styles.groupCount}>{rigsActiveCount} active</Text>
-        </View>
-        {rigs.length === 0 ? (
-          <Text style={styles.emptyText}>No rigs synced yet.</Text>
-        ) : (
-          rigs.map((r) => (
-            <MachineRow
-              key={r.id}
-              machine={r}
-              active={draft.activeRigIds.includes(r.id)}
-              iconColor={TRACK_META.RIG.color}
-              icon={<Drill size={16} color={draft.activeRigIds.includes(r.id) ? TRACK_META.RIG.color : colors.textSecondary} />}
-              onToggle={() => toggleMachine(r.id, 'RIG')}
-            />
-          ))
-        )}
+        <TilePicker sections={sections} selectedIds={selectedIds} onToggle={handleToggle} columns={1} />
       </GlassCard>
 
-      {/* Cranes */}
-      <GlassCard innerStyle={styles.groupPad}>
-        <View style={styles.groupHeader}>
-          <Forklift size={16} color={TRACK_META.CRANE.color} />
-          <Text style={styles.groupLabel}>Cranes</Text>
-          <Text style={styles.groupCount}>{cranesActiveCount} active</Text>
-        </View>
-        {cranes.length === 0 ? (
-          <Text style={styles.emptyText}>No cranes synced yet.</Text>
-        ) : (
-          cranes.map((c) => {
-            const active = draft.activeCraneIds.includes(c.id);
-            const craneColor = TRACK_META.CRANE.color;
-            return (
-              <MachineRow
-                key={c.id}
-                machine={c}
-                active={active}
-                iconColor={craneColor}
-                icon={<Forklift size={16} color={active ? craneColor : colors.textSecondary} />}
-                onToggle={() => toggleMachine(c.id, 'CRANE')}
-              />
-            );
-          })
-        )}
-      </GlassCard>
+      {statusTarget && (
+        <MachineStatusModal
+          visible
+          machineId={statusTarget.id}
+          machineLabel={statusTarget.label}
+          currentStatus={statusTarget.status}
+          onClose={() => setStatusTarget(null)}
+          onStatusChanged={handleStatusChanged}
+        />
+      )}
     </>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   groupPad: { padding: spacing.lg },
-  groupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.md,
-  },
-  groupLabel: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.accent,
-    flex: 1,
-  },
-  groupCount: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  machineRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: 'rgba(28,28,46,0.06)',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  machineIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  machineName: {
-    ...typography.body,
-    fontWeight: '500',
-    color: colors.textSecondary,
-    flex: 1,
-  },
-  machineNameActive: {
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  emptyText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-  },
 });

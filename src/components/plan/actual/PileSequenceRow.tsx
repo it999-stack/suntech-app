@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ChevronRight, AlertTriangle, Drill, Forklift } from 'lucide-react-native';
+import { ChevronRight, Drill, Forklift } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { TRACK_META } from '@utils/helpers';
@@ -15,7 +15,6 @@ interface Props {
   rigs?: string[];
   cranes?: string[];
   steps: ActualEntry[];
-  hasBreakdownWarning?: boolean;
   circleVariant: 'upNext' | 'rail';
   railColor: string;
   onPress: () => void;
@@ -27,7 +26,6 @@ export default function PileSequenceRow({
   rigs,
   cranes,
   steps,
-  hasBreakdownWarning,
   circleVariant,
   railColor,
   onPress,
@@ -85,13 +83,6 @@ export default function PileSequenceRow({
           <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           <Text style={styles.countText}>{doneCount}/{total} steps</Text>
         </View>
-
-        {hasBreakdownWarning && (
-          <View style={styles.warningBanner}>
-            <AlertTriangle size={14} color={colors.danger} />
-            <Text style={styles.warningText}>Machine reported down — tap to reassign</Text>
-          </View>
-        )}
       </GlassCard>
     </Pressable>
   );
@@ -177,21 +168,5 @@ const styles = StyleSheet.create({
   countText: {
     ...typography.caption,
     color: colors.textSecondary,
-  },
-  warningBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.dangerSoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginTop: spacing.sm,
-  },
-  warningText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.danger,
-    flex: 1,
   },
 });

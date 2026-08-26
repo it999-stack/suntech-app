@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 import { PencilLine } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
-import { resolveOvernightDate, toLocalIsoString } from '@utils/formatTime';
+import { resolveOvernightDate, toLocalIsoString, startOfDay, endOfDay } from '@utils/formatTime';
 import { validateCandidateTime, type ConflictNotice } from '@utils/timeValidation';
 import { notify } from '@utils/notify';
 import { colors, radius } from '@theme/theme';
@@ -56,10 +56,11 @@ interface Props {
   /**
    * Earliest/latest real timestamp allowed by the checklist's own plan
    * window (plan_start_time .. plan_end_time + 1h grace) — an independent
-   * outer bound from minBoundIso/maxBoundIso above (step adjacency),
-   * enforced both by capping the picker's own min/max and, as a backstop,
-   * in confirm(). Omit for no plan-window restriction (e.g. checklist has
-   * no plan yet).
+   * outer bound from minBoundIso/maxBoundIso above (step adjacency). The
+   * picker itself only loosely bounds by whole calendar day (see
+   * startOfDay/endOfDay below) so it never auto-snaps mid-scroll; the exact
+   * cutoff is enforced solely by the notify.error backstop in confirm().
+   * Omit for no plan-window restriction (e.g. checklist has no plan yet).
    */
   planWindowMinIso?: string;
   planWindowMaxIso?: string;
@@ -166,8 +167,8 @@ export default function EditTimeButton({
           d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
           return d;
         })()}
-        minimumDate={planWindowMinIso ? new Date(planWindowMinIso) : undefined}
-        maximumDate={planWindowMaxIso ? new Date(planWindowMaxIso) : undefined}
+        minimumDate={planWindowMinIso ? startOfDay(new Date(planWindowMinIso)) : undefined}
+        maximumDate={planWindowMaxIso ? endOfDay(new Date(planWindowMaxIso)) : undefined}
       />
       )}
     </>

@@ -99,6 +99,18 @@ export function getOperatorMachineCandidates(
   return personnel.filter((p) => matchesOperatorDesignation(machineType, p.designation));
 }
 
+/**
+ * Combined Engineer + Supervisor candidate pool, shared by both the Engineer and Supervisor
+ * pickers — either designation may be assigned to either role, since in practice a Supervisor
+ * can run the Engineer slot and vice versa. The backend has never restricted this (see the
+ * module note above); this widens the picker to match.
+ */
+export function getEngineerOrSupervisorCandidates(personnel: SimplePersonnel[]): SimplePersonnel[] {
+  return personnel.filter(
+    (p) => matchesRoleDesignation('ENGINEER', p.designation) || matchesRoleDesignation('SUPERVISOR', p.designation),
+  );
+}
+
 /** Where a disabled candidate is already assigned — which machine (if any) and shift,
  * relative to the picker currently open. Used to show "where are they working" in the
  * picker instead of just greying the row out with no explanation. */
@@ -136,6 +148,25 @@ export function getMachineRoleDisabledIds(
   return disabled;
 }
 
+/**
+ * Person ids that should show as disabled for the Engineer/Supervisor picker because they're
+ * already covering the *other* one of that pair somewhere in THIS SAME shift — a person can be
+ * the Engineer or the Supervisor for a shift, never both, even though either designation is
+ * offered as a candidate for either role (see getEngineerOrSupervisorCandidates). Pass the
+ * sibling role's this-shift machineId->personnelId map: engineerByMachineId when picking
+ * Supervisor, or supervisorByMachineId when picking Engineer. Merge the result with
+ * getMachineRoleDisabledIds's own same-role disabling.
+ */
+export function getCrossRoleDisabledIds(
+  otherRoleThisShiftMap: Record<string, string>,
+): Map<string, DisabledAssignmentInfo> {
+  const disabled = new Map<string, DisabledAssignmentInfo>();
+  for (const [machineId, personnelId] of Object.entries(otherRoleThisShiftMap)) {
+    if (personnelId) disabled.set(personnelId, { machineId, shift: 'current' });
+  }
+  return disabled;
+}
+
 /** Person id that should show as disabled for Shift Incharge — whoever's already the OTHER
  * shift's incharge (a single plan-wide slot per shift, no per-machine concept). */
 export function getShiftInchargeDisabledIds(
@@ -159,15 +190,17 @@ export function formatAssignmentLocation(
 
 export type MissingTeamField =
   | { role: 'ENGINEER'; machineId: string }
-  | { role: 'SUPERVISOR'; machineId: string }
   | { role: 'MACHINE_OPERATOR'; machineId: string };
 
 /**
  * The first still-unfilled mandatory role in a shift's team, in the same
- * order the Team step displays them (Engineers → Supervisors → Rig
- * Operators → Crane Operators). `shiftInchargeId` is deliberately not
- * checked — it's optional (see ShiftTeamAssignment) and isn't required by
- * isShiftTeamComplete either, so this must stay consistent with that.
+ * order the Team step displays them (Engineers → Rig Operators → Crane
+ * Operators). `shiftInchargeId` is deliberately not checked — it's optional
+ * (see ShiftTeamAssignment) and isn't required by isShiftTeamComplete
+ * either, so this must stay consistent with that. SUPERVISOR is likewise
+ * optional (backend allows any subset of active rigs, including none — see
+ * checklist_personnel_service.py's _require_subset_coverage) and is never
+ * returned here.
  */
 export function findFirstMissingTeamField(
   team: ShiftTeamAssignment,
@@ -176,9 +209,6 @@ export function findFirstMissingTeamField(
 ): MissingTeamField | null {
   for (const machineId of activeRigIds) {
     if (!team.engineerByMachineId[machineId]) return { role: 'ENGINEER', machineId };
-  }
-  for (const machineId of activeRigIds) {
-    if (!team.supervisorByMachineId[machineId]) return { role: 'SUPERVISOR', machineId };
   }
   for (const machineId of [...activeRigIds, ...activeCraneIds]) {
     if (!team.operatorByMachineId[machineId]) return { role: 'MACHINE_OPERATOR', machineId };

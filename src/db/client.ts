@@ -424,11 +424,41 @@ export async function initDb() {
       ON pil_actual_steps (checklist_pile_id, step_id);
   `);
 
+  // Migration: relax checklist_id/pile_id to nullable (a fleet-level
+  // breakdown/resume reported from the Machines screen has neither — see
+  // reportMachineEvent). Same rename/recreate/copy/drop pattern as
+  // pil_checklist_piles' crane_id migration above — SQLite can't ALTER a
+  // column's NOT NULL in place.
+  const machineEventChecklistIdColumn = await sqlite.getFirstAsync<{ notnull: number }>(
+    `SELECT "notnull" FROM pragma_table_info('pil_machine_events') WHERE name = 'checklist_id';`,
+  );
+  if (machineEventChecklistIdColumn?.notnull === 1) {
+    await sqlite.execAsync(`
+      ALTER TABLE pil_machine_events RENAME TO pil_machine_events_pre_nullable_pile;
+      CREATE TABLE pil_machine_events (
+        id             TEXT PRIMARY KEY NOT NULL,
+        checklist_id   TEXT,
+        pile_id        TEXT,
+        step_id        TEXT,
+        track          TEXT NOT NULL,
+        event_type     TEXT NOT NULL,
+        machine_id     TEXT,
+        replacement_id TEXT,
+        notes          TEXT,
+        occurred_at    TEXT NOT NULL,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER
+      );
+      INSERT INTO pil_machine_events SELECT * FROM pil_machine_events_pre_nullable_pile;
+      DROP TABLE pil_machine_events_pre_nullable_pile;
+    `);
+  }
+
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_machine_events (
       id             TEXT PRIMARY KEY NOT NULL,
-      checklist_id   TEXT NOT NULL,
-      pile_id        TEXT NOT NULL,
+      checklist_id   TEXT,
+      pile_id        TEXT,
       step_id        TEXT,
       track          TEXT NOT NULL,
       event_type     TEXT NOT NULL,

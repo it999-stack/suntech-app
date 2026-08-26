@@ -10,7 +10,7 @@ import React from 'react';
 import { View, Text, StyleSheet, type DimensionValue } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { colors, spacing, typography } from '@theme/theme';
-import TileSelect from './TileSelect';
+import TileSelect, { type TileStatusBadge } from './TileSelect';
 
 export interface TileGroupOption {
   id: string;
@@ -19,13 +19,18 @@ export interface TileGroupOption {
   color: string;
   soft: string;
   disabled?: boolean;
+  statusBadge?: TileStatusBadge;
 }
 
 interface TileGroupProps {
   label?: string;
   options: TileGroupOption[];
-  valueId: string | null;
-  onSelect: (id: string) => void;
+  /** Single-select mode (existing behaviour). */
+  valueId?: string | null;
+  onSelect?: (id: string) => void;
+  /** Multi-select mode — takes priority over valueId/onSelect when provided. */
+  selectedIds?: string[];
+  onToggle?: (id: string) => void;
   emptyText?: string;
   /** Tiles per row. Defaults to 3. */
   columns?: number;
@@ -34,8 +39,10 @@ interface TileGroupProps {
 export default function TileGroup({
   label,
   options,
-  valueId,
+  valueId = null,
   onSelect,
+  selectedIds,
+  onToggle,
   emptyText = 'None active.',
   columns = 3,
 }: TileGroupProps) {
@@ -53,11 +60,12 @@ export default function TileGroup({
               <TileSelect
                 icon={o.icon}
                 label={o.label}
-                selected={o.id === valueId}
+                selected={selectedIds ? selectedIds.includes(o.id) : o.id === valueId}
                 color={o.color}
                 soft={o.soft}
                 disabled={o.disabled}
-                onPress={() => onSelect(o.id)}
+                statusBadge={o.statusBadge}
+                onPress={() => (onToggle ? onToggle(o.id) : onSelect?.(o.id))}
               />
             </View>
           ))}

@@ -52,17 +52,22 @@ const REMARKS_MAX_LENGTH = 300;
 // whole modal taller.
 const COMPLETED_STEPS_PREVIEW_LIMIT = 3;
 
-/** Today's time-of-day, applied onto the day work actually started (the
- * source of truth the "stop time" is validated against) — a reasonable
- * starting point for "when did this actually stop/finish yesterday". Falls
- * back to the historical checklist's date when there's no logged start yet. */
-function seedPastTime(pastActualStart: string | null | undefined, checklistDate: string | undefined): Date {
-  const now = new Date();
+/** The step's canonical template duration (the same avg. minutes that seeds "Plan finish
+ * time" below), added onto the day work actually started — a much better first guess for
+ * "when did this actually stop/finish yesterday" than the wall-clock moment the supervisor
+ * happens to open this modal. Falls back to the historical checklist's date when there's no
+ * logged start yet (this modal only opens for steps with a real actualStart in practice, via
+ * pileNeedsResumeConfirm's wasStarted gate — see useResumeConfirmQueue.ts). */
+function seedPastTime(
+  pastActualStart: string | null | undefined,
+  checklistDate: string | undefined,
+  templateMinutes: number,
+): Date {
   const anchorSource = pastActualStart ?? (checklistDate ? `${checklistDate}T00:00:00` : null);
-  if (!anchorSource) return now;
+  if (!anchorSource) return new Date();
   const anchor = new Date(anchorSource);
-  if (Number.isNaN(anchor.getTime())) return now;
-  return new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate(), now.getHours(), now.getMinutes(), 0, 0);
+  if (Number.isNaN(anchor.getTime())) return new Date();
+  return new Date(anchor.getTime() + Math.max(0, templateMinutes) * 60000);
 }
 
 export default function ResumeTimeConfirmModal({
@@ -78,19 +83,19 @@ export default function ResumeTimeConfirmModal({
     new Date(effectiveStart.getTime() + Math.max(0, resumeWork.remainingMinutes) * 60000);
 
   const [status, setStatus] = useState<ResumeStatus>(null);
-  const [pastDate, setPastDate] = useState<Date>(() => seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate));
+  const [pastDate, setPastDate] = useState<Date>(() =>
+    seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes),
+  );
   const [finishDate, setFinishDate] = useState<Date>(seedFinish);
-  // Which field the shared NativeTimerSelectMenu is currently editing.
   const [pickerTarget, setPickerTarget] = useState<'past' | 'finish' | null>(null);
   const [remarks, setRemarks] = useState('');
 
   useEffect(() => {
     if (!visible) return;
     setStatus(null);
-    setPastDate(seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate));
+    setPastDate(seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes));
     setFinishDate(seedFinish());
     setRemarks('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, resumeWork.remainingMinutes, resumeWork.pastActualStart, resumeWork.checklistDate, effectiveStart]);
 
   const completedSteps = resumeWork.completedSteps ?? [];
@@ -99,10 +104,6 @@ export default function ResumeTimeConfirmModal({
   const pastActualStartDate = resumeWork.pastActualStart ? new Date(resumeWork.pastActualStart) : null;
   const pastTimeValid = !pastActualStartDate || pastDate.getTime() >= pastActualStartDate.getTime();
 
-  // The finish-time picker only offers hour/minute on effectiveStart's own calendar
-  // day — a pick earlier than effectiveStart's time-of-day means the step is
-  // expected to finish after midnight, so roll it to the next day rather than
-  // silently producing a negative/zero duration.
   function handleFinishPicked(date: Date) {
     let picked = new Date(effectiveStart);
     picked.setHours(date.getHours(), date.getMinutes(), 0, 0);

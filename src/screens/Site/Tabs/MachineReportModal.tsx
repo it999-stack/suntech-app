@@ -1,74 +1,63 @@
-// src/components/plan/actual/MachineDownModal.tsx
+// src/screens/Site/Tabs/MachineReportModal.tsx
 //
-// Focused single-action sheet for reporting a machine breakdown or marking
-// one resumed — mirrors MachineIdleModal's "one action, minimal fields"
-// design. Which of the two shows is derived from the machine's current
-// status unless the caller passes an explicit initialEventType — neither the
-// machine card's "Report issue"/"Resume" pill nor PileStepsModal's warning
-// banner ever forces one, so this auto-detection is what actually decides.
-// Replacing a machine is a separate concern —
-// it isn't gated by breakdown status (a machine can be swapped any time),
-// so it lives in its own MachineReplaceModal, not here. Covers the
-// BREAKDOWN / RESUMED slice of what used to be one combined
-// MachineEventsModal; see MachineIdleModal for IDLE_START / IDLE_END and
-// MachineReplaceModal for REPLACED.
+// Report a machine breakdown, or mark one resumed, directly from the
+// Machines screen — a fleet-level status change with no pile/step context,
+// unlike MachineDownModal (which logs the same BREAKDOWN/RESUMED pair
+// against a specific pile+step during Fill Actuals). Same time+notes UX,
+// same required-notes-for-breakdown rule, built from the same shared
+// pieces — just backed by reportMachineEvent's direct API call instead of
+// PlanContext.logMachineEvent's checklist-scoped write.
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { AlertTriangle, Wrench, CheckCircle2 } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
+import CompactTimeRow from '@components/plan/actual/machineEvents/CompactTimeRow';
+import NotesField from '@components/plan/actual/machineEvents/NotesField';
+import SaveEventButton from '@components/plan/actual/machineEvents/SaveEventButton';
+import { useSaveMachineEvent } from '@components/plan/actual/machineEvents/useSaveMachineEvent';
+import { findOpenSession } from '@components/plan/actual/machineEvents/idleSession';
+import type { Track } from '@components/plan/actual/machineEvents/types';
 import type { LogMachineEventInput } from '@state/PlanContext';
 import type { PilMachineEvent } from '@db/schema';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { toLocalIsoString, formatElapsedHMS, formatTimeWithDay } from '@utils/formatTime';
 import { useElapsedSeconds } from '@hooks/useElapsedSeconds';
-import CompactTimeRow from './machineEvents/CompactTimeRow';
-import NotesField from './machineEvents/NotesField';
-import SaveEventButton from './machineEvents/SaveEventButton';
-import { useSaveMachineEvent } from './machineEvents/useSaveMachineEvent';
-import { findOpenSession } from './machineEvents/idleSession';
-import type { MachineEventMachine, Track } from './machineEvents/types';
+import { getMachineEventsForMachine, reportMachineEvent } from '@repositories/machineEventsRepository';
 
-type DownEventType = 'BREAKDOWN' | 'RESUMED';
+type ReportEventType = 'BREAKDOWN' | 'RESUMED';
 
 interface Props {
   visible: boolean;
-  pileCode: string;
-  stepName: string;
-  defaultTrack: Track;
-  /** Forces which screen opens first. Omit to auto-derive from the current
-   * machine's status (down → Resume, otherwise → Report breakdown). */
-  initialEventType?: DownEventType;
-  /** Every machine at this site — filtered internally per track/status. */
-  machines: MachineEventMachine[];
-  /** Current assigned machine id per track, for this pile at this step's position. */
-  currentMachineIdByTrack: Partial<Record<Track, string>>;
-  history: PilMachineEvent[];
+  machineId: string;
+  machineLabel: string;
+  track: Track;
+  currentStatus: string;
   onClose: () => void;
-  onLogMachineEvent: (input: LogMachineEventInput) => Promise<void>;
+  onReported: (machineId: string, status: 'ACTIVE' | 'BREAKDOWN') => void;
 }
 
-export default function MachineDownModal({
+export default function MachineReportModal({
   visible,
-  pileCode,
-  stepName,
-  defaultTrack,
-  initialEventType,
-  machines,
-  currentMachineIdByTrack,
-  history,
+  machineId,
+  machineLabel,
+  track,
+  currentStatus,
   onClose,
-  onLogMachineEvent,
+  onReported,
 }: Props) {
-  const currentMachineId = currentMachineIdByTrack[defaultTrack];
-  const currentMachine = machines.find((m) => m.id === currentMachineId);
-  const isDown = currentMachine?.status === 'BREAKDOWN';
+  const [history, setHistory] = useState<PilMachineEvent[]>([]);
 
-  const screen: DownEventType = initialEventType ?? (isDown ? 'RESUMED' : 'BREAKDOWN');
+  useEffect(() => {
+    if (!visible) return;
+    getMachineEventsForMachine(machineId).then(setHistory).catch(() => setHistory([]));
+  }, [visible, machineId]);
+
+  const screen: ReportEventType = currentStatus === 'BREAKDOWN' ? 'RESUMED' : 'BREAKDOWN';
 
   const openBreakdown = useMemo(
-    () => findOpenSession(history, currentMachineId, 'BREAKDOWN', ['RESUMED']),
-    [history, currentMachineId],
+    () => findOpenSession(history, machineId, 'BREAKDOWN', ['RESUMED']),
+    [history, machineId],
   );
   const elapsedSeconds = useElapsedSeconds(screen === 'RESUMED' ? openBreakdown?.occurredAt ?? null : null);
 
@@ -77,29 +66,36 @@ export default function MachineDownModal({
 
   // Reporting a breakdown requires saying what happened — resuming doesn't
   // need a reason, the machine simply being fixed is self-explanatory.
-  const isValid = !!currentMachineId && (screen !== 'BREAKDOWN' || notes.trim().length > 0);
+  const isValid = screen !== 'BREAKDOWN' || notes.trim().length > 0;
 
   const { saving, canSave, handleSave } = useSaveMachineEvent({
     isValid,
     buildInput: (): LogMachineEventInput => ({
-      track: defaultTrack,
+      track,
       eventType: screen,
-      machineId: currentMachineId ?? null,
+      machineId,
       replacementId: null,
       notes: notes.trim() || null,
       occurredAt: toLocalIsoString(occurredAt),
     }),
-    onLogMachineEvent,
+    onLogMachineEvent: async (input) => {
+      await reportMachineEvent(machineId, input);
+      onReported(machineId, screen === 'BREAKDOWN' ? 'BREAKDOWN' : 'ACTIVE');
+    },
     onSaved: () => {
       setNotes('');
       onClose();
     },
   });
 
-  const machineLabel = currentMachine?.machineNo ?? 'this machine';
+  useEffect(() => {
+    if (!visible) return;
+    setNotes('');
+    setOccurredAt(new Date());
+  }, [visible, machineId]);
 
   return (
-    <AppModal visible={visible} onClose={onClose} title={pileCode} subtitle={stepName} position="center">
+    <AppModal visible={visible} onClose={onClose} title={machineLabel} subtitle="Machine status" position="center">
       <View style={styles.page}>
         <View style={styles.divider} />
 

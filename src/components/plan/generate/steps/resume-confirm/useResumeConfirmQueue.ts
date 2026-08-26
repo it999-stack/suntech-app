@@ -4,7 +4,8 @@
 
 import { useState } from 'react';
 import { closeOutResumeStep } from '@/services/resumeWorkService';
-import type { PlanDraft } from '@/types/plan';
+import type { PlanDraft, CompletedStepInfo } from '@/types/plan';
+import type { PilingStep } from '@/db/schema';
 
 /** True when this pile has a genuinely in-progress prior-day step (actualStart set, no
  * actualEnd) that the user hasn't yet confirmed a remaining/finish time for. Shared
@@ -20,6 +21,10 @@ export function pileNeedsResumeConfirm(
 export function useResumeConfirmQueue(
   draft: PlanDraft,
   onUpdate: (patch: Partial<PlanDraft>) => void,
+  /** Global step catalog (track/sequenceOrder) — needed to record the step
+   * confirmFull closes out as a proper CompletedStepInfo entry so Preview can
+   * show it as done instead of unplanned. */
+  allSteps: PilingStep[] = [],
 ) {
   const [confirmQueue, setConfirmQueue] = useState<string[]>([]);
 
@@ -70,6 +75,24 @@ export function useResumeConfirmQueue(
 
     const { [pileId]: _removed, ...restResumeWork } = draft.resumeWorkByPileId;
     if (resume?.nextStep) {
+      // Record the step just closed out as a proper completed entry — advancing
+      // the resume point to nextStep otherwise drops all trace of it (and of any
+      // earlier completedSteps), which is why Preview was showing this step as
+      // unplanned/dash instead of done even though its actual start/end were
+      // just saved to the historical checklist row above.
+      const stepMeta = allSteps.find((s) => s.id === resume.stepId);
+      const closedOutStep: CompletedStepInfo | null = stepMeta
+        ? {
+            stepId: resume.stepId,
+            stepName: resume.stepName ?? stepMeta.stepName,
+            track: stepMeta.track,
+            sequenceOrder: stepMeta.sequenceOrder,
+            plannedStart: null,
+            plannedEnd: null,
+            actualStart: resume.pastActualStart ?? null,
+            actualEnd: pastEndIso,
+          }
+        : null;
       onUpdate({
         resumeWorkByPileId: {
           ...restResumeWork,
@@ -81,6 +104,12 @@ export function useResumeConfirmQueue(
             lastCraneId: resume.lastCraneId,
             wasStarted: false,
             remainingTimeConfirmed: true,
+            completedStepNames: closedOutStep
+              ? [...(resume.completedStepNames ?? []), closedOutStep.stepName]
+              : resume.completedStepNames,
+            completedSteps: closedOutStep
+              ? [...(resume.completedSteps ?? []), closedOutStep]
+              : resume.completedSteps,
           },
         },
       });

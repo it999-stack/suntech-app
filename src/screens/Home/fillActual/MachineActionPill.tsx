@@ -1,8 +1,9 @@
 // src/screens/Home/fillActual/MachineActionPill.tsx
 //
-// One quick-action chip in the machine card's "Log machine event" row
-// (Breakdown / Start idle / End idle) — sized to its content, three color
-// treatments.
+// One quick-action button in the machine card's "Log machine event" row
+// (Breakdown / Start idle / End idle) — equal-width outlined rectangles
+// (danger=red, outline=accent blue, primary=filled accent blue for the one
+// "resolving" action, End idle) rather than small content-sized pills.
 
 import React from 'react';
 import { Pressable, Text, StyleSheet } from 'react-native';
@@ -31,7 +32,7 @@ export default function MachineActionPill({
       : variant === 'primary'
         ? styles.actionPillPrimaryText
         : styles.actionPillOutlineText;
-  const iconColor = variant === 'danger' ? colors.danger : variant === 'primary' ? colors.textInverse : colors.textSecondary;
+  const iconColor = variant === 'danger' ? colors.danger : variant === 'primary' ? colors.textInverse : colors.accentBlue;
 
   return (
     <Pressable
@@ -39,7 +40,7 @@ export default function MachineActionPill({
       onPress={disabled ? undefined : onPress}
       disabled={disabled}
     >
-      <Icon size={15} color={iconColor} />
+      <Icon size={16} color={iconColor} />
       <Text style={textStyle}>{label}</Text>
     </Pressable>
   );
@@ -47,21 +48,21 @@ export default function MachineActionPill({
 
 const styles = StyleSheet.create({
   actionPill: {
-    alignSelf: 'flex-start',
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm + 2,
   },
   actionPillDisabled: {
     opacity: 0.4,
   },
   actionPillDanger: {
-    backgroundColor: colors.dangerSoft,
+    backgroundColor: colors.transparent,
     borderColor: colors.danger,
   },
   actionPillDangerText: {
@@ -70,17 +71,17 @@ const styles = StyleSheet.create({
     color: colors.danger,
   },
   actionPillOutline: {
-    backgroundColor: colors.glassFillStrong,
-    borderColor: colors.border,
+    backgroundColor: colors.transparent,
+    borderColor: colors.accentBlue,
   },
   actionPillOutlineText: {
     ...typography.label,
     fontWeight: '700',
-    color: colors.textSecondary,
+    color: colors.accentBlue,
   },
   actionPillPrimary: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: colors.accentBlue,
+    borderColor: colors.accentBlue,
   },
   actionPillPrimaryText: {
     ...typography.label,

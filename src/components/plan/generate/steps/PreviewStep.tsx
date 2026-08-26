@@ -13,8 +13,10 @@ import { colors, spacing, typography, radius } from '@/theme/theme';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import {
   matchesRoleDesignation,
+  getEngineerOrSupervisorCandidates,
   getOperatorMachineCandidates,
   getMachineRoleDisabledIds,
+  getCrossRoleDisabledIds,
   getShiftInchargeDisabledIds,
   formatAssignmentLocation,
   type DisabledAssignmentInfo,
@@ -229,8 +231,9 @@ export default function PreviewStep({
   const pmCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('PROJECT_MANAGER', p.designation)), [personnel]);
   const peCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('PLANNING_ENGINEER', p.designation)), [personnel]);
   const shiftInchargeCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('SHIFT_INCHARGE', p.designation)), [personnel]);
-  const engineerCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('ENGINEER', p.designation)), [personnel]);
-  const supervisorCandidates = useMemo(() => personnel.filter((p) => matchesRoleDesignation('SUPERVISOR', p.designation)), [personnel]);
+  // Engineer and Supervisor share one candidate pool — either designation can cover either
+  // role (see getEngineerOrSupervisorCandidates).
+  const engineerOrSupervisorCandidates = useMemo(() => getEngineerOrSupervisorCandidates(personnel), [personnel]);
 
   function teamForSlot(slot: 1 | 2): ShiftTeamAssignment {
     return slot === 1 ? cp.shift1 : cp.shift2;
@@ -332,16 +335,19 @@ export default function PreviewStep({
         const team = teamForSlot(target.slot);
         return {
           title: `Engineer — ${machineNoFor(target.machineId)} (${target.slot === 1 ? 'Day' : 'Night'})`,
-          personnel: engineerCandidates,
+          personnel: engineerOrSupervisorCandidates,
           selectedId: team.engineerByMachineId[target.machineId] ?? null,
           allowNone: false,
           disabledDetails: toDisabledDetails(
-            getMachineRoleDisabledIds(
-              target.machineId,
-              team.engineerByMachineId,
-              otherTeamForSlot(target.slot).engineerByMachineId,
-              { excludeSameShiftOtherMachines: false },
-            ),
+            new Map([
+              ...getMachineRoleDisabledIds(
+                target.machineId,
+                team.engineerByMachineId,
+                otherTeamForSlot(target.slot).engineerByMachineId,
+                { excludeSameShiftOtherMachines: false },
+              ),
+              ...getCrossRoleDisabledIds(team.supervisorByMachineId),
+            ]),
             target.slot,
           ),
           onSelect: (id: string | null) => {
@@ -356,16 +362,19 @@ export default function PreviewStep({
         const team = teamForSlot(target.slot);
         return {
           title: `Supervisor — ${machineNoFor(target.machineId)} (${target.slot === 1 ? 'Day' : 'Night'})`,
-          personnel: supervisorCandidates,
+          personnel: engineerOrSupervisorCandidates,
           selectedId: team.supervisorByMachineId[target.machineId] ?? null,
           allowNone: true,
           disabledDetails: toDisabledDetails(
-            getMachineRoleDisabledIds(
-              target.machineId,
-              team.supervisorByMachineId,
-              otherTeamForSlot(target.slot).supervisorByMachineId,
-              { excludeSameShiftOtherMachines: false },
-            ),
+            new Map([
+              ...getMachineRoleDisabledIds(
+                target.machineId,
+                team.supervisorByMachineId,
+                otherTeamForSlot(target.slot).supervisorByMachineId,
+                { excludeSameShiftOtherMachines: false },
+              ),
+              ...getCrossRoleDisabledIds(team.engineerByMachineId),
+            ]),
             target.slot,
           ),
           onSelect: (id: string | null) => {

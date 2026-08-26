@@ -37,7 +37,7 @@ export const colors = {
   accent: '#14141F',
   accentPink: '#E8467C',
   accentBlue: '#66b5da',
-  accentSoft: 'rgba(91,95,239,0.10)',
+  accentSoft: 'rgba(177, 179, 245, 0.1)',
   accentPinkSoft: 'rgba(232,70,124,0.10)',
 
   // Status
@@ -109,6 +109,7 @@ export const typography = {
   cardTitle: { fontSize: 15, fontWeight: '600' as const },
   body: { fontSize: 15, fontWeight: '400' as const },
   caption: { fontSize: 13, fontWeight: '500' as const },
+  smallTxt: { fontSize: 11, fontWeight: '500' as const },
   statNumber: { fontSize: 26, fontWeight: '700' as const, letterSpacing: -0.5 },
   buttonLabel: { fontSize: 16, fontWeight: '600' as const },
 } as const;
