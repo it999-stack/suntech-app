@@ -1,0 +1,8 @@
+node_modules
+android
+.expo
+dist
+coverage
+package-lock.json
+*.tsbuildinfo
+expo-env.d.ts
