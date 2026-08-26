@@ -2,13 +2,12 @@
 
 import { Platform } from 'react-native';
 
-const LOCAL_IP = '192.168.0.110';
+const DEV_ANDROID_HOST = process.env.EXPO_PUBLIC_DEV_ANDROID_HOST ?? '192.168.0.110';
 
 function resolveBaseUrl() {
   if (__DEV__) {
     if (Platform.OS === 'android') {
-      return `http://${LOCAL_IP}:8000/api`;
-      // return "https://suntech-core-1.onrender.com/api";
+      return `http://${DEV_ANDROID_HOST}:8000/api`;
     }
     return 'http://localhost:8000/api';
   }

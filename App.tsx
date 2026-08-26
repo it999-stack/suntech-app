@@ -15,6 +15,7 @@ import { SiteSettingsProvider } from './src/state/SiteSettingsContext';
 import { DrizzleStudioDevTools } from './src/devtools/DrizzleStudioDevTools';
 import { initSyncManager } from './src/sync/SyncManager';
 import { ModalHostProvider } from './src/components/shared/ModalHost';
+import { ErrorBoundary } from './src/components/shared/ErrorBoundary';
 
 function AndroidToastOverlay({ children }: { children: React.ReactNode }) {
   return (
@@ -68,7 +69,9 @@ export default function App() {
               <PlanProvider>
                 <SiteSettingsProvider>
                   <ModalHostProvider>
-                    <RootNavigator />
+                    <ErrorBoundary>
+                      <RootNavigator />
+                    </ErrorBoundary>
                     <Toaster
                       position="top-center"
                       swipeToDismissDirection="up"
