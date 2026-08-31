@@ -9,6 +9,7 @@ import { useEffect, useRef } from 'react';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingSiteRoleDefault } from '@/db/schema';
 import type { SimplePersonnel } from '@/utils/personnelRoles';
+import { isMachinePlannable } from '@/utils/helpers';
 import type { SimpleMachine } from './useGeneratePlanData';
 
 export function useRoleDefaultsSeed(args: {
@@ -28,8 +29,11 @@ export function useRoleDefaultsSeed(args: {
     if (rigs.length === 0 && cranes.length === 0 && roleDefaults.length === 0) return;
     roleDefaultsSeeded.current = true;
 
-    const rigIds = new Set(rigs.map((r) => r.id));
-    const craneIds = new Set(cranes.map((c) => c.id));
+    // BREAKDOWN/INACTIVE machines are excluded up front — a "last used" role
+    // default pointing at one must not resurrect it into the plan, since
+    // MachineSelectStep won't let it be selected (or staffed) anyway.
+    const rigIds = new Set(rigs.filter((r) => isMachinePlannable(r.status)).map((r) => r.id));
+    const craneIds = new Set(cranes.filter((c) => isMachinePlannable(c.status)).map((c) => c.id));
     const activePersonnelIds = new Set(personnel.filter((p) => p.isActive).map((p) => p.id));
     const findSingleton = (role: string) => {
       const id = roleDefaults.find((d) => d.role === role && d.shiftSlot == null)?.personnelId ?? null;

@@ -3,7 +3,7 @@
 // Shared icon+text pill for "which machine" — colored border/soft background
 // per track (RIG/CRANE/COMPRESSOR), or a muted dashed fallback (e.g. "Rig
 // only"). Extracted from three byte-for-byte duplicate implementations
-// (ResumeConfirmStep, pile-assign/pileTableColumns, PilesAccordion).
+// (ResumeConfirmStep, pile-assign/pileTableColumns, PilesCard).
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
@@ -13,7 +13,7 @@ import { TRACK_META } from '@/utils/helpers';
 interface MachineBadgeProps {
   track: 'RIG' | 'CRANE' | 'COMPRESSOR';
   label: string;
-  /** Defaults to true; PilesAccordion's longer descriptive labels render text-only. */
+  /** Defaults to true; PilesCard's longer descriptive labels render text-only. */
   showIcon?: boolean;
   /** Dashed grey "unassigned" fallback (e.g. "Rig only") — keeps the track's icon shape. */
   muted?: boolean;

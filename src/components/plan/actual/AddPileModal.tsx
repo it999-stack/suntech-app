@@ -34,6 +34,7 @@ import SearchToggleField from '@components/shared/SearchToggleField';
 import PileGridCard from '@components/shared/PileGridCard';
 import Pager from '@components/shared/Pager';
 import EmptyState from '@components/shared/EmptyState';
+import Button from '@components/shared/Button';
 import LocationFilterPillRow from '@components/shared/LocationFilterPillRow';
 import { useAppConfig } from '@state/AppConfigContext';
 import { usePlan, type EditPlanPileInput, type EditPlanPreviewStep } from '@state/PlanContext';
@@ -329,7 +330,7 @@ export default function AddPileModal({
 
   // Every applicable step, real computed times where the preview scheduled
   // one, faded placeholders (isPlanned=false) for whatever it cut off —
-  // exactly the diff PilesAccordion.tsx does against allSteps/planSteps for
+  // exactly the diff PilesCard.tsx does against allSteps/planSteps for
   // the generation wizard's own live preview.
   const previewStepById = useMemo(
     () => new Map((previewPile ?? []).map((s) => [s.stepId, s])),
@@ -509,13 +510,13 @@ export default function AddPileModal({
                 </View>
               )}
             </View>
-            <Pressable
-              onPress={confirm}
+            <Button
+              label="Add to plan"
+              loading={isSaving}
               disabled={!canConfirm}
-              style={[styles.saveBtn, !canConfirm && styles.saveBtnDisabled]}
-            >
-              <Text style={styles.saveBtnText}>{isSaving ? 'Adding…' : 'Add to plan'}</Text>
-            </Pressable>
+              onPress={confirm}
+              style={styles.saveBtn}
+            />
           </ScrollView>
         )}
       </View>
@@ -615,14 +616,5 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginBottom: spacing.xs,
   },
-  saveBtn: {
-    height: 48,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.sm,
-  },
-  saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
+  saveBtn: { marginTop: spacing.sm },
 });

@@ -1,9 +1,9 @@
-// src/components/plan/generate/preview/MachineTimelineAccordion.tsx
+// src/components/plan/generate/preview/MachineTimelineCard.tsx
 //
 // Replaces PlanTimelineBar.tsx. Same inputs (plan steps + active machines),
 // but instead of one proportional bar per machine, it shows a single
 // selected machine's "stop log" at a time — a vertical list of what it did,
-// where, and when — via the shared Accordion + MachineStopTimeline.
+// where, and when — via a plain (always-expanded) card + MachineStopTimeline.
 //
 // This file is the only plan-specific piece: it knows about PlanStepWithMeta
 // and pile IDs. The actual timeline UI (MachineStopTimeline) and the stop-log
@@ -12,7 +12,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Clock } from 'lucide-react-native';
-import Accordion from '@components/shared/Accordion';
+import GlassCard from '@components/shared/GlassCard';
 import MachineStopTimeline from '@components/shared/timeline/MachineStopTimeline';
 import { buildMachineStops } from '@/utils/timeline';
 import { type MachineInfo, type TimelineSourceItem, type TimelineStop } from '@/types/timeline';
@@ -23,7 +23,7 @@ import { isContinuingStep } from '@utils/helpers';
 
 export type { MachineInfo };
 
-interface MachineTimelineAccordionProps {
+interface MachineTimelineCardProps {
   windowStart: Date;
   windowEnd: Date;
   steps: PlanStepWithMeta[];
@@ -43,7 +43,7 @@ interface MachineTimelineAccordionProps {
   onEditMachine?: (machineId: string) => void;
 }
 
-export default function MachineTimelineAccordion({
+export default function MachineTimelineCard({
   windowStart,
   windowEnd,
   steps,
@@ -52,7 +52,7 @@ export default function MachineTimelineAccordion({
   pileLabelById,
   windowsByMachineId,
   onEditMachine,
-}: MachineTimelineAccordionProps) {
+}: MachineTimelineCardProps) {
   const machines = useMemo<MachineInfo[]>(() => [...activeRigs, ...activeCranes], [activeRigs, activeCranes]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | undefined>(machines[0]?.id);
 
@@ -94,34 +94,48 @@ export default function MachineTimelineAccordion({
   if (machines.length === 0) return null;
 
   return (
-    <Accordion
-      defaultOpen
-      header={
-        <View style={styles.headerRow}>
-          <Clock size={16} color={colors.accent} />
-          <View>
-            <Text style={styles.title}>Machine Timeline</Text>
-            <Text style={styles.subtitle}>
-              {activeRigs.length} rig{activeRigs.length === 1 ? '' : 's'} · {activeCranes.length} crane
-              {activeCranes.length === 1 ? '' : 's'} active
-            </Text>
-          </View>
+    <GlassCard style={styles.card} innerStyle={styles.cardInner}>
+      <View style={styles.headerRow}>
+        <Clock size={16} color={colors.accent} />
+        <View>
+          <Text style={styles.title}>Machine Timeline</Text>
+          <Text style={styles.subtitle}>
+            {activeRigs.length} rig{activeRigs.length === 1 ? '' : 's'} · {activeCranes.length} crane
+            {activeCranes.length === 1 ? '' : 's'} active
+          </Text>
         </View>
-      }
-    >
-      <MachineStopTimeline
-        machines={machines}
-        stopsByMachineId={stopsByMachineId}
-        selectedMachineId={selectedMachineId}
-        onSelectMachine={setSelectedMachineId}
-        onEditMachine={onEditMachine}
-      />
-    </Accordion>
+      </View>
+
+      <View style={styles.body}>
+        <MachineStopTimeline
+          machines={machines}
+          stopsByMachineId={stopsByMachineId}
+          selectedMachineId={selectedMachineId}
+          onSelectMachine={setSelectedMachineId}
+          onEditMachine={onEditMachine}
+        />
+      </View>
+    </GlassCard>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  card: { marginBottom: spacing.sm },
+  cardInner: { padding: 0 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
   title: { ...typography.body, fontWeight: '800', color: colors.textPrimary },
   subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  body: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(28,28,46,0.08)',
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+  },
 });

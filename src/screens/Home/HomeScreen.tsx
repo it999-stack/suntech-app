@@ -5,10 +5,11 @@ import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine } from 'lucide-react-native';
+import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import ProgressRing from '@components/shared/ProgressRing';
 import GradientTile from '@components/shared/GradientTile';
+import Button from '@components/shared/Button';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { usePlan } from '@state/PlanContext';
 import GeneratePlanCalendarSheet from '@components/plan/generate/GeneratePlanCalendarSheet';
@@ -96,9 +97,7 @@ function NoPlanCard({ onGenerate }: { onGenerate: () => void }) {
       <Text style={styles.noPlanBody}>
         Pick your piles, assign a rig and crane, choose a supervisor, and set a start time.
       </Text>
-      <Pressable style={styles.primaryBtn} onPress={onGenerate}>
-        <Text style={styles.primaryBtnText}>Generate today's plan</Text>
-      </Pressable>
+      <Button label="Generate today's plan" icon={Sparkles} onPress={onGenerate} />
     </GlassCard>
   );
 }
@@ -132,14 +131,7 @@ function ActivePlanCard({
           </Text>
         </View>
 
-        <Pressable
-          onPress={onEdit}
-          hitSlop={10}
-          style={styles.editCircle}
-        >
-          <Text style={styles.editCircleText}>Edit Plan</Text>
-          <PencilLine size={14} color={colors.white} />
-        </Pressable>
+        <Button label="Edit Plan" size="sm" icon={PencilLine} onPress={onEdit} />
       </View>
 
       {/* Progress */}
@@ -159,9 +151,7 @@ function ActivePlanCard({
       </View>
 
       {/* CTA */}
-      <Pressable style={styles.primaryBtn} onPress={onView}>
-        <Text style={styles.primaryBtnText}>Update progress</Text>
-      </Pressable>
+      <Button label="Update progress" icon={ListChecks} onPress={onView} />
     </GlassCard>
   );
 }
@@ -494,21 +484,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
 
-  editCircle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-  },
-  editCircleText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.white,
-  },
-
   progressSection: {
     alignItems: 'center',
     marginTop: spacing.xl,
@@ -542,19 +517,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
 
-  primaryBtn: {
-    backgroundColor: colors.textPrimary,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    alignItems: 'center',
-    ...shadow.soft,
-  },
-  primaryBtnText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
-  },
   planTitle: {
     ...typography.h2,
     color: colors.textPrimary,

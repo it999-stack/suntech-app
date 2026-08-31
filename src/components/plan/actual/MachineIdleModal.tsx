@@ -18,7 +18,7 @@ import type { LogMachineEventInput } from '@state/PlanContext';
 import type { PilMachineEvent } from '@db/schema';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
 import NotesField from './machineEvents/NotesField';
-import SaveEventButton from './machineEvents/SaveEventButton';
+import Button from '@components/shared/Button';
 import { useSaveMachineEvent } from './machineEvents/useSaveMachineEvent';
 import { findOpenSession } from './machineEvents/idleSession';
 import type { IdleEventType } from './machineEvents/eventLabels';
@@ -129,12 +129,13 @@ export default function MachineIdleModal({
             required={eventType === 'IDLE_START'}
           />
 
-          <SaveEventButton
-            saving={saving}
-            canSave={canSave}
+          <Button
+            loading={saving}
+            disabled={!canSave}
             onPress={handleSave}
             label={eventType === 'IDLE_START' ? 'Start idle' : 'End idle'}
-            variant={eventType === 'IDLE_START' ? 'warning' : 'accent'}
+            variant={eventType === 'IDLE_START' ? 'warning' : 'primary'}
+            style={styles.saveBtn}
           />
         </View>
       </View>
@@ -184,4 +185,5 @@ const styles = StyleSheet.create({
   fieldsWrap: {
     alignSelf: 'stretch',
   },
+  saveBtn: { marginTop: spacing.md },
 });

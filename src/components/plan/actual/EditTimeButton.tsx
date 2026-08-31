@@ -1,13 +1,13 @@
 // src/components/plan/actual/EditTimeButton.tsx
 
 import React, { useState } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
 import { PencilLine } from 'lucide-react-native';
+import Button from '@components/shared/Button';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { resolveOvernightDate, toLocalIsoString, startOfDay, endOfDay } from '@utils/formatTime';
 import { validateCandidateTime, type ConflictNotice } from '@utils/timeValidation';
 import { notify } from '@utils/notify';
-import { colors, radius } from '@theme/theme';
+import { colors } from '@theme/theme';
 
 interface Props {
   /** Current value, minutes-since-midnight — seeds the picker and dialog copy. */
@@ -137,9 +137,14 @@ export default function EditTimeButton({
 
   return (
     <>
-      <Pressable
-        style={styles.btn}
+      <Button
+        icon={PencilLine}
+        variant="secondary"
+        size="sm"
+        iconColor={colors.textSecondary}
         disabled={saving}
+        hitSlop={8}
+        accessibilityLabel={`Edit ${label}`}
         onPress={() => {
           if (blocked) {
             notify.error(blocked.message, { title: blocked.title });
@@ -148,11 +153,7 @@ export default function EditTimeButton({
           setHasOpenedPicker(true);
           setPickerOpen(true);
         }}
-        hitSlop={8}
-        accessibilityLabel={`Edit ${label}`}
-      >
-        <PencilLine size={14} color={colors.textSecondary} />
-      </Pressable>
+      />
 
       {hasOpenedPicker && (
       <TimerSelectMenu
@@ -175,14 +176,3 @@ export default function EditTimeButton({
   );
 }
 
-const styles = StyleSheet.create({
-  btn: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

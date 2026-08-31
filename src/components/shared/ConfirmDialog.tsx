@@ -1,9 +1,10 @@
 // src/components/shared/ConfirmDialog.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import AppModal from '@components/shared/AppModal';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import Button from '@components/shared/Button';
+import { colors, spacing, typography } from '@theme/theme';
 
 interface Props {
   visible: boolean;
@@ -64,32 +65,22 @@ export default function ConfirmDialog({
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.message}>{message}</Text>
         <View style={styles.row}>
-          <Pressable
-            style={[styles.btn, styles.cancelBtn, busy && styles.btnDisabled]}
+          <Button
+            label={cancelLabel}
+            variant="secondary"
+            loading={pending === 'cancel'}
             disabled={busy}
             onPress={runCancel}
-          >
-            {pending === 'cancel' ? (
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-            ) : (
-              <Text style={styles.cancelText}>{cancelLabel}</Text>
-            )}
-          </Pressable>
-          <Pressable
-            style={[
-              styles.btn,
-              destructive ? styles.dangerBtn : styles.confirmBtn,
-              (confirmDisabled || busy) && styles.btnDisabled,
-            ]}
+            style={styles.btn}
+          />
+          <Button
+            label={confirmLabel}
+            variant={destructive ? 'danger' : 'primary'}
+            loading={pending === 'confirm'}
             disabled={confirmDisabled || busy}
             onPress={runConfirm}
-          >
-            {pending === 'confirm' ? (
-              <ActivityIndicator size="small" color={colors.textInverse} />
-            ) : (
-              <Text style={styles.confirmText}>{confirmLabel}</Text>
-            )}
-          </Pressable>
+            style={styles.btn}
+          />
         </View>
       </View>
     </AppModal>
@@ -100,11 +91,5 @@ const styles = StyleSheet.create({
   title: { ...typography.h2, color: colors.textPrimary, marginBottom: spacing.xs },
   message: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.lg },
   row: { flexDirection: 'row', gap: spacing.sm },
-  btn: { flex: 1, borderRadius: radius.sm, paddingVertical: spacing.sm + 4, alignItems: 'center' },
-  btnDisabled: { opacity: 0.5 },
-  cancelBtn: { backgroundColor: 'rgba(28,28,46,0.06)' },
-  cancelText: { ...typography.buttonLabel, color: colors.textSecondary },
-  confirmBtn: { backgroundColor: colors.accent },
-  dangerBtn: { backgroundColor: colors.danger },
-  confirmText: { ...typography.buttonLabel, color: colors.textInverse },
+  btn: { flex: 1 },
 });

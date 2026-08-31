@@ -9,7 +9,7 @@ import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import AppModal from '@components/shared/AppModal';
 import PersonnelPickerList from '@components/shared/PersonnelPickerList';
 import MachineAssignPanel from './pile-assign/MachineAssignPanel';
-import { colors, spacing, typography, radius } from '@/theme/theme';
+import { colors, spacing, typography } from '@/theme/theme';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import {
   matchesRoleDesignation,
@@ -29,9 +29,9 @@ import type { PreviewPile } from '@app-types/previewTypes';
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import type { PilingStep } from '@/db/schema';
 import DurationWarningCard from '../preview/DurationWarningCard';
-import CoreTeamAccordion, { type RoleTarget } from '../preview/CoreTeamAccordion';
-import MachineTimelineAccordion from '../preview/MachineTimelineAccordion';
-import PilesAccordion from '../preview/PilesAccordion';
+import CoreTeamCard, { type RoleTarget } from '../preview/CoreTeamCard';
+import MachineTimelineCard from '../preview/MachineTimelineCard';
+import PilesCard from '../preview/PilesCard';
 import PlanWindowBar from '../preview/PlanWindowBar';
 import { type TrackChoice } from '../preview/TrackChoiceTiles';
 
@@ -75,12 +75,14 @@ interface PreviewStepProps {
     updater: Record<string, string[]> | ((prev: Record<string, string[]>) => Record<string, string[]>),
   ) => void;
   planSteps: PlanStepWithMeta[];
-  /** True while the plan preview is (re)generating. The very first load (no planSteps
-   * yet) gets a full-screen spinner; a recompute triggered later (e.g. by a track
-   * reassignment) instead fades the Piles accordion with an overlay spinner — see
-   * the isLoading && planSteps.length > 0 branch below. */
+  /** True while the plan preview is (re)generating — the first load, a later
+   * recompute (e.g. a track reassignment), or the final Generate/Save submit.
+   * Replaces this whole step's content with a centered spinner for as long as
+   * it's true, same as FillActualScreen's own loading state; the footer
+   * button stays visible (disabled, keeping its label) so the user always
+   * has a sense of what's about to happen once it clears. */
   isLoading?: boolean;
-  /** Global step catalog, in sequence order — lets PilesAccordion show every step
+  /** Global step catalog, in sequence order — lets PilesCard show every step
    * selected for this plan, not just the ones that got a scheduled time. */
   allSteps?: PilingStep[];
   /** Non-working windows actually applied per machine, from generatePlanPreview(). */
@@ -138,13 +140,13 @@ export default function PreviewStep({
 
   const endIso = planEndTime(draft.planStartTime);
 
-  // Stable Date references for MachineTimelineAccordion — passing `new Date(...)` literals
+  // Stable Date references for MachineTimelineCard — passing `new Date(...)` literals
   // inline on every render would defeat its own internal useMemos.
   const windowStart = useMemo(() => new Date(draft.planStartTime), [draft.planStartTime]);
   const windowEnd = useMemo(() => new Date(endIso), [endIso]);
 
   // Stable across the component's lifetime (only depends on the setState it wraps) — passed
-  // straight into PilesAccordion so tapping one pile's tile never changes the callback identity
+  // straight into PilesCard so tapping one pile's tile never changes the callback identity
   // seen by every other pile's memoized row.
   const handleToggleTrack = useCallback(
     (checklistPileId: string, stepId: string, track: TrackChoice) => {
@@ -161,7 +163,7 @@ export default function PreviewStep({
   );
 
   // Stable except when draft.assignments itself changes — passed straight into
-  // PilesAccordion for the same reason as handleToggleTrack above: PagerView mounts
+  // PilesCard for the same reason as handleToggleTrack above: PagerView mounts
   // every pile's page up front, so an unstable callback here would break every
   // memoized pile page's React.memo, not just the one being edited.
   const openMachinePicker = useCallback(
@@ -248,10 +250,7 @@ export default function PreviewStep({
     updatePersonnel({ [key]: { ...teamForSlot(slot), ...patch } });
   }
 
-  // Only the very first load (nothing generated yet) gets the full-screen spinner — a
-  // recompute triggered later (e.g. tapping a Rig/Crane tile) never blanks this screen;
-  // the footer's Save Changes/Generate Plan button is the only place that shows it's pending.
-  if (isLoading && planSteps.length === 0) {
+  if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.accent} />
@@ -424,16 +423,15 @@ export default function PreviewStep({
       <DurationWarningCard pileCodes={warningPileCodes} siteId={siteId} />
 
       {/* ── Core Team (Leadership / Shift Incharge / Machine Teams) ──────── */}
-      <CoreTeamAccordion
+      <CoreTeamCard
         leadership={leadershipDetail}
         shiftIncharge={shiftInchargeDetail}
         machineTeams={machineTeams}
-        defaultOpen
         onPressRole={setRolePickerTarget}
       />
 
       {/* ── Visual timeline ─────────────────────────────────────────────── */}
-      <MachineTimelineAccordion
+      <MachineTimelineCard
         windowStart={windowStart}
         windowEnd={windowEnd}
         steps={planSteps}
@@ -445,28 +443,17 @@ export default function PreviewStep({
       />
 
       {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
-      <View style={styles.pilesWrap}>
-        <PilesAccordion
-          piles={piles}
-          planSteps={planSteps}
-          overriddenTrackStepIdsByPileId={pendingTrackOverrides}
-          onToggleTrack={handleToggleTrack}
-          windowsByMachineId={windowsByMachineId}
-          allSteps={allSteps}
-          selectedStepIds={draft.selectedStepIds}
-          resumeWorkByPileId={draft.resumeWorkByPileId}
-          onPressMachineBadge={openMachinePicker}
-        />
-        {/* A recompute after the first load (e.g. a track reassignment) fades this
-            section with an overlay spinner instead of blanking the whole screen —
-            the isLoading && planSteps.length === 0 branch above already covers the
-            very first load. */}
-        {isLoading && planSteps.length > 0 && (
-          <View style={styles.pilesOverlay}>
-            <ActivityIndicator size="large" color={colors.accent} />
-          </View>
-        )}
-      </View>
+      <PilesCard
+        piles={piles}
+        planSteps={planSteps}
+        overriddenTrackStepIdsByPileId={pendingTrackOverrides}
+        onToggleTrack={handleToggleTrack}
+        windowsByMachineId={windowsByMachineId}
+        allSteps={allSteps}
+        selectedStepIds={draft.selectedStepIds}
+        resumeWorkByPileId={draft.resumeWorkByPileId}
+        onPressMachineBadge={openMachinePicker}
+      />
 
       {/* ── Core Team role picker ─────────────────────────────────────────── */}
       <AppModal
@@ -489,7 +476,7 @@ export default function PreviewStep({
         ) : null}
       </AppModal>
 
-      {/* ── Machine reassignment picker (Rig/Crane rows in PilesAccordion) ── */}
+      {/* ── Machine reassignment picker (Rig/Crane rows in PilesCard) ── */}
       <AppModal
         visible={!!machinePickerPileId}
         onClose={isApplyingMachine ? () => {} : () => setMachinePickerPileId(null)}
@@ -515,7 +502,13 @@ export default function PreviewStep({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  // flex: 1 (not a fixed minHeight) so this actually centers in whatever
+  // vertical space is available — relies on the parent ScrollView's
+  // contentContainerStyle having flexGrow: 1 (see GeneratePlanScreen's
+  // scrollContent) so that space is the full viewport, not just this view's
+  // own natural size.
   loadingContainer: {
+    flex: 1,
     minHeight: 600,
     alignItems: 'center',
     justifyContent: 'center',
@@ -524,17 +517,5 @@ const styles = StyleSheet.create({
   loadingText: {
     ...typography.body,
     color: colors.textSecondary,
-  },
-  pilesWrap: { position: 'relative' },
-  pilesOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(255,255,255,0.7)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.lg,
   },
 });

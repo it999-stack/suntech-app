@@ -87,7 +87,14 @@ export function usePreviewReorder(args: {
   function pilesForMachine(machine: MachineInfo) {
     return builtPreviewPiles
       .filter((p) => (machine.type === 'RIG' ? p.rigId : p.craneId) === machine.id)
-      .map((p) => ({ id: p.checklistPileId, label: `Pile ${p.code}` }));
+      .map((p) => ({
+        id: p.checklistPileId,
+        label: `Pile ${p.code}`,
+        // The machine on the *other* track for this pile — e.g. sequencing a
+        // rig's piles surfaces which crane(s) they're each paired with, so the
+        // overlay's header can show every distinct one instead of nothing.
+        otherMachineLabel: machine.type === 'RIG' ? p.craneMachineNo : p.rigMachineNo,
+      }));
   }
 
   function mergeOrder(fullOrder: string[], subsetNewOrder: string[]): string[] {

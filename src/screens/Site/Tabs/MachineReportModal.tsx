@@ -14,7 +14,7 @@ import { AlertTriangle, Wrench, CheckCircle2 } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import CompactTimeRow from '@components/plan/actual/machineEvents/CompactTimeRow';
 import NotesField from '@components/plan/actual/machineEvents/NotesField';
-import SaveEventButton from '@components/plan/actual/machineEvents/SaveEventButton';
+import Button from '@components/shared/Button';
 import { useSaveMachineEvent } from '@components/plan/actual/machineEvents/useSaveMachineEvent';
 import { findOpenSession } from '@components/plan/actual/machineEvents/idleSession';
 import type { Track } from '@components/plan/actual/machineEvents/types';
@@ -135,13 +135,14 @@ export default function MachineReportModal({
             required={screen === 'BREAKDOWN'}
           />
 
-          <SaveEventButton
-            saving={saving}
-            canSave={canSave}
+          <Button
+            loading={saving}
+            disabled={!canSave}
             onPress={handleSave}
             label={screen === 'BREAKDOWN' ? 'Report breakdown' : 'Mark resumed'}
             variant={screen === 'BREAKDOWN' ? 'danger' : 'success'}
             icon={screen === 'BREAKDOWN' ? AlertTriangle : CheckCircle2}
+            style={styles.saveBtn}
           />
         </View>
       </View>
@@ -190,4 +191,5 @@ const styles = StyleSheet.create({
   fieldsWrap: {
     alignSelf: 'stretch',
   },
+  saveBtn: { marginTop: spacing.md },
 });

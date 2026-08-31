@@ -190,13 +190,11 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   footer: {
     paddingTop: spacing.xs,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(28,28,46,0.08)',
   },
 
   headerRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    backgroundColor: colors.white, paddingTop: spacing.sm, paddingHorizontal: spacing.sm, borderBottomWidth: 1, borderRadius: radius.lg, borderBottomColor: 'rgba(28,28,46,0.08)', paddingBottom : spacing.sm,
+    backgroundColor: colors.glassFillStrong, paddingTop: spacing.sm, paddingHorizontal: spacing.sm, borderBottomWidth: 1, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, borderBottomColor: 'rgba(28,28,46,0.08)', paddingBottom : spacing.sm,
   },
   headerLabel: { ...typography.caption, fontWeight: '700', color: colors.textSecondary },
 

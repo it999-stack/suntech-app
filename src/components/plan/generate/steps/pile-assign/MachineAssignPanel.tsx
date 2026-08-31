@@ -6,8 +6,9 @@
 // picker instead of duplicating it.
 
 import React from 'react';
-import { ActivityIndicator, Pressable, Text, StyleSheet } from 'react-native';
-import { colors, spacing, radius, typography } from '@/theme/theme';
+import { StyleSheet } from 'react-native';
+import { spacing } from '@/theme/theme';
+import Button from '@components/shared/Button';
 import MachineSelect from './MachineSelect';
 import type { SimpleMachine } from './types';
 
@@ -39,27 +40,17 @@ export default function MachineAssignPanel({
         onSelect={onSelectCrane}
         onClear={() => onSelectCrane(null)}
       />
-      <Pressable
-        style={[styles.applyButton, (!rigId || isApplying) && styles.applyButtonDisabled]}
-        onPress={onApply}
+      <Button
+        label={applyLabel}
+        loading={isApplying}
         disabled={!rigId || isApplying}
-      >
-        {isApplying ? (
-          <ActivityIndicator size="small" color={colors.white} />
-        ) : (
-          <Text style={styles.applyButtonText}>{applyLabel}</Text>
-        )}
-      </Pressable>
+        onPress={onApply}
+        style={styles.applyButton}
+      />
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  applyButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: colors.accent, borderRadius: radius.lg, paddingVertical: spacing.md,
-    marginTop: spacing.sm,
-  },
-  applyButtonDisabled: { opacity: 0.4 },
-  applyButtonText: { ...typography.buttonLabel, borderRadius: radius.xl, paddingHorizontal: spacing.md, fontWeight: '700', color: colors.white },
+  applyButton: { marginTop: spacing.sm },
 });

@@ -83,7 +83,7 @@ export default function BulkAssignBar({
         onClose={onTogglePanel}
         title="Assign machines"
         subtitle={`${selectedCount} ${selectedCount === 1 ? 'pile' : 'piles'} selected`}
-        position="center"
+        position="bottom"
       >
         <MachineAssignPanel
           rigs={rigs}

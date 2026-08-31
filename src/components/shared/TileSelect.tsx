@@ -2,10 +2,11 @@
 //
 // One selectable tile, meant to sit inside a TileGroup grid: the whole tile
 // carries its machine type's soft tint (always, selected or not), with an
-// icon on the left and the name (+ trailing rank suffix, if any) stacked to
-// its right. No checkmark on selection — the selected state is conveyed
-// purely by a solid colored border (both colors passed in by the caller,
-// e.g. TRACK_META in helpers.ts for the rig/crane/compressor scheme).
+// icon on the left, the name (+ trailing rank suffix, if any) next to it,
+// and — if given — a status badge pinned to the far right of the row. No
+// checkmark on selection — the selected state is conveyed purely by a solid
+// colored border (both colors passed in by the caller, e.g. TRACK_META in
+// helpers.ts for the rig/crane/compressor scheme).
 
 import React from 'react';
 import { Pressable, Text, View, StyleSheet } from 'react-native';
@@ -31,15 +32,16 @@ function splitTileLabel(label: string): { name: string; suffix?: string } {
   return { name: match[1].trim(), suffix };
 }
 
-/** A small tappable status chip rendered in the tile's corner, independent
- * of the tile's own select tap target — e.g. a machine's real BREAKDOWN/IDLE
- * status, tappable to open a status-change picker, distinct from selecting
- * the tile itself. Stays tappable even when the tile is `disabled`. */
+/** A small status chip rendered in the tile's corner, independent of the
+ * tile's own select tap target — e.g. a machine's real BREAKDOWN/IDLE
+ * status. Tappable to open a status-change picker when `onPress` is given;
+ * omit it (e.g. for BREAKDOWN, which shouldn't be resolved from this
+ * picker) to render a plain, non-interactive chip instead. */
 export interface TileStatusBadge {
   text: string;
   color: string;
   soft: string;
-  onPress: () => void;
+  onPress?: () => void;
 }
 
 interface TileSelectProps {
@@ -65,20 +67,30 @@ export default function TileSelect({
 }: TileSelectProps) {
   const { name, suffix } = splitTileLabel(label);
   const isLongName = name.length >= SHORT_NAME_THRESHOLD;
-  const tint = { color: selected ? color : colors.textSecondary };
+  // A disabled tile never shows the "selected" color treatment, even if it's
+  // technically still present in the caller's selected-ids list — the color
+  // is reserved for a live, user-made selection, not a stale/locked one.
+  const showSelected = selected && !disabled;
+  const tint = { color: showSelected ? color : colors.textSecondary };
+  // The icon chip only carries its track color once actually selected —
+  // otherwise every tile reads equally "colored" regardless of pick state,
+  // and the border becomes the only tell. Unselected falls back to the same
+  // neutral tone the border/label already use.
+  const iconBg = showSelected ? soft : 'rgba(28,28,46,0.06)';
+  const iconColor = showSelected ? color : colors.textSecondary;
 
   return (
     <Pressable
       style={[
         styles.tile,
-        selected ? { borderColor: color, backgroundColor: soft } : styles.tileInactive,
+        showSelected ? { borderColor: color, backgroundColor: soft } : styles.tileInactive,
         disabled && styles.tileDisabled,
       ]}
       onPress={onPress}
       disabled={disabled}
     >
-      <View style={[styles.iconWrap, { backgroundColor: soft }]}>
-        <Icon size={20} color={color} />
+      <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
+        <Icon size={20} color={iconColor} />
       </View>
       <View style={styles.textWrap}>
         {suffix && isLongName ? (
@@ -95,12 +107,18 @@ export default function TileSelect({
             {name.toUpperCase()}{suffix ? ` (${suffix})` : ''}
           </Text>
         )}
-        {statusBadge && (
-          <Pressable onPress={statusBadge.onPress} hitSlop={6} style={styles.statusBadgeWrap}>
+      </View>
+      {statusBadge && (
+        statusBadge.onPress ? (
+          <Pressable onPress={statusBadge.onPress} hitSlop={6}>
             <Badge text={statusBadge.text} textColor={statusBadge.color} bgColor={statusBadge.soft} fontSize={9} />
           </Pressable>
-        )}
-      </View>
+        ) : (
+          <View>
+            <Badge text={statusBadge.text} textColor={statusBadge.color} bgColor={statusBadge.soft} fontSize={9} />
+          </View>
+        )
+      )}
     </Pressable>
   );
 }
@@ -133,10 +151,6 @@ const styles = StyleSheet.create({
   textWrap: {
     flex: 1,
     minWidth: 0,
-  },
-  statusBadgeWrap: {
-    alignSelf: 'flex-start',
-    marginTop: 3,
   },
   label: {
     ...typography.body,

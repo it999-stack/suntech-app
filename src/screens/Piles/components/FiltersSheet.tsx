@@ -3,8 +3,9 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Check } from 'lucide-react-native';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { colors, spacing, typography } from '@theme/theme';
 import AppModal from '@components/shared/AppModal';
+import Button from '@components/shared/Button';
 import type { PileStatus } from '@repositories/pilesRepository';
 import { STATUS_META, type PilesFiltersState } from './types';
 
@@ -70,12 +71,8 @@ export default function FiltersSheet({ visible, onCancel, draft, onChangeDraft, 
       ))}
 
       <View style={styles.footerRow}>
-        <Pressable style={styles.cancelBtn} onPress={onCancel}>
-          <Text style={styles.cancelText}>Cancel</Text>
-        </Pressable>
-        <Pressable style={styles.applyBtn} onPress={onApply}>
-          <Text style={styles.applyText}>Apply Filters</Text>
-        </Pressable>
+        <Button label="Cancel" variant="secondary" onPress={onCancel} style={styles.cancelBtn} />
+        <Button label="Apply Filters" onPress={onApply} style={styles.applyBtn} />
       </View>
     </AppModal>
   );
@@ -137,22 +134,6 @@ const styles = StyleSheet.create({
   radioChecked: { borderColor: colors.accent },
   radioDot: { width: 11, height: 11, borderRadius: 20, backgroundColor: colors.accent },
   footerRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xl },
-  cancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    backgroundColor: colors.glassFill,
-  },
-  cancelText: { ...typography.buttonLabel, color: colors.textSecondary },
-  applyBtn: {
-    flex: 2,
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-  },
-  applyText: { ...typography.buttonLabel, color: colors.textInverse },
+  cancelBtn: { flex: 1 },
+  applyBtn: { flex: 2 },
 });

@@ -7,6 +7,7 @@ import GlassCard from '@components/shared/GlassCard';
 import AppModal from '@components/shared/AppModal';
 import AssigneeChip from '@components/shared/AssigneeChip';
 import PersonnelPickerList, { type SimplePersonnel } from '@components/shared/PersonnelPickerList';
+import RequiredMark from '@components/shared/RequiredMark';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { PlanDraft, ShiftTeamAssignment } from '@/types/plan';
 import {
@@ -227,7 +228,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
           title: 'Assign Engineer',
           personnel: engineerOrSupervisorCandidates,
           selectedId: team.engineerByMachineId[pickerTarget.machineId] ?? null,
-          allowNone: false,
+          allowNone: true,
           emptyLabel: 'No matching engineers synced for this site.',
           disabledDetails: toDisabledDetails(
             new Map([
@@ -312,7 +313,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
         </View>
 
         <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Engineers</Text>
+          <Text style={styles.sectionLabel}>Engineers<RequiredMark /></Text>
           {activeRigs.length === 0 ? (
             <Text style={styles.emptyText}>No active rigs — go back and activate at least one rig.</Text>
           ) : (
@@ -331,7 +332,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
         </View>
 
         <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Supervisors (Optional)</Text>
+          <Text style={styles.sectionLabel}>Supervisors</Text>
           {activeRigs.length === 0 ? (
             <Text style={styles.emptyText}>No active rigs — go back and activate at least one rig.</Text>
           ) : (
@@ -350,7 +351,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
         </View>
 
         <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Rig Operators</Text>
+          <Text style={styles.sectionLabel}>Rig Operators<RequiredMark /></Text>
           {activeRigs.length === 0 ? (
             <Text style={styles.emptyText}>No active rigs — go back and activate at least one rig.</Text>
           ) : (
@@ -369,7 +370,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
         </View>
 
         <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Crane Operators</Text>
+          <Text style={styles.sectionLabel}>Crane Operators<RequiredMark /></Text>
           {activeCranes.length === 0 ? (
             <Text style={styles.emptyText}>No active cranes — go back and activate at least one crane.</Text>
           ) : (

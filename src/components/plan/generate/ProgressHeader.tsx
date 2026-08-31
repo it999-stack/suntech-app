@@ -1,8 +1,9 @@
 // src/components/plan/generate/ProgressHeader.tsx
 
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { ChevronLeft, X } from 'lucide-react-native';
-import { colors, spacing, radius, typography } from '@/theme/theme';
+import RoundedButton from '@components/shared/RoundedButton';
+import { colors, spacing, typography } from '@/theme/theme';
 
 export type Step =
   | 'location'
@@ -61,25 +62,15 @@ export default function ProgressHeader({
     <View style={styles.headerArea}>
       <View style={styles.card}>
         <View style={styles.topRow}>
-          <Pressable
+          <RoundedButton
+            icon={ChevronLeft}
+            variant="secondary"
+            floating={false}
+            size={TAP_TARGET}
+            iconSize={22}
             onPress={onBack}
             disabled={backDisabled}
-            hitSlop={4}
-            style={({ pressed }) => [
-              styles.chevronBtn,
-              backDisabled && styles.chevronBtnDisabled,
-              pressed && !backDisabled && styles.btnPressed,
-            ]}
-          >
-            <ChevronLeft
-              size={22}
-              color={
-                backDisabled
-                  ? colors.textSecondary
-                  : colors.textPrimary
-              }
-            />
-          </Pressable>
+          />
 
           <Text
             style={styles.titleText}
@@ -88,16 +79,14 @@ export default function ProgressHeader({
             {STEP_LABEL[step]}
           </Text>
 
-          <Pressable
+          <RoundedButton
+            icon={X}
+            variant="secondary"
+            floating={false}
+            size={TAP_TARGET}
+            iconSize={20}
             onPress={onClose}
-            hitSlop={8}
-            style={({ pressed }) => [
-              styles.closeBtn,
-              pressed && styles.btnPressed,
-            ]}
-          >
-            <X size={20} color={colors.textPrimary} />
-          </Pressable>
+          />
         </View>
 
         {/* Progress */}
@@ -135,14 +124,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  closeBtn: {
-    width: TAP_TARGET,
-    height: TAP_TARGET,
-    borderRadius: radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
   titleText: {
     flex: 1,
     textAlign: 'center',
@@ -150,24 +131,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.textPrimary,
     paddingHorizontal: spacing.xs,
-  },
-
-  chevronBtn: {
-    width: TAP_TARGET,
-    height: TAP_TARGET,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(28,28,46,0.05)',
-  },
-
-  chevronBtnDisabled: {
-    opacity: 0.35,
-    backgroundColor: 'transparent',
-  },
-
-  btnPressed: {
-    backgroundColor: 'rgba(28,28,46,0.10)',
   },
 
   progressSection: {

@@ -1,10 +1,11 @@
 // src/screens/Home/generatePlan/EditConfirmModal.tsx
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { AlertTriangle } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
-import { colors, spacing, radius, typography } from '@/theme/theme';
+import Button from '@components/shared/Button';
+import { colors, spacing, typography } from '@/theme/theme';
 
 interface Props {
   visible: boolean;
@@ -40,24 +41,8 @@ export default function EditConfirmModal({ visible, onClose, onConfirm, date, to
           Any existing actual progress data will be preserved.
         </Text>
         <View style={styles.confirmActions}>
-          <Pressable
-            style={[styles.cancelBtn, loading && styles.cancelBtnDisabled]}
-            onPress={handleClose}
-            disabled={loading}
-          >
-            <Text style={styles.cancelText}>Cancel</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.saveBtn, loading && styles.saveBtnDisabled]}
-            onPress={onConfirm}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.white} />
-            ) : (
-              <Text style={styles.saveText}>Save Changes</Text>
-            )}
-          </Pressable>
+          <Button label="Cancel" variant="secondary" disabled={loading} onPress={handleClose} style={styles.flexBtn} />
+          <Button label="Save Changes" loading={loading} disabled={loading} onPress={onConfirm} style={styles.flexBtn} />
         </View>
       </View>
     </AppModal>
@@ -96,35 +81,5 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     width: '100%',
   },
-  cancelBtn: {
-    flex: 1,
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    borderColor: 'rgba(28,28,46,0.12)',
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  cancelBtnDisabled: {
-    opacity: 0.5,
-  },
-  cancelText: {
-    ...typography.body,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  saveBtn: {
-    flex: 1,
-    borderRadius: radius.sm,
-    backgroundColor: colors.accent,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  saveBtnDisabled: {
-    opacity: 0.7,
-  },
-  saveText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
-  },
+  flexBtn: { flex: 1 },
 });

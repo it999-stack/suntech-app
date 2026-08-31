@@ -20,7 +20,7 @@ import { toLocalIsoString } from '@utils/formatTime';
 import { TRACK_META, type MachineKind } from '@utils/helpers';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
 import NotesField from './machineEvents/NotesField';
-import SaveEventButton from './machineEvents/SaveEventButton';
+import Button from '@components/shared/Button';
 import { useSaveMachineEvent } from './machineEvents/useSaveMachineEvent';
 import { isEligibleReplacementType } from './machineEvents/eventLabels';
 import type { MachineEventMachine, Track } from './machineEvents/types';
@@ -130,13 +130,13 @@ export default function MachineReplaceModal({
 
           <NotesField value={notes} onChange={setNotes} placeholder="What happened? (optional)" />
 
-          <SaveEventButton
-            saving={saving}
-            canSave={canSave}
+          <Button
+            loading={saving}
+            disabled={!canSave}
             onPress={handleSave}
             label="Replace machine"
-            variant="accent"
             icon={RefreshCw}
+            style={styles.saveBtn}
           />
         </View>
       </View>
@@ -184,4 +184,5 @@ const styles = StyleSheet.create({
   machineSelectWrap: {
     marginBottom: spacing.md,
   },
+  saveBtn: { marginTop: spacing.md },
 });

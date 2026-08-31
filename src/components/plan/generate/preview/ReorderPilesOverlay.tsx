@@ -34,7 +34,7 @@
 // animation and vanishing instantly on close like an unmount would.
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, FlatList } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -44,8 +44,11 @@ import Animated, {
   LinearTransition,
 } from 'react-native-reanimated';
 import { ChevronUp, ChevronDown, Lock, X, Plus, Trash2 } from 'lucide-react-native';
+import Button from '@components/shared/Button';
+import MachineBadge from '@components/shared/MachineBadge';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import type { MachineInfo } from '@/types/timeline';
+import { PileGroupCard, PileGroupRow } from '@components/plan/generate/steps/pile-assign/PileGroupCard';
 
 export interface ReorderPile {
   id: string;
@@ -55,6 +58,11 @@ export interface ReorderPile {
    *  would have no real effect. Pinned in place: its own arrows are
    *  disabled, and neighbors can't swap past it either. */
   locked?: boolean;
+  /** This pile's machine on the *other* track — e.g. when sequencing a rig,
+   *  its paired crane's machineNo. Every distinct value across the list is
+   *  shown as a badge in the card header instead of on each row, since the
+   *  row's right edge is already the reorder controls. */
+  otherMachineLabel?: string;
 }
 
 interface ReorderPilesOverlayProps {
@@ -103,7 +111,6 @@ export default function ReorderPilesOverlay({
         if (finished) runOnJS(setRendered)(false);
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const cardStyle = useAnimatedStyle(() => ({
@@ -116,27 +123,26 @@ export default function ReorderPilesOverlay({
   }));
 
   // Local draft ordering — only applied to the real plan when Confirm is
-  // tapped. Since the component now stays mounted across opens (see
-  // `rendered` above), it must be explicitly re-seeded from the incoming
-  // `piles` whenever a fresh open happens — a plain useState initializer only
-  // runs once per mount and would otherwise keep showing a stale order.
+  // tapped.
   const [localPiles, setLocalPiles] = useState(piles);
   useEffect(() => {
     if (visible) setLocalPiles(piles);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   if (!rendered) return null;
 
+  const otherMachineLabels = [...new Set(
+    localPiles.map((p) => p.otherMachineLabel).filter((v): v is string => !!v),
+  )];
+  const otherTrack = machine.type === 'RIG' ? 'CRANE' : 'RIG';
+
   function move(index: number, direction: -1 | 1) {
     const target = index + direction;
     if (target < 0 || target >= localPiles.length) return;
-    // A locked pile can't move, and an unlocked neighbor can't swap past
-    // one either — locked piles stay pinned at their current slot.
     if (localPiles[index].locked || localPiles[target].locked) return;
     const reordered = [...localPiles];
     [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
-    setLocalPiles(reordered); // local only — applied to the real plan on Confirm
+    setLocalPiles(reordered);
   }
 
   async function confirm() {
@@ -177,94 +183,96 @@ export default function ReorderPilesOverlay({
           {localPiles.length === 0 ? (
             <Text style={styles.empty}>No piles assigned to this machine.</Text>
           ) : (
-            <FlatList
-              style={styles.list}
-              contentContainerStyle={styles.listWrap}
-              data={localPiles}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item, index }) => {
-                const canMoveUp = index > 0 && !localPiles[index - 1].locked;
-                const canMoveDown = index < localPiles.length - 1 && !localPiles[index + 1].locked;
-                return (
-                <Animated.View layout={LinearTransition.duration(180)}>
-                  <View style={styles.row}>
-                    <View style={styles.indexBadge}>
-                      <Text style={styles.rowIndex}>{index + 1}</Text>
+            <View style={styles.listCard}>
+              <PileGroupCard
+                rigLabel={machine.machineNo}
+                track={machine.type}
+                headerRight={
+                  otherMachineLabels.length > 0 ? (
+                    <View style={styles.headerBadgeRow}>
+                      {otherMachineLabels.map((label) => (
+                        <MachineBadge key={label} track={otherTrack} label={label} />
+                      ))}
                     </View>
-                    <Text style={styles.rowLabel} numberOfLines={1}>
-                      {item.label}
-                    </Text>
-                    {item.locked ? (
-                      <View style={styles.lockedBadge}>
-                        <Lock size={14} color={colors.textSecondary} />
-                      </View>
-                    ) : (
-                      <View style={styles.moveBtns}>
-                        <Pressable
-                          onPress={() => move(index, -1)}
-                          disabled={!canMoveUp}
-                          hitSlop={8}
-                          style={({ pressed }) => [
-                            styles.moveBtn,
-                            !canMoveUp && styles.moveBtnDisabled,
-                            pressed && styles.moveBtnPressed,
-                          ]}
-                        >
-                          <ChevronUp size={18} color={canMoveUp ? colors.accent : colors.textSecondary} />
-                        </Pressable>
-                        <Pressable
-                          onPress={() => move(index, 1)}
-                          disabled={!canMoveDown}
-                          hitSlop={8}
-                          style={({ pressed }) => [
-                            styles.moveBtn,
-                            !canMoveDown && styles.moveBtnDisabled,
-                            pressed && styles.moveBtnPressed,
-                          ]}
-                        >
-                          <ChevronDown
-                            size={18}
-                            color={canMoveDown ? colors.accent : colors.textSecondary}
-                          />
-                        </Pressable>
-                        {onRemove && (
-                          <Pressable
-                            onPress={() => {
-                              setLocalPiles((prev) => prev.filter((p) => p.id !== item.id));
-                              onRemove(item.id);
-                            }}
-                            hitSlop={8}
-                            style={({ pressed }) => [styles.moveBtn, pressed && styles.moveBtnPressed]}
-                          >
-                            <Trash2 size={16} color={colors.danger} />
-                          </Pressable>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                </Animated.View>
-                );
-              }}
-            />
+                  ) : undefined
+                }
+              >
+              <FlatList
+                style={styles.list}
+                contentContainerStyle={styles.listWrap}
+                data={localPiles}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item, index }) => {
+                  const canMoveUp = index > 0 && !localPiles[index - 1].locked;
+                  const canMoveDown = index < localPiles.length - 1 && !localPiles[index + 1].locked;
+                  return (
+                    <Animated.View layout={LinearTransition.duration(180)}>
+                      <PileGroupRow
+                        index={index + 1}
+                        title={item.label}
+                        track={machine.type}
+                        isLast={index === localPiles.length - 1}
+                        right={
+                          item.locked ? (
+                            <View style={styles.lockedBadge}>
+                              <Lock size={14} color={colors.textSecondary} />
+                            </View>
+                          ) : (
+                            <View style={styles.moveBtns}>
+                              <Pressable
+                                onPress={() => move(index, -1)}
+                                disabled={!canMoveUp}
+                                hitSlop={8}
+                                style={({ pressed }) => [
+                                  styles.moveBtn,
+                                  !canMoveUp && styles.moveBtnDisabled,
+                                  pressed && styles.moveBtnPressed,
+                                ]}
+                              >
+                                <ChevronUp size={18} color={canMoveUp ? colors.accent : colors.textSecondary} />
+                              </Pressable>
+                              <Pressable
+                                onPress={() => move(index, 1)}
+                                disabled={!canMoveDown}
+                                hitSlop={8}
+                                style={({ pressed }) => [
+                                  styles.moveBtn,
+                                  !canMoveDown && styles.moveBtnDisabled,
+                                  pressed && styles.moveBtnPressed,
+                                ]}
+                              >
+                                <ChevronDown
+                                  size={18}
+                                  color={canMoveDown ? colors.accent : colors.textSecondary}
+                                />
+                              </Pressable>
+                              {onRemove && (
+                                <Pressable
+                                  onPress={() => {
+                                    setLocalPiles((prev) => prev.filter((p) => p.id !== item.id));
+                                    onRemove(item.id);
+                                  }}
+                                  hitSlop={8}
+                                  style={({ pressed }) => [styles.moveBtn, pressed && styles.moveBtnPressed]}
+                                >
+                                  <Trash2 size={16} color={colors.danger} />
+                                </Pressable>
+                              )}
+                            </View>
+                          )
+                        }
+                      />
+                    </Animated.View>
+                  );
+                }}
+              />
+              </PileGroupCard>
+            </View>
           )}
 
           {localPiles.length > 0 ? (
             <View style={styles.footer}>
-              <Pressable
-                onPress={confirm}
-                disabled={isUpdating}
-                style={({ pressed }) => [
-                  styles.confirmBtn,
-                  isUpdating && styles.confirmBtnDisabled,
-                  pressed && !isUpdating && styles.confirmBtnPressed,
-                ]}
-              >
-                {isUpdating ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <Text style={styles.confirmText}>{confirmLabel}</Text>
-                )}
-              </Pressable>
+              <Button label={confirmLabel} loading={isUpdating} disabled={isUpdating} onPress={confirm} />
             </View>
           ) : null}
         </Animated.View>
@@ -331,39 +339,17 @@ const styles = StyleSheet.create({
     maxHeight: 420,
   },
   listWrap: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingBottom: spacing.xs,
   },
-  row: {
+  // PileGroupCard supplies its own border/radius/background — this wrapper
+  // only insets it from the modal's edges, matching headerRow's padding.
+  listCard: {
+    marginHorizontal: spacing.lg,
+  },
+  headerBadgeRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.glassFill,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  indexBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rowIndex: {
-    ...typography.caption,
-    fontWeight: '800',
-    color: colors.accent,
-  },
-  rowLabel: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    flex: 1,
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
   moveBtns: {
     flexDirection: 'row',
@@ -402,23 +388,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xs,
     paddingBottom: spacing.md,
-  },
-  confirmBtn: {
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  confirmBtnDisabled: {
-    opacity: 0.6,
-  },
-  confirmBtnPressed: {
-    opacity: 0.85,
-  },
-  confirmText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.white,
   },
 });

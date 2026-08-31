@@ -1,9 +1,4 @@
 // src/components/plan/generate/preview/DurationWarningCard.tsx
-//
-// Flags piles that have no matching dimension duration template and are
-// falling back to a 60-minute default per step. Self-contained (not built on
-// the shared Accordion/SummaryAccordion/GlassCard) so it can use a full-bleed,
-// two-tone header band that those shared components don't support.
 
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';

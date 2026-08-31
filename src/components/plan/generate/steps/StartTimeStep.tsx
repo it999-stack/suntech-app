@@ -11,6 +11,7 @@ import { Calendar, Pencil, Clock, Briefcase, HardHat } from 'lucide-react-native
 import GlassCard from '@components/shared/GlassCard';
 import AppModal from '@components/shared/AppModal';
 import PersonnelPickerList, { type SimplePersonnel } from '@components/shared/PersonnelPickerList';
+import RequiredMark from '@components/shared/RequiredMark';
 import TimerSelectMenu from '@/components/shared/NativeTimerSelectMenu';
 import { TimelineStopLog } from '@/components/shared/timeline/MachineStopTimeline';
 import { colors, spacing, radius, typography } from '@/theme/theme';
@@ -72,7 +73,10 @@ function RolePickerCard({
                   : icon}
               </View>
               <View style={styles.startTextWrap}>
-                <Text style={styles.startLabel}>{label}</Text>
+                <Text style={styles.startLabel}>
+                  {label}
+                  {!allowNone && <RequiredMark />}
+                </Text>
                 <Text style={[styles.startValue, isRequired && styles.startValueRequired]}>
                   {selected ? selected.name : 'Not assigned'}
                 </Text>

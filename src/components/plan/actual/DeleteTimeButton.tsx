@@ -5,11 +5,11 @@
 // no time picker — it just confirms via ConfirmDialog then fires a callback.
 
 import React, { useState } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
 import { Trash2 } from 'lucide-react-native';
+import Button from '@components/shared/Button';
 import ConfirmDialog from '@components/shared/ConfirmDialog';
 import { notify } from '@utils/notify';
-import { colors, radius } from '@theme/theme';
+import { colors } from '@theme/theme';
 
 interface Props {
   /** e.g. "start time" / "finish time" — used in the confirmation copy. */
@@ -45,18 +45,19 @@ export default function DeleteTimeButton({ label, cascadeWarning, onConfirm }: P
 
   return (
     <>
-      <Pressable
-        style={styles.btn}
+      <Button
+        icon={Trash2}
+        variant="secondary"
+        size="sm"
+        iconColor={colors.danger}
         disabled={busy}
+        hitSlop={8}
+        accessibilityLabel={`Clear ${label}`}
         onPress={() => {
           setHasOpenedConfirm(true);
           setConfirmOpen(true);
         }}
-        hitSlop={8}
-        accessibilityLabel={`Clear ${label}`}
-      >
-        <Trash2 size={14} color={colors.danger} />
-      </Pressable>
+      />
 
       {hasOpenedConfirm && (
         <ConfirmDialog
@@ -74,14 +75,3 @@ export default function DeleteTimeButton({ label, cascadeWarning, onConfirm }: P
   );
 }
 
-const styles = StyleSheet.create({
-  btn: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

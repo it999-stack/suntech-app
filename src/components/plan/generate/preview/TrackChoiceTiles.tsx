@@ -26,7 +26,7 @@ interface TrackChoiceTilesProps {
 
 /** The single square icon tile — exported so read-only callers that just need to
  * show "which machine" (no RIG/CRANE choice) can render the exact same tile,
- * e.g. CoreTeamAccordion's per-machine header. */
+*/
 export function MachineTrackTile({
   track,
   machineNo,

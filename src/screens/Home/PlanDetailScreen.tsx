@@ -4,11 +4,12 @@
 // Shows the plan window, core team, machine timeline, and per-pile accordions.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { RefreshCw } from 'lucide-react-native';
+import Button from '@components/shared/Button';
 import { colors, spacing, typography } from '@theme/theme';
 import { HomeStackParamList } from '@app-types/navigation';
 import { useAuthStore } from '@store/authStore';
@@ -30,9 +31,9 @@ import { getMachinesByType } from '@repositories/machinesRepository';
 import { getPersonnelByIds } from '@repositories/personnelRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import type { PilingDailyChecklist, PilingSitePersonnel, PilingShiftType, PilingChecklistPile, PilingMachine } from '@db/schema';
-import PilesAccordion from '@components/plan/generate/preview/PilesAccordion';
-import MachineTimelineAccordion from '@components/plan/generate/preview/MachineTimelineAccordion';
-import CoreTeamAccordion from '@components/plan/generate/preview/CoreTeamAccordion';
+import PilesCard from '@components/plan/generate/preview/PilesCard';
+import MachineTimelineCard from '@components/plan/generate/preview/MachineTimelineCard';
+import CoreTeamCard from '@/components/plan/generate/preview/CoreTeamCard';
 import PlanWindowBar from '@components/plan/generate/preview/PlanWindowBar';
 import { fmtPlanTime as formatPlanTime, planEndTime } from '@/types/plan';
 import { type MachineInfo } from '@/types/timeline';
@@ -201,7 +202,7 @@ export default function PlanDetailScreen() {
 
   // Machine info for timeline — id must be the real machine UUID (matching
   // plan_steps.assignedMachineId), not the display machineNo, or
-  // MachineTimelineAccordion can never match a machine to its stops.
+  // MachineTimelineCard can never match a machine to its stops.
   const machineInfos = useMemo<MachineInfo[]>(() => {
     const usedRigIds = new Set(checklistPiles.map((cp) => cp.rigId).filter(Boolean));
     const usedCraneIds = new Set(checklistPiles.map((cp) => cp.craneId).filter(Boolean));
@@ -256,19 +257,18 @@ export default function PlanDetailScreen() {
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
             <Text style={styles.pageTitle}>Plan Detail</Text>
-            <Pressable
-              onPress={handleRefresh}
+            <Button
+              icon={RefreshCw}
+              variant="secondary"
+              size="md"
+              iconColor={colors.accent}
+              loading={refreshing}
               disabled={refreshing}
               hitSlop={10}
-              style={styles.refreshBtn}
               accessibilityLabel="Refresh from server"
-            >
-              {refreshing ? (
-                <ActivityIndicator size="small" color={colors.accent} />
-              ) : (
-                <RefreshCw size={16} color={colors.accent} />
-              )}
-            </Pressable>
+              onPress={handleRefresh}
+              style={styles.refreshBtn}
+            />
           </View>
           {refreshError && <Text style={styles.syncTextError}>{refreshError}</Text>}
         </View>
@@ -282,16 +282,15 @@ export default function PlanDetailScreen() {
           />
 
           {/* ── Core Team (Leadership / Shift Incharge / Machine Teams) ──────── */}
-          <CoreTeamAccordion
+          <CoreTeamCard
             leadership={leadershipDetail}
             shiftIncharge={shiftInchargeDetail}
             machineTeams={machineTeams}
-            defaultOpen
           />
 
           {/* ── Visual timeline ─────────────────────────────────────────────── */}
           {checklist?.planStartTime && endIso && planSteps.length > 0 && (
-            <MachineTimelineAccordion
+            <MachineTimelineCard
               windowStart={new Date(checklist.planStartTime)}
               windowEnd={new Date(endIso)}
               steps={planSteps}
@@ -302,7 +301,7 @@ export default function PlanDetailScreen() {
           )}
 
           {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
-          <PilesAccordion piles={detailPiles} planSteps={planSteps} actualSteps={actualSteps} />
+          <PilesCard piles={detailPiles} planSteps={planSteps} actualSteps={actualSteps} />
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -332,12 +331,8 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   refreshBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
     backgroundColor: 'rgba(28,28,46,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 0,
   },
   syncTextError: {
     ...typography.caption,

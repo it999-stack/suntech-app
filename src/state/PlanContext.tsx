@@ -128,7 +128,7 @@ export type EditPlanSummary = {
 /** One step's real computed schedule from previewEditPlanMidDay — only
  * present for steps that actually got a time; a pile's other applicable
  * steps (per its own totalApplicableSteps) simply don't appear here, same
- * "missing = cut off by the plan window" convention PilesAccordion already
+ * "missing = cut off by the plan window" convention PilesCard already
  * uses for the generation wizard's live preview. */
 export type EditPlanPreviewStep = {
   stepId: string;

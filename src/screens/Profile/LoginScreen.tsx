@@ -8,7 +8,6 @@ import {
   StyleSheet,
   TextInput,
   Pressable,
-  ActivityIndicator,
   ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +17,7 @@ import { Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react-native';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { useAuthStore } from '@store/authStore';
 import KeyboardAwareScreen from '@/components/shared/KeyboardAwareScreen';
+import Button from '@/components/shared/Button';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -103,20 +103,13 @@ export default function LoginScreen() {
                 </View>
               )}
 
-              <Pressable
-                onPress={handleLogin}
+              <Button
+                label="Sign In"
+                loading={isLoggingIn}
                 disabled={isLoggingIn}
-                style={({ pressed }) => [
-                  styles.button,
-                  (pressed || isLoggingIn) && styles.buttonPressed,
-                ]}
-              >
-                {isLoggingIn ? (
-                  <ActivityIndicator size="small" color={colors.textInverse} />
-                ) : (
-                  <Text style={styles.buttonText}>Sign In</Text>
-                )}
-              </Pressable>
+                onPress={handleLogin}
+                style={styles.button}
+              />
             </View>
           </ScrollView>
         </KeyboardAwareScreen>
@@ -231,10 +224,6 @@ const styles = StyleSheet.create({
   button: {
     width: '100%',
     backgroundColor: colors.warning,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginTop: spacing.lg,
     height: 52,
     shadowColor: colors.warning,
@@ -242,12 +231,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 4,
-  },
-  buttonPressed: {
-    opacity: 0.85,
-  },
-  buttonText: {
-    ...typography.buttonLabel,
-    color: colors.textInverse,
   },
 });

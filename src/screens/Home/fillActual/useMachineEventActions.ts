@@ -82,10 +82,6 @@ export function useMachineEventActions(args: {
 
       if (eventType === 'IDLE_END') {
         const open = openIdleByMachineId.get(machineId);
-        // IDLE_START (what `open` always is here) is always pile-scoped —
-        // only BREAKDOWN/RESUMED can be a pile-less fleet report (see
-        // reportMachineEvent) — but pileId's type is nullable at the schema
-        // level, so this still needs a guard.
         checklistPileId = open?.pileId ? checklistPileIdByPileId.get(open.pileId) : undefined;
         stepId = open?.stepId ?? undefined;
       } else {

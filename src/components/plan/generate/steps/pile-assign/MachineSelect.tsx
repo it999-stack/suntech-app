@@ -9,6 +9,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Check, Drill, Forklift, Wind, X, type LucideIcon } from 'lucide-react-native';
+import Button from '@components/shared/Button';
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import type { SimpleMachine } from './types';
 
@@ -61,9 +62,16 @@ export default function MachineSelect({ label, kind, options, valueId, onSelect,
                 </Text>
                 {active && (
                   onClear ? (
-                    <Pressable hitSlop={10} style={styles.unassignBtn} onPress={onClear}>
-                      <X size={16} color={colors.danger} />
-                    </Pressable>
+                    <Button
+                      icon={X}
+                      variant="secondary"
+                      size="sm"
+                      shape="circle"
+                      iconColor={colors.danger}
+                      hitSlop={10}
+                      style={styles.unassignBtn}
+                      onPress={onClear}
+                    />
                   ) : (
                     <Check size={18} color={kindColor} />
                   )
@@ -99,12 +107,8 @@ const styles = StyleSheet.create({
   rowText: { ...typography.body, fontSize: 13, fontWeight: '700', flex: 1 },
   rowTextInactive: { color: colors.textSecondary },
   unassignBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: colors.dangerSoft,
+    borderWidth: 0,
   },
   emptyText: { ...typography.caption, color: colors.textSecondary, fontStyle: 'italic' },
 });

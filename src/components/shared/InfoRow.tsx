@@ -2,8 +2,8 @@
 //
 // Generic full-width row: a leading visual (avatar/icon), a title + caption
 // pair, and an optional trailing element — tappable when `onPress` is given.
-// Extracted from CoreTeamAccordion's TeamPersonRow so machine rows
-// (PilesAccordion) and personnel rows (CoreTeamAccordion) share one shell
+// Extracted from CoreTeamCard's TeamPersonRow so machine rows
+// (PilesCard) and personnel rows (CoreTeamCard) share one shell
 // instead of two near-duplicate implementations.
 
 import React from 'react';

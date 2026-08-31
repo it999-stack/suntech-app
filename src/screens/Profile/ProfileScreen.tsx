@@ -1,7 +1,7 @@
 // src/screens/ProfileScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react-native';
 
 import GlassCard from '@components/shared/GlassCard';
+import Button from '@components/shared/Button';
 import CoordinatorCallModal from '@components/shared/CoordinatorCallModal';
 import ConfirmDialog from '@components/shared/ConfirmDialog';
 import { notify } from '@utils/notify';
@@ -206,17 +207,14 @@ export default function ProfileScreen() {
                   )}
                 </View>
               </View>
-              <Pressable
+              <Button
+                size="sm"
+                label="Sync now"
+                icon={RefreshCw}
+                loading={isSyncing}
                 onPress={handleSync}
-                disabled={isSyncing}
-                style={[styles.syncButton, isSyncing && styles.syncButtonDisabled]}
-              >
-                {isSyncing ? (
-                  <ActivityIndicator size="small" color={colors.textInverse} />
-                ) : (
-                  <Text style={styles.syncButtonText}>Sync now</Text>
-                )}
-              </Pressable>
+                style={styles.syncButton}
+              />
             </View>
           </GlassCard>
 
@@ -377,22 +375,7 @@ const styles = StyleSheet.create({
     color: colors.accent,
     marginTop: 2,
   },
-  syncButton: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.sm,
-    backgroundColor: colors.accent,
-    minWidth: 80,
-    alignItems: 'center',
-  },
-  syncButtonDisabled: {
-    opacity: 0.6,
-  },
-  syncButtonText: {
-    ...typography.caption,
-    fontWeight: '600',
-    color: colors.textInverse,
-  },
+  syncButton: { minWidth: 90 },
 
   pressed: {
     opacity: 0.7,

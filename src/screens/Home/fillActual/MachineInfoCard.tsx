@@ -6,13 +6,14 @@
 // toggle an idle session without leaving the Log Actuals screen.
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { ArrowDownUp, Coffee, AlertTriangle, Play, Clock3, CalendarClock } from 'lucide-react-native';
 import { colors, spacing, typography, radius } from '@theme/theme';
 import { formatElapsedHMS, formatTime } from '@utils/formatTime';
 import { TRACK_META } from '@utils/helpers';
 import { useElapsedSeconds } from '@hooks/useElapsedSeconds';
 import GlassCard from '@components/shared/GlassCard';
+import Button from '@components/shared/Button';
 import MachineActionPill from './MachineActionPill';
 import type { OpenIdleSession } from './useMachineEvents';
 import type { MachineBadge } from './useMachinePages';
@@ -85,10 +86,7 @@ export default function MachineInfoCard({
             </View>
           </View>
         </View>
-        <Pressable style={styles.reorderPill} onPress={onEditSequence} hitSlop={spacing.sm}>
-          <ArrowDownUp size={14} color={colors.textPrimary} />
-          <Text style={styles.reorderPillText}>Reorder</Text>
-        </Pressable>
+        <Button label="Reorder" icon={ArrowDownUp} variant="secondary" size="sm" onPress={onEditSequence} />
       </View>
 
       <View style={styles.divider} />
@@ -195,22 +193,6 @@ const styles = StyleSheet.create({
   machineSubStatusText: {
     ...typography.caption,
     color: colors.textSecondary,
-  },
-  reorderPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    backgroundColor: colors.glassFillStrong,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: spacing.xs + 2,
-  },
-  reorderPillText: {
-    ...typography.label,
-    fontWeight: '700',
-    color: colors.textPrimary,
   },
   idleTimerBox: {
     flexDirection: 'row',

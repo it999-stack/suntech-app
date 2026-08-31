@@ -5,9 +5,10 @@
 // short of force-closing.
 
 import { Component, type ReactNode } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import Button from '@components/shared/Button';
+import { colors, spacing, typography } from '@theme/theme';
 
 interface Props {
   children: ReactNode;
@@ -45,9 +46,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <Text style={styles.message}>
               Please try again. If this keeps happening, restart the app.
             </Text>
-            <Pressable style={styles.retryBtn} onPress={this.resetError}>
-              <Text style={styles.retryBtnText}>Try again</Text>
-            </Pressable>
+            <Button label="Try again" onPress={this.resetError} style={styles.retryBtn} />
           </View>
         </LinearGradient>
       );
@@ -77,15 +76,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  retryBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xl,
-    marginTop: spacing.sm,
-  },
-  retryBtnText: {
-    ...typography.buttonLabel,
-    color: colors.textInverse,
-  },
+  retryBtn: { marginTop: spacing.sm },
 });

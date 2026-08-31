@@ -14,6 +14,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, Keyboard, Platform } from 'react-native';
 import { Check } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
+import Button from '@components/shared/Button';
 import type { PilContractor } from '@db/schema';
 import type { PileMeasurementFields } from '@app-types/plan';
 import { notify } from '@utils/notify';
@@ -244,9 +245,7 @@ export default function MeasurementFieldsModal({
           </View>
         ))}
 
-        <Pressable style={[styles.saveBtn, saving && styles.saveBtnDisabled]} disabled={saving} onPress={handleSave}>
-          <Text style={styles.saveBtnText}>Save Measurements</Text>
-        </Pressable>
+        <Button label="Save Measurements" icon={Check} disabled={saving} onPress={handleSave} style={styles.saveBtn} />
       </View>
     </AppModal>
   );
@@ -308,13 +307,5 @@ const styles = StyleSheet.create({
   contractorRowText: { ...typography.body, color: colors.textPrimary },
   contractorRowTextActive: { color: colors.accent, fontWeight: '700' },
   emptyText: { ...typography.caption, color: colors.textSecondary, fontStyle: 'italic', padding: spacing.md },
-  saveBtn: {
-    marginTop: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.sm + 2,
-    alignItems: 'center',
-  },
-  saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
+  saveBtn: { marginTop: spacing.sm },
 });

@@ -1,17 +1,12 @@
 // src/components/shared/PersonnelPickerList.tsx
-//
-// Shared "pick one person from a filtered list" body, used inside an
-// AppModal by StartTimeStep (PM/Planning Engineer), MachineSelectStep
-// (operator), ShiftInchargeStep, and TeamAssignStep (engineer/supervisor).
-// Extracted from the original SupervisorStep, which had its own
-// file-local copy of this exact list/row pair.
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { User, X } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { formatDesignation, type SimplePersonnel } from '@/utils/personnelRoles';
 import Badge from './Badge';
+import Button from './Button';
 
 export type { SimplePersonnel };
 
@@ -25,6 +20,7 @@ function PersonnelRow({
   inactive,
   onPress,
   onUnassign,
+  rowRef,
 }: {
   label: string;
   sublabel?: string;
@@ -33,9 +29,11 @@ function PersonnelRow({
   inactive?: boolean;
   onPress: () => void;
   onUnassign?: () => void;
+  rowRef?: (el: View | null) => void;
 }) {
   return (
     <Pressable
+      ref={rowRef}
       style={[styles.personRow, active && styles.personRowActive, disabled && styles.personRowDisabled]}
       onPress={disabled ? undefined : onPress}
       disabled={disabled}
@@ -53,9 +51,16 @@ function PersonnelRow({
         ) : null}
       </View>
       {active && onUnassign ? (
-        <Pressable hitSlop={10} style={styles.unassignBtn} onPress={onUnassign}>
-          <X size={16} color={colors.danger} />
-        </Pressable>
+        <Button
+          icon={X}
+          variant="secondary"
+          size="sm"
+          shape="circle"
+          iconColor={colors.danger}
+          hitSlop={10}
+          style={styles.unassignBtn}
+          onPress={onUnassign}
+        />
       ) : null}
     </Pressable>
   );
@@ -84,12 +89,35 @@ export default function PersonnelPickerList({
   maxHeight = LIST_MAX_HEIGHT,
   disabledDetails,
 }: PersonnelPickerListProps) {
+  const scrollRef = useRef<ScrollView>(null);
+  const selectedRowRef = useRef<View | null>(null);
+
+  // On open, if a person is already selected, bring their row into view —
+  // it may be scrolled off past the visible maxHeight in a long list.
+  useEffect(() => {
+    if (!selectedId) return;
+    requestAnimationFrame(() => {
+      const scrollView = scrollRef.current as any;
+      const node = selectedRowRef.current as any;
+      if (!scrollView || !node) return;
+      scrollView.measure((_sx: number, _sy: number, _sw: number, viewportHeight: number, _sPageX: number, scrollPageY: number) => {
+        node.measure((_x: number, _y: number, _w: number, rowHeight: number, _pageX: number, pageY: number) => {
+          const rowTop = pageY - scrollPageY;
+          const centered = rowTop - viewportHeight / 2 + rowHeight / 2;
+          scrollView.scrollTo({ y: Math.max(centered, 0), animated: false });
+        });
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!personnel.length) {
     return <Text style={styles.emptyText}>{emptyLabel}</Text>;
   }
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={[styles.list, { maxHeight }]}
       contentContainerStyle={styles.listContent}
       nestedScrollEnabled
@@ -98,6 +126,7 @@ export default function PersonnelPickerList({
       {personnel.map((item, idx) => (
         <React.Fragment key={item.id}>
           <PersonnelRow
+            rowRef={item.id === selectedId ? (el) => { selectedRowRef.current = el; } : undefined}
             label={item.name}
             sublabel={disabledDetails?.get(item.id) ?? formatDesignation(item.designation)}
             active={selectedId === item.id}
@@ -162,11 +191,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   unassignBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: colors.dangerSoft,
+    borderWidth: 0,
   },
 });

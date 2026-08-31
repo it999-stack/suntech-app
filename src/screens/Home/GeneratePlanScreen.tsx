@@ -8,7 +8,6 @@ import {
   View,
   Text,
   StyleSheet,
-  Pressable,
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
@@ -18,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import NextStepFab from '@components/plan/generate/NextStepFab';
 import ReorderPilesOverlay from '@components/plan/generate/preview/ReorderPilesOverlay';
+import Button from '@components/shared/Button';
 
 import { colors, spacing, radius, typography, shadow } from '@/theme/theme';
 import { usePlan, type PileAssignmentInput, type GeneratePlanInput } from '@state/PlanContext';
@@ -47,6 +47,7 @@ import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
 import { useGeneratePlanData } from './generatePlan/useGeneratePlanData';
 import { useEditModeSeed } from './generatePlan/useEditModeSeed';
 import { useRoleDefaultsSeed } from './generatePlan/useRoleDefaultsSeed';
+import { useMachineStatusGuard } from './generatePlan/useMachineStatusGuard';
 import { usePilePreselection } from './generatePlan/usePilePreselection';
 import { usePlanPreview } from './generatePlan/usePlanPreview';
 import { usePreviewReorder } from './generatePlan/usePreviewReorder';
@@ -99,6 +100,9 @@ export default function GeneratePlanScreen() {
   }
 
   const [step, setStep] = useState<Step>('start');
+  // Whether PileAssignStep currently has piles checkbox-selected — while true,
+  // it shows BulkAssignBar instead of the shared NextStepFab below.
+  const [pilesHasSelection, setPilesHasSelection] = useState(false);
 
   // Seed planStartTime's time-of-day from the site's primary (earliest-start)
   // shift once shift data loads, instead of the generic 8:00 AM default —
@@ -219,6 +223,8 @@ export default function GeneratePlanScreen() {
 
   useRoleDefaultsSeed({ dataLoading, isEditMode, rigs, cranes, roleDefaults, personnel: simplePersonnel, setDraft });
 
+  useMachineStatusGuard({ dataLoading, editSeeding, rigs, cranes, draft, setDraft });
+
   usePilePreselection({ step, draft, setDraft, pendingWorkItems, steps });
 
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
@@ -226,7 +232,7 @@ export default function GeneratePlanScreen() {
   const resumeStepRef = useRef<ResumeConfirmStepHandle>(null);
   const { scrollViewRef, scrollYRef, onScroll, scrollEventThrottle } = useTrackedScrollView();
 
-  function goNext() {
+  async function goNext() {
     if (step === 'team' || step === 'teamNight') {
       const teamComplete = teamStepRef.current ? teamStepRef.current.focusFirstMissing() : canContinue;
       if (!teamComplete) return;
@@ -247,6 +253,16 @@ export default function GeneratePlanScreen() {
       return;
     }
 
+    // Last step before Preview — precompute the plan while still here (FAB
+    // shows its own spinner the whole time) so Preview opens already
+    // computed, instead of navigating first and showing a loading screen
+    // there. See usePlanPreview's precomputePreview doc comment.
+    if (step === 'steps') {
+      await precomputePreview();
+      setStep('preview');
+      return;
+    }
+
     const idx = STEP_ORDER.indexOf(step);
     setStep(STEP_ORDER[Math.min(idx + 1, STEP_ORDER.length - 1)]);
   }
@@ -261,7 +277,7 @@ export default function GeneratePlanScreen() {
   const {
     pendingTrackOverrides, setPendingTrackOverrides,
     previewSteps, previewWarningPileIds, previewWindowsByMachineId,
-    previewRecomputing, previewLoading, planReferenceData,
+    previewRecomputing, previewLoading, planReferenceData, precomputePreview,
   } = usePlanPreview({ step, draft, updateDraft, piles, siteId, selectedPlanPiles, steps });
 
   // Where a resume step effectively starts in the new plan (after skipping any opening
@@ -436,8 +452,7 @@ export default function GeneratePlanScreen() {
                 locations={selectedLocations.map((l) => ({ id: l.id, name: l.name }))}
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
-                onContinue={goNext}
-                continueDisabled={!canContinue || isGenerating}
+                onSelectionChange={setPilesHasSelection}
               />
             ) : (
               <ResumeConfirmStep
@@ -455,6 +470,7 @@ export default function GeneratePlanScreen() {
         ) : (
           <ScrollView
             ref={scrollViewRef}
+            style={styles.flex}
             onScroll={onScroll}
             scrollEventThrottle={scrollEventThrottle}
             contentContainerStyle={styles.scrollContent}
@@ -518,7 +534,7 @@ export default function GeneratePlanScreen() {
                 pendingTrackOverrides={pendingTrackOverrides}
                 onPendingTrackOverridesChange={setPendingTrackOverrides}
                 planSteps={previewSteps}
-                isLoading={previewRecomputing}
+                isLoading={previewRecomputing || (isGenerating && !isEditMode)}
                 allSteps={steps}
                 windowsByMachineId={previewWindowsByMachineId}
                 piles={builtPreviewPiles}
@@ -542,30 +558,25 @@ export default function GeneratePlanScreen() {
 
         {/* Every step but Preview: a floating next-step chevron instead of a
             full-width "Continue" bar — Preview's own button below is a real
-            submit action (Generate Plan / Save Changes), not just "next". */}
-        {step !== 'piles' && step !== 'preview' && (
+            submit action (Generate Plan / Save Changes), not just "next".
+            Rendered here as the single shared instance for every step
+            (including Piles, unless it's showing BulkAssignBar instead) so
+            its screen position never drifts between steps. */}
+        {step !== 'preview' && !(step === 'piles' && pilesHasSelection) && (
           <NextStepFab
             onPress={goNext}
-            disabled={(step === 'team' || step === 'teamNight' || step === 'resume') ? isGenerating : (!canContinue || isGenerating)}
+            disabled={(step === 'team' || step === 'teamNight' || step === 'resume') ? isGenerating : (!canContinue || isGenerating || (step === 'steps' && previewLoading))}
+            loading={step === 'steps' && previewLoading}
           />
         )}
 
         {step === 'preview' && (
           <View style={styles.footer}>
-            <Pressable
-              disabled={!canContinue || isGenerating || previewRecomputing}
+            <Button
+              label={isEditMode ? 'Save Changes' : 'Generate Plan'}
               onPress={goNext}
-              style={[
-                styles.continueBtn,
-                (!canContinue || isGenerating || previewRecomputing) && styles.continueBtnDisabled,
-              ]}
-            >
-              {(isGenerating && !isEditMode) || previewRecomputing ? (
-                <ActivityIndicator color={colors.white} />
-              ) : (
-                <Text style={styles.continueText}>{isEditMode ? 'Save Changes' : 'Generate Plan'}</Text>
-              )}
-            </Pressable>
+              disabled={!canContinue || isGenerating || previewRecomputing}
+            />
           </View>
         )}
 
@@ -598,6 +609,7 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   loadingText: { ...typography.body, color: colors.textSecondary, marginTop: spacing.md },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xxxl,
@@ -612,15 +624,6 @@ const styles = StyleSheet.create({
     zIndex: 10,
     elevation: 10,
   },
-  continueBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    ...shadow.soft,
-  },
-  continueBtnDisabled: { opacity: 0.4 },
-  continueText: { ...typography.body, fontWeight: '700', color: colors.white },
   errorText: {
     ...typography.caption,
     color: colors.danger,

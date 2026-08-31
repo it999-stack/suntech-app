@@ -1,12 +1,14 @@
 // src/components/plan/actual/StepTimeControl.tsx
 
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
+import { Play, Flag } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
+import Button from '@components/shared/Button';
 import { resolveOvernightDate, toLocalIsoString, startOfDay, endOfDay } from '@utils/formatTime';
 import { validateCandidateTime, type ConflictNotice } from '@utils/timeValidation';
 import { notify } from '@utils/notify';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { spacing } from '@theme/theme';
 
 type Mode = 'start' | 'finish';
 
@@ -126,8 +128,9 @@ export default function StepTimeControl({
   return (
     <>
         <View style={styles.wrap}>
-          <Pressable
-            style={[styles.actionBtn, styles.primaryBtn, saving && styles.actionBtnDisabled]}
+          <Button
+            label={mode === 'start' ? 'Fill start time' : 'Fill finish time'}
+            icon={mode === 'start' ? Play : Flag}
             disabled={saving}
             onPress={() => {
               if (blocked) {
@@ -138,9 +141,7 @@ export default function StepTimeControl({
               setHasOpenedPicker(true);
               setPickerOpen(true);
             }}
-          >
-            <Text style={styles.primaryBtnText}>{mode === 'start' ? 'Fill start time' : 'Fill finish time'}</Text>
-          </Pressable>
+          />
         </View>
 
         {hasOpenedPicker && (
@@ -170,12 +171,4 @@ export default function StepTimeControl({
 
 const styles = StyleSheet.create({
   wrap: { marginTop: spacing.sm },
-  actionBtn: {
-    borderRadius: radius.sm,
-    paddingVertical: spacing.sm + 2,
-    alignItems: 'center',
-  },
-  actionBtnDisabled: { opacity: 0.5 },
-  primaryBtn: { backgroundColor: colors.accent },
-  primaryBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
 });

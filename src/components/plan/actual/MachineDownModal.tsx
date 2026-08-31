@@ -24,7 +24,7 @@ import { toLocalIsoString, formatElapsedHMS, formatTimeWithDay } from '@utils/fo
 import { useElapsedSeconds } from '@hooks/useElapsedSeconds';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
 import NotesField from './machineEvents/NotesField';
-import SaveEventButton from './machineEvents/SaveEventButton';
+import Button from '@components/shared/Button';
 import { useSaveMachineEvent } from './machineEvents/useSaveMachineEvent';
 import { findOpenSession } from './machineEvents/idleSession';
 import type { MachineEventMachine, Track } from './machineEvents/types';
@@ -139,13 +139,14 @@ export default function MachineDownModal({
             required={screen === 'BREAKDOWN'}
           />
 
-          <SaveEventButton
-            saving={saving}
-            canSave={canSave}
+          <Button
+            loading={saving}
+            disabled={!canSave}
             onPress={handleSave}
             label={screen === 'BREAKDOWN' ? 'Report breakdown' : 'Mark resumed'}
             variant={screen === 'BREAKDOWN' ? 'danger' : 'success'}
             icon={screen === 'BREAKDOWN' ? AlertTriangle : CheckCircle2}
+            style={styles.saveBtn}
           />
         </View>
       </View>
@@ -194,4 +195,5 @@ const styles = StyleSheet.create({
   fieldsWrap: {
     alignSelf: 'stretch',
   },
+  saveBtn: { marginTop: spacing.md },
 });

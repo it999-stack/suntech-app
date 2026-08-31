@@ -280,3 +280,51 @@ export function planEndTime(startIso: string): string {
   d.setTime(d.getTime() + 24 * 60 * 60 * 1000);
   return toLocalIsoString(d);
 }
+
+/** Fully removes a machine from the draft: drops it from the active list,
+ * unassigns it from any pile pointing at it, and strips its role rows from
+ * both shifts' teams. The single source of truth for "take this machine out
+ * of the plan" — used both by MachineSelectStep's manual deselect and by
+ * useMachineStatusGuard's automatic prune of a machine that's no longer
+ * plannable (however it got into the draft — role defaults, edit-mode
+ * seeding, or a status change mid-session). */
+export function removeMachineFromDraft(
+  draft: PlanDraft,
+  machineId: string,
+  type: 'RIG' | 'CRANE',
+): Partial<PlanDraft> {
+  const isRig = type === 'RIG';
+  const activeIds = isRig ? draft.activeRigIds : draft.activeCraneIds;
+
+  const assignments = { ...draft.assignments };
+  let assignmentsChanged = false;
+  for (const [pileId, a] of Object.entries(assignments)) {
+    if (isRig && a.rig === machineId) {
+      // Rig is mandatory — falls back to fully unassigned rather than
+      // keeping a crane-only half-pair.
+      assignments[pileId] = { rig: '', crane: undefined };
+      assignmentsChanged = true;
+    } else if (!isRig && a.crane === machineId) {
+      // Crane is optional — the pile just becomes rig-only.
+      assignments[pileId] = { ...a, crane: undefined };
+      assignmentsChanged = true;
+    }
+  }
+
+  function stripFromTeam(team: ShiftTeamAssignment): ShiftTeamAssignment {
+    const { [machineId]: _op, ...operatorByMachineId } = team.operatorByMachineId;
+    const { [machineId]: _eng, ...engineerByMachineId } = team.engineerByMachineId;
+    const { [machineId]: _sup, ...supervisorByMachineId } = team.supervisorByMachineId;
+    return { ...team, operatorByMachineId, engineerByMachineId, supervisorByMachineId };
+  }
+
+  return {
+    [isRig ? 'activeRigIds' : 'activeCraneIds']: activeIds.filter((x) => x !== machineId),
+    assignments: assignmentsChanged ? assignments : draft.assignments,
+    checklistPersonnel: {
+      ...draft.checklistPersonnel,
+      shift1: stripFromTeam(draft.checklistPersonnel.shift1),
+      shift2: stripFromTeam(draft.checklistPersonnel.shift2),
+    },
+  };
+}

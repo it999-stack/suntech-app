@@ -4,9 +4,10 @@
 // and an optional action button (e.g. "Go to Profile").
 
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import GlassCard from '@/components/shared/GlassCard';
+import Button from '@/components/shared/Button';
 import { colors, spacing, typography, radius } from '@/theme/theme';
 
 interface EmptyStateProps {
@@ -35,12 +36,7 @@ export default function EmptyState({
       {message ? <Text style={styles.message}>{message}</Text> : null}
 
       {actionLabel && onAction ? (
-        <Pressable
-          onPress={onAction}
-          style={({ pressed }) => [styles.actionBtn, pressed && styles.actionBtnPressed]}
-        >
-          <Text style={styles.actionLabel}>{actionLabel}</Text>
-        </Pressable>
+        <Button label={actionLabel} onPress={onAction} style={styles.actionBtn} />
       ) : null}
     </View>
   );
@@ -85,17 +81,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     lineHeight: 18,
   },
-  actionBtn: {
-    marginTop: spacing.md,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.lg,
-  },
-  actionBtnPressed: { opacity: 0.85 },
-  actionLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.textInverse,
-  },
+  actionBtn: { marginTop: spacing.md },
 });

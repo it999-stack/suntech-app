@@ -1,12 +1,8 @@
 // src/components/plan/generate/steps/LocationSelectStep.tsx
 
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import {
-  Check,
   MapPin,
-  Users,
-  Square,
-  SquareCheck,
   Building2,
   Warehouse,
   Factory,
@@ -19,7 +15,8 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import GlassCard from '@/components/shared/GlassCard';
 import EmptyState from '@/components/shared/EmptyState';
-import { colors, spacing, radius, typography } from '@/theme/theme';
+import TileGroup, { type TileGroupOption } from '@components/shared/TileGroup';
+import { colors, spacing, typography } from '@/theme/theme';
 import type { PlanDraft } from '@/types/plan';
 
 export type LocationOption = {
@@ -84,12 +81,15 @@ export default function LocationSelectStep({ draft, onUpdate, locations }: Locat
     );
   }
 
-  const selectedCount = draft.locationIds.length;
-  const allSelected = selectedCount === locations.length;
-
-  function toggleSelectAll(): void {
-    applyLocationIds(allSelected ? [] : locations.map((l) => l.id));
-  }
+  // Same row design as MachineSelectStep's tiles — icon chip + label, colored
+  // border only once actually selected (see TileSelect.showSelected).
+  const locationOptions: TileGroupOption[] = locations.map((location) => ({
+    id: location.id,
+    label: location.code ? `${location.name} (${location.code})` : location.name,
+    icon: pickLocationIcon(location.id),
+    color: RIG_COLOR,
+    soft: RIG_SOFT,
+  }));
 
   return (
     <GlassCard>
@@ -105,53 +105,7 @@ export default function LocationSelectStep({ draft, onUpdate, locations }: Locat
           locations will be available in the next step.
         </Text>
 
-        <View style={styles.summaryBar}>
-          <View style={styles.summaryLeft}>
-            <Users size={16} color={RIG_COLOR} />
-            <Text style={styles.summaryCountText}>
-              {selectedCount} {selectedCount === 1 ? 'location' : 'locations'} selected
-            </Text>
-          </View>
-          <Pressable style={styles.selectAllBtn} onPress={toggleSelectAll} hitSlop={8}>
-            <Text style={styles.selectAllText}>{allSelected ? 'Deselect all' : 'Select all'}</Text>
-            {allSelected ? (
-              <SquareCheck size={18} color={RIG_COLOR} />
-            ) : (
-              <Square size={18} color={RIG_COLOR} />
-            )}
-          </Pressable>
-        </View>
-
-        {locations.map((location) => {
-          const selected = selectedSet.has(location.id);
-          const LocationIcon = pickLocationIcon(location.id);
-          return (
-            <Pressable
-              key={location.id}
-              style={[styles.locationCard, selected && styles.locationCardSelected]}
-              onPress={() => toggleLocation(location.id)}
-            >
-              <View style={[styles.checkbox, selected && styles.checkboxChecked]}>
-                {selected ? <Check size={14} color={colors.white} /> : null}
-              </View>
-              <View style={styles.iconCircle}>
-                <LocationIcon size={18} color={RIG_COLOR} />
-              </View>
-              <View style={styles.locationBody}>
-                <Text style={styles.locationName}>{location.name}</Text>
-                {location.code ? <Text style={styles.locationCode}>{location.code}</Text> : null}
-              </View>
-              {selected && (
-                <View style={styles.selectedPill}>
-                  <View style={styles.selectedPillIconWrap}>
-                    <Check size={10} color={colors.white} />
-                  </View>
-                  <Text style={styles.selectedPillText}>Selected</Text>
-                </View>
-              )}
-            </Pressable>
-          );
-        })}
+        <TileGroup options={locationOptions} selectedIds={draft.locationIds} onToggle={toggleLocation} columns={1} />
       </View>
     </GlassCard>
   );
@@ -169,75 +123,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   title: { ...typography.pageTitle, color: colors.textPrimary },
-  description: { ...typography.body, color: colors.textSecondary },
-
-  summaryBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: RIG_SOFT,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.sm,
-    marginTop: spacing.md,
-    marginBottom: spacing.md,
-  },
-  summaryLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  summaryCountText: { ...typography.body, fontWeight: '700', color: RIG_COLOR },
-  selectAllBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  selectAllText: { ...typography.caption, fontWeight: '700', color: RIG_COLOR },
-
-  locationCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.white,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radius.lg,
-    padding: spacing.sm + 2,
-    marginBottom: spacing.sm,
-  },
-  locationCardSelected: { backgroundColor: RIG_SOFT, borderColor: RIG_COLOR },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    borderColor: 'rgba(28,28,46,0.3)',
-    backgroundColor: colors.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: { backgroundColor: RIG_COLOR, borderColor: RIG_COLOR },
-  iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: RIG_SOFT,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  locationBody: { flex: 1 },
-  locationName: { ...typography.cardTitle, color: colors.textPrimary },
-  locationCode: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-
-  selectedPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: colors.white,
-    borderRadius: radius.pill,
-    paddingVertical: 4,
-    paddingHorizontal: spacing.sm,
-  },
-  selectedPillIconWrap: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: RIG_COLOR,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  selectedPillText: { ...typography.caption, fontWeight: '700', color: RIG_COLOR },
+  description: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.md },
 });

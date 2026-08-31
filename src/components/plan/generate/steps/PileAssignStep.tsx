@@ -1,10 +1,12 @@
 // src/components/plan/generate/steps/PileAssignStep.tsx
 //
-// Step 4 — pile selection + per-pile rig/crane assignment. Owns its own
-// bottom bar: shows the wizard's floating next-step chevron (NextStepFab) by
-// default, and swaps it for the bulk assign/unassign bar whenever piles are
-// checkbox-selected (GeneratePlanScreen skips its shared footer for this
-// step so this bar lands in the exact same screen position).
+// Step 4 — pile selection + per-pile rig/crane assignment. Doesn't render its
+// own next-step chevron — GeneratePlanScreen's shared NextStepFab covers this
+// step too now (single render call site for every step, so the button's
+// screen position can never drift between steps). Instead this component
+// swaps in the bulk assign/unassign bar whenever piles are checkbox-selected,
+// and reports that via `onSelectionChange` so the parent knows to hide its
+// shared FAB for the moment.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
@@ -15,12 +17,12 @@ import IndexTable from '@components/shared/IndexTable';
 import Pager from '@components/shared/Pager';
 import AppModal from '@components/shared/AppModal';
 import MachineBadge from '@components/shared/MachineBadge';
-import NextStepFab from '@components/plan/generate/NextStepFab';
 import { useAppConfig } from '@state/AppConfigContext';
 
 import PileListToolbar, { type LocationFilterOption } from './pile-assign/PileListToolbar';
 import BulkAssignBar from './pile-assign/BulkAssignBar';
 import { buildColumns } from './pile-assign/pileTableColumns';
+import { PileGroupCard, PileGroupRow } from './pile-assign/PileGroupCard';
 import { ALL_LOCATIONS_ID, type EligiblePile, type MachineKind, type PileFilter, type SimpleMachine } from './pile-assign/types';
 
 const ACCENT_SOLID = '#5B5FEF';
@@ -36,8 +38,9 @@ interface PileAssignStepProps {
   locations?: LocationFilterOption[];
   activeRigs?: SimpleMachine[];
   activeCranes?: SimpleMachine[];
-  onContinue: () => void;
-  continueDisabled: boolean;
+  /** Called whenever checkbox-selection state flips empty/non-empty, so the parent
+   * knows whether to show its own shared NextStepFab or leave room for BulkAssignBar. */
+  onSelectionChange?: (hasSelection: boolean) => void;
 }
 
 function mostCommonRigId(assignments: PlanDraft['assignments']): string | null {
@@ -66,7 +69,7 @@ function commonAssignedValue(
 
 export default function PileAssignStep({
   draft, onUpdate, piles = [], locations = [], activeRigs = [], activeCranes = [],
-  onContinue, continueDisabled,
+  onSelectionChange,
 }: PileAssignStepProps) {
   const { config } = useAppConfig();
   const [search, setSearch] = useState('');
@@ -80,8 +83,16 @@ export default function PileAssignStep({
   const [lastUsedRigId, setLastUsedRigId] = useState(() => mostCommonRigId(draft.assignments));
   const [viewAssignedOpen, setViewAssignedOpen] = useState(false);
 
+  useEffect(() => {
+    onSelectionChange?.(selectedIds.size > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds]);
+
   function machineLabel(kind: MachineKind, machineId: string): string {
     return (kind === 'rig' ? activeRigs : activeCranes).find((m) => m.id === machineId)?.machineNo ?? '—';
+  }
+  function locationLabel(locationId: string | null): string | null {
+    return locations.find((l) => l.id === locationId)?.name ?? null;
   }
   function isPileFullyAssigned(pileId: string): boolean {
     // Crane is optional — a rig can perform any CRANE-track step, never the
@@ -147,24 +158,56 @@ export default function PileAssignStep({
 
   const pendingCount = piles.filter((p) => !p.completed && !isPileFullyAssigned(p.id)).length;
 
-  const allAssignedPiles = useMemo(
-    () =>
-      piles
-        .filter((p) => isPileFullyAssigned(p.id))
-        .map((p) => {
-          const a = draft.assignments[p.id];
-          return {
-            id: p.id,
-            code: p.code,
-            dia: p.dia,
-            depth: p.depth,
-            rigLabel: a?.rig ? machineLabel('rig', a.rig) : null,
-            craneLabel: a?.crane ? machineLabel('crane', a.crane) : null,
-          };
-        })
-        .sort((a, b) => a.code.localeCompare(b.code)),
-    [piles, draft.assignments, activeRigs, activeCranes],
-  );
+  const allAssignedPiles = useMemo(() => {
+    // draft.selectedPileIds is the plan's actual pile sequence — the same
+    // array the Preview step's machine timeline schedules from (see
+    // planScheduler's "first in original order wins" tie-break) and that
+    // ReorderPilesOverlay edits directly. Sorting by each pile's position in
+    // it (instead of by code) means what's numbered here matches what will
+    // actually run first on that rig.
+    const sequenceIndex = new Map(draft.selectedPileIds.map((id, idx) => [id, idx]));
+    return piles
+      .filter((p) => isPileFullyAssigned(p.id))
+      .map((p) => {
+        const a = draft.assignments[p.id];
+        return {
+          id: p.id,
+          code: p.code,
+          dia: p.dia,
+          depth: p.depth,
+          rigId: a?.rig ?? '',
+          rigLabel: a?.rig ? machineLabel('rig', a.rig) : null,
+          craneLabel: a?.crane ? machineLabel('crane', a.crane) : null,
+        };
+      })
+      .sort((a, b) => (sequenceIndex.get(a.id) ?? 0) - (sequenceIndex.get(b.id) ?? 0));
+  }, [piles, draft.assignments, draft.selectedPileIds, activeRigs, activeCranes]);
+
+  // "Assigned Piles" modal groups by rig — every pile under R-1, then every
+  // pile under R-2, etc. — instead of one flat sequence-ordered list, in the
+  // same order the Machines step lists rigs. A rig that's since dropped out of
+  // activeRigs (shouldn't happen — removing a machine clears its
+  // assignments) still gets a fallback group so its piles are never silently
+  // hidden here.
+  const assignedPilesByRig = useMemo(() => {
+    const byRigId = new Map<string, typeof allAssignedPiles>();
+    allAssignedPiles.forEach((p) => {
+      const list = byRigId.get(p.rigId) ?? [];
+      list.push(p);
+      byRigId.set(p.rigId, list);
+    });
+
+    const ordered = activeRigs
+      .filter((r) => byRigId.has(r.id))
+      .map((r) => ({ rigId: r.id, rigLabel: r.machineNo, piles: byRigId.get(r.id)! }));
+
+    const orderedIds = new Set(activeRigs.map((r) => r.id));
+    const stray = [...byRigId.entries()]
+      .filter(([rigId]) => !orderedIds.has(rigId))
+      .map(([rigId, list]) => ({ rigId, rigLabel: machineLabel('rig', rigId), piles: list }));
+
+    return [...ordered, ...stray];
+  }, [allAssignedPiles, activeRigs]);
 
   const selectedCodesLabel = useMemo(() => {
     const codes = piles.filter((p) => selectedIds.has(p.id)).map((p) => p.code).sort();
@@ -258,8 +301,13 @@ export default function PileAssignStep({
   }
 
   const columns = useMemo(
-    () => buildColumns({ assignments: draft.assignments, machineLabel }),
-    [draft.assignments, activeRigs, activeCranes],
+    () => buildColumns({
+      assignments: draft.assignments,
+      machineLabel,
+      locationLabel,
+      showAreaBadge: activeLocationId === ALL_LOCATIONS_ID,
+    }),
+    [draft.assignments, activeRigs, activeCranes, locations, activeLocationId],
   );
 
   return (
@@ -331,34 +379,46 @@ export default function PileAssignStep({
             unassignDisabled={!anySelectedAssigned}
           />
         </View>
-      ) : (
-        <NextStepFab onPress={onContinue} disabled={continueDisabled} style={styles.nextFabOffset} />
-      )}
+      ) : null}
 
       <AppModal
         visible={viewAssignedOpen}
         onClose={() => setViewAssignedOpen(false)}
-        title={`Assigned Piles (${allAssignedPiles.length})`}
-        position="center"
+        position="bottom"
         scrollable={false}
+        showCloseButton={false}
       >
+        <View style={styles.assignedHeaderRow}>
+          <View style={styles.assignedHeaderTextWrap}>
+            <Text style={styles.assignedTitle}>Assigned Piles ({allAssignedPiles.length})</Text>
+            <Text style={styles.assignedSubtitle}>Piles grouped by machine</Text>
+          </View>
+          <View style={styles.assignedSummaryBadge}>
+            <Server size={14} color={ACCENT_SOLID} />
+            <Text style={styles.assignedSummaryText}>{allAssignedPiles.length} piles assigned</Text>
+          </View>
+        </View>
+
         <ScrollView style={styles.assignedList} showsVerticalScrollIndicator={false}>
-          {allAssignedPiles.map((p) => (
-            <View key={p.id} style={styles.assignedRow}>
-              <View style={styles.assignedRowBody}>
-                <Text style={styles.assignedRowCode}>{p.code}</Text>
-                <Text style={styles.assignedRowSpec}>Ø{p.dia}mm · {p.depth}m</Text>
-              </View>
-              <View style={styles.assignedRowBadges}>
-                {p.rigLabel && <MachineBadge track="RIG" label={p.rigLabel} />}
-                {p.craneLabel && <MachineBadge track="CRANE" label={p.craneLabel} />}
-              </View>
-            </View>
+          {assignedPilesByRig.map((group) => (
+            <PileGroupCard
+              key={group.rigId}
+              rigLabel={group.rigLabel}
+              countLabel={`${group.piles.length} ${group.piles.length === 1 ? 'pile' : 'piles'}`}
+            >
+              {group.piles.map((p, idx) => (
+                <PileGroupRow
+                  key={p.id}
+                  index={idx + 1}
+                  title={p.code}
+                  subtitle={`Ø${p.dia}mm · ${p.depth}m`}
+                  isLast={idx === group.piles.length - 1}
+                  right={p.craneLabel && <MachineBadge track="CRANE" label={p.craneLabel} />}
+                />
+              ))}
+            </PileGroupCard>
           ))}
         </ScrollView>
-        <Pressable style={styles.closeBtn} onPress={() => setViewAssignedOpen(false)}>
-          <Text style={styles.closeBtnText}>Close</Text>
-        </Pressable>
       </AppModal>
     </View>
   );
@@ -400,28 +460,25 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(28,28,46,0.08)',
   },
-  nextFabOffset: { right: 0 },
-
-  assignedList: { maxHeight: 360 },
-  assignedRow: {
+  assignedHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: spacing.sm,
-    paddingVertical: spacing.sm + 2,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    marginBottom: spacing.md,
   },
-  assignedRowBody: { flex: 1, minWidth: 0 },
-  assignedRowCode: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
-  assignedRowSpec: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  assignedRowBadges: { flexDirection: 'row', gap: spacing.xs },
-  closeBtn: {
-    marginTop: spacing.md,
-    backgroundColor: 'rgba(28,28,46,0.06)',
-    borderRadius: radius.pill,
-    paddingVertical: spacing.sm + 2,
+  assignedHeaderTextWrap: { flex: 1 },
+  assignedTitle: { ...typography.h2, color: colors.textPrimary },
+  assignedSubtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  assignedSummaryBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xs,
   },
-  closeBtnText: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
+  assignedSummaryText: { ...typography.caption, fontWeight: '700', color: ACCENT_SOLID },
+  assignedList: { maxHeight: 480 },
 });

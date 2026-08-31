@@ -1,45 +1,41 @@
 // src/components/plan/generate/steps/ResumeConfirmStep.tsx
 //
 // "Planned Piles" step — sits right after Piles & Assign. Acts as a
-// lightweight, read-only preview of every assigned pile (code + rig/crane,
-// same as the Piles step) and flags any pile with a step still in progress
-// from a previous day (actualStart set, no actualEnd) that hasn't had its
-// plan finish time confirmed yet. Uses GeneratePlanScreen's shared
+// lightweight, read-only preview of every assigned pile (grouped by rig,
+// same layout as PileAssignStep's "Assigned Piles" modal — see
+// pile-assign/PileGroupCard.tsx) and flags any pile with a step still in
+// progress from a previous day (actualStart set, no actualEnd) that hasn't
+// had its plan finish time confirmed yet. Uses GeneratePlanScreen's shared
 // NextStepFab (no override needed here — unlike PileAssignStep, this step
 // never swaps its footer for anything else), which is never disabled for
 // this step — GeneratePlanScreen.goNext() calls this component's exposed
 // focusFirstMissing() instead (same pattern as TeamAssignStep), which
 // scrolls to the first unconfirmed pile and returns false to block
-// navigation; each unconfirmed pile also carries a persistent required-style
-// left border (see StartTimeStep.tsx's PM/PE cards) the whole time it's
-// unconfirmed. This is the single place that owns resume-confirm UI;
+// navigation. This is the single place that owns resume-confirm UI;
 // PileAssignStep is pure assignment and no longer touches any of this.
-//
-// Cards, not a table: this row needs to fit a pile code, two machine badges,
-// layout) gives every element the room it needs.
 
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { Clock, PencilLine } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MachineBadge from '@components/shared/MachineBadge';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
-import GlassCard from '@components/shared/GlassCard';
+import { useScrollToField } from '@hooks/useScrollToField';
+import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
 import ResumeTimeConfirmModal from './resume-confirm/ResumeTimeConfirmModal';
 import { useResumeConfirmQueue, pileNeedsResumeConfirm } from './resume-confirm/useResumeConfirmQueue';
+import { PileGroupCard, PileGroupRow } from './pile-assign/PileGroupCard';
 import type { EligiblePile, MachineKind, SimpleMachine } from './pile-assign/types';
 
 // Solid form of colors.accentSoft's base rgb — same indigo, full opacity, for the
 // confirmed status pill's icon/text (accentSoft alone is too faint at text weight).
 const ACCENT_SOLID = '#5B5FEF';
 
-
 export interface ResumeConfirmStepHandle {
   /**
-   * True if every pile is confirmed. If not, scrolls to and (via the card's
-   * always-on required border) highlights the first one that still needs
-   * confirmation, and returns false.
+   * True if every pile is confirmed. If not, scrolls to and highlights the
+   * first one that still needs confirmation, and returns false.
    */
   focusFirstMissing: () => boolean;
 }
@@ -64,7 +60,8 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
   effectiveDayStart, allSteps = [],
 }, ref) {
   const resumeConfirm = useResumeConfirmQueue(draft, onUpdate, allSteps);
-  const flatListRef = useRef<FlatList<EligiblePile>>(null);
+  const { scrollViewRef, scrollYRef, onScroll, scrollEventThrottle } = useTrackedScrollView();
+  const { registerField, scrollToField } = useScrollToField(scrollViewRef, scrollYRef);
 
   function machineLabel(kind: MachineKind, machineId: string): string {
     return (kind === 'rig' ? activeRigs : activeCranes).find((m) => m.id === machineId)?.machineNo ?? '—';
@@ -101,96 +98,115 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
       .sort((a, b) => {
         const af = flagged.has(a.id), bf = flagged.has(b.id);
         if (af !== bf) return af ? -1 : 1;
-        return a.code.localeCompare(b.code);
+        return 0;
       });
   }, [draft.selectedPileIds, piles, flaggedPileIds]);
+
+  const rowsByRig = useMemo(() => {
+    const byRigId = new Map<string, EligiblePile[]>();
+    rows.forEach((p) => {
+      const rigId = draft.assignments[p.id]?.rig;
+      if (!rigId) return;
+      const list = byRigId.get(rigId) ?? [];
+      list.push(p);
+      byRigId.set(rigId, list);
+    });
+
+    const ordered = activeRigs
+      .filter((r) => byRigId.has(r.id))
+      .map((r) => ({ rigId: r.id, rigLabel: r.machineNo, piles: byRigId.get(r.id)! }));
+
+    const orderedIds = new Set(activeRigs.map((r) => r.id));
+    const stray = [...byRigId.entries()]
+      .filter(([rigId]) => !orderedIds.has(rigId))
+      .map(([rigId, list]) => ({ rigId, rigLabel: machineLabel('rig', rigId), piles: list }));
+
+    return [...ordered, ...stray];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, draft.assignments, activeRigs]);
 
   useImperativeHandle(ref, () => ({
     focusFirstMissing() {
       if (flaggedPileIds.length === 0) return true;
-      const index = rows.findIndex((p) => p.id === flaggedPileIds[0]);
-      if (index >= 0) {
-        flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
-      }
+      requestAnimationFrame(() => scrollToField(flaggedPileIds[0]));
       return false;
     },
-  }), [flaggedPileIds, rows]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [flaggedPileIds, scrollToField]);
 
   return (
     <View style={styles.root}>
       <View style={styles.listSection}>
-        <FlatList
-          ref={flatListRef}
-          data={rows}
-          keyExtractor={(p) => p.id}
+        <ScrollView
+          ref={scrollViewRef}
+          onScroll={onScroll}
+          scrollEventThrottle={scrollEventThrottle}
           contentContainerStyle={styles.listContent}
-          onScrollToIndexFailed={(info) => {
-            setTimeout(() => {
-              flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true });
-            }, 50);
-          }}
-          ListHeaderComponent={
-            <View style={styles.section}>
-              <Text style={styles.title}>Planned piles</Text>
-              <Text style={styles.description}>
-                {flaggedPileIds.length > 0
-                  ? "Piles with a step still in progress from a previous day need their status confirmed before today's plan is generated. Tap a flagged pile to confirm."
-                  : 'Review every pile going into today\'s plan.'}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.section}>
+            <Text style={styles.title}>Planned piles</Text>
+            <Text style={styles.description}>
+              {flaggedPileIds.length > 0
+                ? "Piles with a step still in progress from a previous day need their status confirmed before today's plan is generated. Tap a flagged pile to confirm."
+                : 'Review every pile going into today\'s plan.'}
+            </Text>
+            {resumingPileIds.length > 0 && (
+              <Text style={styles.countText}>
+                {resumingPileIds.length - flaggedPileIds.length} of {resumingPileIds.length} confirmed
               </Text>
-              {resumingPileIds.length > 0 && (
-                <Text style={styles.countText}>
-                  {resumingPileIds.length - flaggedPileIds.length} of {resumingPileIds.length} confirmed
-                </Text>
-              )}
-            </View>
-          }
-          ListEmptyComponent={<Text style={styles.emptyText}>No piles selected.</Text>}
-          renderItem={({ item: p }) => {
-            const asgn = draft.assignments[p.id];
-            const rigLabel = asgn?.rig ? machineLabel('rig', asgn.rig) : null;
-            const craneLabel = asgn?.crane ? machineLabel('crane', asgn.crane) : null;
-            const needsConfirm = pileNeedsResumeConfirm(draft.resumeWorkByPileId, p.id);
-            const resumeWork = draft.resumeWorkByPileId[p.id];
-            const isConfirmed = !needsConfirm && !!resumeWork?.wasStarted;
-            const statusColor = isConfirmed ? ACCENT_SOLID : colors.textSecondary;
+            )}
+          </View>
 
-            return (
-              <GlassCard style={styles.card} innerStyle={styles.cardInner}>
-                <View style={styles.topRow}>
-                  <View style={styles.pileInfo}>
-                    <Text style={styles.code}>{p.code}</Text>
-                    <Text style={styles.spec}>Ø{p.dia}mm · {p.depth}m</Text>
-                  </View>
-                  <View style={styles.machineRow}>
-                    {rigLabel && <MachineBadge track="RIG" label={rigLabel} />}
-                    {craneLabel ? (
-                      <MachineBadge track="CRANE" label={craneLabel} />
-                    ) : (
-                      rigLabel && <MachineBadge track="RIG" label="Rig only" muted />
-                    )}
-                  </View>
-                </View>
+          {rows.length === 0 ? (
+            <Text style={styles.emptyText}>No piles selected.</Text>
+          ) : (
+            rowsByRig.map((group) => (
+              <PileGroupCard
+                key={group.rigId}
+                rigLabel={group.rigLabel}
+                countLabel={`${group.piles.length} ${group.piles.length === 1 ? 'pile' : 'piles'}`}
+              >
+                {group.piles.map((p, idx) => {
+                  const asgn = draft.assignments[p.id];
+                  const craneLabel = asgn?.crane ? machineLabel('crane', asgn.crane) : null;
+                  const needsConfirm = pileNeedsResumeConfirm(draft.resumeWorkByPileId, p.id);
+                  const resumeWork = draft.resumeWorkByPileId[p.id];
+                  const isConfirmed = !needsConfirm && !!resumeWork?.wasStarted;
+                  const statusColor = isConfirmed ? ACCENT_SOLID : colors.textSecondary;
 
-                {(needsConfirm || isConfirmed) && (
-                  <Pressable
-                    style={[styles.statusPill, isConfirmed ? styles.statusPillConfirmed : styles.statusPillPending]}
-                    onPress={() => resumeConfirm.openSingle(p.id)}
-                  >
-                    <Clock size={16} color={statusColor} style={styles.statusPillIcon} />
-                    <Text style={[styles.statusPillText, { color: statusColor }]} numberOfLines={1}>
-                      {isConfirmed
-                        ? `${resumeWork!.stepName ?? 'Step'} · ~${Math.floor(resumeWork!.remainingMinutes / 60)}h ${resumeWork!.remainingMinutes % 60}m remaining`
-                        : 'Ready to set finish time'}
-                    </Text>
-                    <View style={styles.statusPillEditBadge}>
-                      <PencilLine size={16} color={statusColor} />
-                    </View>
-                  </Pressable>
-                )}
-              </GlassCard>
-            );
-          }}
-        />
+                  return (
+                    <PileGroupRow
+                      key={p.id}
+                      rowRef={registerField(p.id)}
+                      index={idx + 1}
+                      title={p.code}
+                      subtitle={`Ø${p.dia}mm · ${p.depth}m`}
+                      isLast={idx === group.piles.length - 1}
+                      right={craneLabel && <MachineBadge track="CRANE" label={craneLabel} />}
+                      below={(needsConfirm || isConfirmed) && (
+                        <Pressable
+                          style={[styles.statusPill, isConfirmed ? styles.statusPillConfirmed : styles.statusPillPending]}
+                          onPress={() => resumeConfirm.openSingle(p.id)}
+                        >
+                          <Clock size={16} color={statusColor} style={styles.statusPillIcon} />
+                          <Text style={[styles.statusPillText, { color: statusColor }]} numberOfLines={1}>
+                            {isConfirmed
+                              ? `${resumeWork!.stepName ?? 'Step'} · ~${Math.floor(resumeWork!.remainingMinutes / 60)}h ${resumeWork!.remainingMinutes % 60}m remaining`
+                              : 'Ready to set finish time'}
+                          </Text>
+                          <View style={styles.statusPillEditBadge}>
+                            <PencilLine size={16} color={statusColor} />
+                          </View>
+                        </Pressable>
+                      )}
+                    />
+                  );
+                })}
+              </PileGroupCard>
+            ))
+          )}
+        </ScrollView>
       </View>
 
       {(() => {
@@ -217,7 +233,7 @@ export default ResumeConfirmStep;
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0 },
   listSection: { flex: 1, minHeight: 0 },
-  listContent: { gap: spacing.sm, paddingBottom: spacing.md },
+  listContent: { paddingBottom: spacing.md },
   section: { marginBottom: spacing.md },
   title: {
     ...typography.pageTitle,
@@ -241,18 +257,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: spacing.lg,
   },
-  card: { width: '100%', alignSelf: 'stretch' },
-  cardInner: { padding: spacing.md },
-  topRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-  },
-  pileInfo: { flex: 1 },
-  code: { ...typography.cardTitle, color: colors.textPrimary },
-  spec: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  machineRow: { flexDirection: 'column', alignItems: 'flex-start', gap: spacing.xs, flexShrink: 0 },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',

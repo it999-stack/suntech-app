@@ -69,6 +69,7 @@ export function useSequenceEditor(args: {
 
   const rigs = useMemo(() => machines.filter((m) => m.type === 'RIG'), [machines]);
   const cranes = useMemo(() => machines.filter((m) => m.type === 'CRANE'), [machines]);
+  const machineNoById = useMemo(() => new Map(machines.map((m) => [m.id, m.machineNo])), [machines]);
 
   const activeMachine = activeMachines.find(
     (m) => m.id === (selectedMachineId ?? activeMachines[0]?.id),
@@ -105,8 +106,13 @@ export function useSequenceEditor(args: {
         // ahead of fresh ones regardless of position, so it's pinned rather
         // than offered a reorder control with no effect.
         locked: !!pileProgressByPileId.get(r.pileId)?.hasProgress,
+        // This pile's machine on the other track — e.g. sequencing a rig
+        // surfaces which crane(s) it's paired with, for the overlay's header.
+        otherMachineLabel: activeMachine.type === 'RIG'
+          ? (r.craneId ? machineNoById.get(r.craneId) : undefined)
+          : machineNoById.get(r.rigId),
       }));
-  }, [activeMachine, draftRows, pileProgressByPileId, pileMap]);
+  }, [activeMachine, draftRows, pileProgressByPileId, pileMap, machineNoById]);
 
   const [sequenceModalOpen, setSequenceModalOpen] = useState(false);
   const [sequenceRemountKey, setSequenceRemountKey] = useState(0);

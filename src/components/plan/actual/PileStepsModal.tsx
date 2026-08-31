@@ -13,6 +13,7 @@ import {
   PencilLine,
 } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
+import Button from '@components/shared/Button';
 import StepTimeControl from '@components/plan/actual/StepTimeControl';
 import EditTimeButton from '@components/plan/actual/EditTimeButton';
 import DeleteTimeButton from '@components/plan/actual/DeleteTimeButton';
@@ -381,19 +382,20 @@ export default function PileStepsModal({
 
               {(isStarted || isDone || isCurrent) && !isHistorical && !isLocked && (
                 <View style={modalStyles.headerActions}>
-                  <Pressable
-                    style={modalStyles.remarksBtn}
-                    hitSlop={8}
-                    accessibilityLabel={step.remarks ? 'Edit remarks' : 'Add remarks'}
+                  <Button
+                    label="Remarks"
+                    icon={MessageSquarePlus}
+                    variant="secondary"
+                    size="sm"
                     onPress={() =>
                       setRemarksFor({ stepId: step.stepId, stepName: step.stepName, remarks: step.remarks })
                     }
-                  >
-                    <MessageSquarePlus size={16} color={colors.accent} />
-                    <Text style={modalStyles.remarksBtnText}>Remarks</Text>
-                  </Pressable>
-                  <Pressable
-                    style={modalStyles.iconBtn}
+                  />
+                  <Button
+                    icon={ArrowLeftRight}
+                    variant="secondary"
+                    size="md"
+                    iconColor={colors.textSecondary}
                     hitSlop={8}
                     accessibilityLabel="Replace machine"
                     onPress={() =>
@@ -404,9 +406,7 @@ export default function PileStepsModal({
                         track: step.businessTrack ?? step.track,
                       })
                     }
-                  >
-                    <ArrowLeftRight size={18} color={colors.textSecondary} />
-                  </Pressable>
+                  />
                 </View>
               )}
             </View>
@@ -621,13 +621,12 @@ export default function PileStepsModal({
                     })}
                   </View>
                   {!isHistorical && (
-                    <Pressable
-                      style={modalStyles.editMeasurementsBtn}
+                    <Button
+                      label="Edit measurements"
+                      icon={PencilLine}
+                      variant="secondary"
                       onPress={() => openStepMeasurements(step)}
-                    >
-                      <PencilLine size={14} color={colors.accent} />
-                      <Text style={modalStyles.editMeasurementsBtnText}>Edit measurements</Text>
-                    </Pressable>
+                    />
                   )}
                 </>
               );
@@ -792,31 +791,6 @@ const modalStyles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
   },
-  iconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  remarksBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    height: 32,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  remarksBtnText: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.accent,
-    marginLeft: spacing.xs
-  },
   divider: {
     height: 1,
     backgroundColor: colors.border,
@@ -955,23 +929,6 @@ const modalStyles = StyleSheet.create({
   measurementValueEmpty: {
     fontWeight: '400',
     color: colors.textSecondary,
-  },
-  editMeasurementsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.white,
-    ...shadow.soft,
-  },
-  editMeasurementsBtnText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.accent,
   },
   loadingWrap: { alignItems: 'center', paddingVertical: spacing.xxl },
   allDoneWrap: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm },

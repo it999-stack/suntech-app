@@ -1,15 +1,16 @@
-// src/components/plan/generate/preview/CoreTeamAccordion.tsx
+// src/components/plan/generate/preview/CoreTeamCard.tsx
 //
 // Merged "Core Team" card: Leadership, Shift Incharge, and per-machine
-// Engineer/Supervisor/Operator teams, in one accordion. Shared between the
-// generate-plan wizard's Preview step (rows tappable via `onPressRole`, to
-// open a picker modal there) and PlanDetailScreen (read-only — `onPressRole`
-// omitted, so rows render as static, non-interactive).
+// Engineer/Supervisor/Operator teams, in one plain (always-expanded) card.
+// Shared between the generate-plan wizard's Preview step (rows tappable via
+// `onPressRole`, to open a picker modal there) and PlanDetailScreen
+// (read-only — `onPressRole` omitted, so rows render as static,
+// non-interactive).
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Users } from 'lucide-react-native';
-import SummaryAccordion from './SummaryAccordion';
+import GlassCard from '@components/shared/GlassCard';
 import Avatar from '@components/shared/Avatar';
 import Divider from '@components/shared/Divider';
 import InfoRow from '@components/shared/InfoRow';
@@ -50,11 +51,10 @@ export type RoleTarget =
   | { role: 'SHIFT_INCHARGE'; slot: 1 | 2 }
   | { role: 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR'; machineId: string; slot: 1 | 2 };
 
-interface CoreTeamAccordionProps {
+interface CoreTeamCardProps {
   leadership: LeadershipDetail;
   shiftIncharge: ShiftInchargeDetail;
   machineTeams: MachineTeamDetail[];
-  defaultOpen?: boolean;
   /** Omit for read-only screens — rows render as static, non-interactive. */
   onPressRole?: (target: RoleTarget) => void;
 }
@@ -102,20 +102,25 @@ function TeamPersonRow({
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
-export default function CoreTeamAccordion({
+export default function CoreTeamCard({
   leadership,
   shiftIncharge,
   machineTeams,
-  defaultOpen,
   onPressRole,
-}: CoreTeamAccordionProps) {
+}: CoreTeamCardProps) {
   return (
-    <SummaryAccordion
-      icon={<Users size={18} color={colors.accent} />}
-      title="Core Team"
-      summary="Team members assigned to today's plan"
-      defaultOpen={defaultOpen}
-    >
+    <GlassCard style={styles.card} innerStyle={styles.cardInner}>
+      <View style={styles.headerRow}>
+        <View style={styles.headerIcon}>
+          <Users size={18} color={colors.accent} />
+        </View>
+        <View style={styles.headerInfo}>
+          <Text style={styles.headerTitle}>Core Team</Text>
+          <Text style={styles.headerSummary}>Team members assigned to today&apos;s plan</Text>
+        </View>
+      </View>
+
+      <View style={styles.body}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionHeaderText}>Leadership</Text>
       </View>
@@ -204,11 +209,40 @@ export default function CoreTeamAccordion({
         }
         )
       )}
-    </SummaryAccordion>
+      </View>
+    </GlassCard>
   );
 }
 
 const styles = StyleSheet.create({
+  card: { marginBottom: spacing.sm },
+  cardInner: { padding: 0 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  headerIcon: { width: 24, alignItems: 'center' },
+  headerInfo: { flex: 1 },
+  headerTitle: {
+    ...typography.cardTitle,
+    color: colors.textPrimary,
+  },
+  headerSummary: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  body: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(28,28,46,0.08)',
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    gap: spacing.md,
+  },
   sectionHeader: { marginBottom: spacing.xs },
   sectionHeaderText: {
     ...typography.caption,

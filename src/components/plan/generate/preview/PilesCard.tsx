@@ -1,13 +1,9 @@
-// src/components/plan/generate/preview/PilesAccordion.tsx
-//
-// Replaces the flat per-pile accordion list. Shows one pill per pile in a
-// swipeable bar (SwipeableTabBar) — tapping a pill or swiping the content
-// switches which single pile's steps are shown below.
+// src/components/plan/generate/preview/PilesCard.tsx
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Layers, Coffee, PencilLine } from 'lucide-react-native';
-import Accordion from '@components/shared/Accordion';
+import GlassCard from '@components/shared/GlassCard';
 import Avatar from '@components/shared/Avatar';
 import InfoRow from '@components/shared/InfoRow';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
@@ -298,7 +294,7 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
   );
 });
 
-interface PilesAccordionProps {
+interface PilesCardProps {
   piles: PreviewPile[];
   planSteps: PlanStepWithMeta[];
   /** Recorded actual steps, if this plan has any progress logged (PlanDetailScreen). */
@@ -325,7 +321,7 @@ interface PilesAccordionProps {
   onPressMachineBadge?: (pileId: string) => void;
 }
 
-export default function PilesAccordion({
+export default function PilesCard({
   piles,
   planSteps,
   actualSteps = [],
@@ -336,7 +332,7 @@ export default function PilesAccordion({
   selectedStepIds = [],
   resumeWorkByPileId = {},
   onPressMachineBadge,
-}: PilesAccordionProps) {
+}: PilesCardProps) {
   const [selectedPileId, setSelectedPileId] = React.useState<string | undefined>(piles[0]?.id);
 
   // Grouped once per real data change instead of filtering/sorting the full list inside
@@ -374,57 +370,69 @@ export default function PilesAccordion({
   const value = selectedPileId ?? piles[0].id;
 
   return (
-    <Accordion
-      defaultOpen
-      header={
-        <View style={styles.headerRow}>
-          <Layers size={16} color={colors.accent} />
-          <View>
-            <Text style={styles.title}>Piles</Text>
-            <Text style={styles.subtitle}>
-              Tap a pile to view its steps.
-            </Text>
-          </View>
+    <GlassCard style={styles.card} innerStyle={styles.cardInner}>
+      <View style={styles.headerRow}>
+        <Layers size={16} color={colors.accent} />
+        <View>
+          <Text style={styles.title}>Piles</Text>
+          <Text style={styles.subtitle}>
+            Tap a pile to view its steps.
+          </Text>
         </View>
-      }
-    >
-      <SwipeableTabBar
-        items={items}
-        value={value}
-        onChange={setSelectedPileId}
-        scrollHint="dots"
-        renderPage={(item) => {
-          const pile = piles.find((p) => p.id === item.value) ?? piles[0];
-          return (
-            <PilePreviewPage
-              pile={pile}
-              steps={stepsByPileId.get(pile.checklistPileId) ?? EMPTY_STEPS}
-              actualSteps={actualStepsByPileId.get(pile.checklistPileId) ?? EMPTY_ACTUAL_STEPS}
-              overriddenStepIds={overriddenTrackStepIdsByPileId?.[pile.checklistPileId] ?? EMPTY_STEP_IDS}
-              onToggleTrack={onToggleTrack}
-              windowsByMachineId={windowsByMachineId}
-              allSteps={allSteps}
-              selectedStepIds={selectedStepIds}
-              resumeWork={resumeWorkByPileId[pile.id]}
-              onPressMachineBadge={onPressMachineBadge}
-            />
-          );
-        }}
-      />
-    </Accordion>
+      </View>
+
+      <View style={styles.body}>
+        <SwipeableTabBar
+          items={items}
+          value={value}
+          onChange={setSelectedPileId}
+          scrollHint="dots"
+          renderPage={(item) => {
+            const pile = piles.find((p) => p.id === item.value) ?? piles[0];
+            return (
+              <PilePreviewPage
+                pile={pile}
+                steps={stepsByPileId.get(pile.checklistPileId) ?? EMPTY_STEPS}
+                actualSteps={actualStepsByPileId.get(pile.checklistPileId) ?? EMPTY_ACTUAL_STEPS}
+                overriddenStepIds={overriddenTrackStepIdsByPileId?.[pile.checklistPileId] ?? EMPTY_STEP_IDS}
+                onToggleTrack={onToggleTrack}
+                windowsByMachineId={windowsByMachineId}
+                allSteps={allSteps}
+                selectedStepIds={selectedStepIds}
+                resumeWork={resumeWorkByPileId[pile.id]}
+                onPressMachineBadge={onPressMachineBadge}
+              />
+            );
+          }}
+        />
+      </View>
+    </GlassCard>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  card: { marginBottom: spacing.sm },
+  cardInner: { padding: 0 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
   title: { ...typography.body, fontWeight: '800', color: colors.textPrimary },
   subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  body: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(28,28,46,0.08)',
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
   pileHeaderTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
   },
   pileHeaderLeft: {
     flex: 1,
@@ -448,11 +456,9 @@ const styles = StyleSheet.create({
   },
   pileMachinesRow: {
     flexDirection: 'column',
-    paddingHorizontal: spacing.sm,
     marginTop: spacing.xs,
   },
   stepsContainer: {
-    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   breakRow: {

@@ -1,6 +1,6 @@
 // src/navigation/RootNavigator.tsx
 import { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, Pressable } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState, type AppStateStatus } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -11,7 +11,8 @@ import { useSyncStore } from '@store/syncStore';
 import { useWorkingDateStore } from '@store/workingDateStore';
 import { getCursor } from '@repositories/syncCursorRepository';
 import type { SyncErrorKind } from '@sync/bootstrap/syncResult';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { colors, spacing, typography } from '@theme/theme';
+import Button from '@components/shared/Button';
 import MainTabNavigator from '@navigation/MainTabNavigator';
 import AuthStackNavigator from '@navigation/AuthStackNavigator';
 
@@ -54,9 +55,7 @@ function InitialSyncErrorScreen({
           // field users.
           : `Setup couldn't complete: ${reason}`}
       </Text>
-      <Pressable style={styles.retryBtn} onPress={onRetry}>
-        <Text style={styles.retryBtnText}>Retry</Text>
-      </Pressable>
+      <Button label="Retry" onPress={onRetry} style={styles.retryBtn} />
     </LinearGradient>
   );
 }
@@ -216,15 +215,5 @@ const styles = StyleSheet.create({
     ...typography.h2,
     color: colors.textPrimary,
   },
-  retryBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xl,
-    marginTop: spacing.sm,
-  },
-  retryBtnText: {
-    ...typography.buttonLabel,
-    color: colors.textInverse,
-  },
+  retryBtn: { marginTop: spacing.sm },
 });

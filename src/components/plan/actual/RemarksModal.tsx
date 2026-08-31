@@ -1,8 +1,9 @@
 // src/components/plan/actual/RemarksModal.tsx
 
 import React, { useState, useEffect } from 'react';
-import { Text, TextInput, Pressable, StyleSheet, Keyboard, View } from 'react-native';
+import { TextInput, StyleSheet, Keyboard, View } from 'react-native';
 import AppModal from '@components/shared/AppModal';
+import Button from '@components/shared/Button';
 import { notify } from '@utils/notify';
 import { colors, spacing, radius, typography } from '@theme/theme';
 
@@ -38,9 +39,11 @@ export default function RemarksModal({ visible, stepName, initialValue, onClose,
           textAlignVertical="top"
           autoFocus
         />
-        <Pressable
-          style={[styles.addBtn, (!text.trim() || saving) && styles.addBtnDisabled]}
+        <Button
+          label="Add Remarks"
           disabled={!text.trim() || saving}
+          loading={saving}
+          style={styles.addBtn}
           onPress={async () => {
             Keyboard.dismiss();
             setSaving(true);
@@ -55,9 +58,7 @@ export default function RemarksModal({ visible, stepName, initialValue, onClose,
               setSaving(false);
             }
           }}
-        >
-          <Text style={styles.addBtnText}>Add Remarks</Text>
-        </Pressable>
+        />
       </View>
     </AppModal>
   );
@@ -73,13 +74,5 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     minHeight: 120,
   },
-  addBtn: {
-    marginTop: spacing.md,
-    backgroundColor: colors.accent,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.sm + 2,
-    alignItems: 'center',
-  },
-  addBtnDisabled: { opacity: 0.4 },
-  addBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
+  addBtn: { marginTop: spacing.md },
 });

@@ -15,11 +15,12 @@
 // work with.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { addDays } from 'date-fns';
 import AppModal from '@components/shared/AppModal';
+import Button from '@components/shared/Button';
 import AppCalendar, { type DayVisualState } from '@components/shared/AppCalendar';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { colors, spacing, typography } from '@theme/theme';
 import { apiClient } from '@services/apiClient';
 import { hydrateChecklistFromServer } from '@repositories/checklistRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
@@ -196,17 +197,13 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
 
       {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
 
-      <Pressable
-        style={[styles.confirmBtn, (loading || loadError || selectedDisabled) && styles.confirmBtnDisabled]}
+      <Button
+        label={`Continue with ${formatShortDate(selectedDate)}`}
+        loading={loading}
         disabled={loading || !!loadError || selectedDisabled}
         onPress={() => onConfirm(selectedDate, plannedDates.has(selectedDate))}
-      >
-        {loading ? (
-          <ActivityIndicator color={colors.textInverse} />
-        ) : (
-          <Text style={styles.confirmBtnText}>Continue with {formatShortDate(selectedDate)}</Text>
-        )}
-      </Pressable>
+        style={styles.confirmBtn}
+      />
     </AppModal>
   );
 }
@@ -224,18 +221,5 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: colors.accent,
   },
-  confirmBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.lg,
-  },
-  confirmBtnDisabled: {
-    opacity: 0.6,
-  },
-  confirmBtnText: {
-    ...typography.buttonLabel,
-    color: colors.textInverse,
-  },
+  confirmBtn: { marginTop: spacing.lg },
 });

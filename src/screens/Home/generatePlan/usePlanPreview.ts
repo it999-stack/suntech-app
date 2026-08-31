@@ -39,11 +39,17 @@ export function usePlanPreview(args: {
   previewRecomputing: boolean;
   previewLoading: boolean;
   planReferenceData: { templateRows: PlanTemplateRow[]; rawWindows: PlanRawWindow[] } | null;
+  /** Runs the same recompute as arriving on the preview step, but while the
+   * caller is still on whatever step it's called from — for StepSelectStep's
+   * Continue button to await before actually navigating, so the FAB's own
+   * spinner (not a blank transition) is what tells the user their tap
+   * registered, and Preview opens already fully computed. */
+  precomputePreview: () => Promise<void>;
 } {
   const { step, draft, updateDraft, piles, siteId, selectedPlanPiles, steps } = args;
   const { config } = useAppConfig();
 
-  // Not-yet-confirmed Rig/Crane tile selections from the Preview step's PilesAccordion.
+  // Not-yet-confirmed Rig/Crane tile selections from the Preview step's PilesCard.
   // Tapping a tile updates this immediately (instant visual feedback on the tile itself) —
   // a debounced effect below auto-commits it into draft.stepTrackOverrides after a short
   // quiet period, which is what actually triggers the recompute. Resets to the committed
@@ -131,14 +137,23 @@ export function usePlanPreview(args: {
 
     setPreviewLoading(true);
 
-    // Wait for the step-change fade transition (and any other in-flight interaction) to
-    // actually finish committing before the synchronous scheduling work below runs. A bare
-    // setTimeout(0) only yields the JS thread for one macrotask, which isn't a hard guarantee
-    // the native side has committed/painted the "on preview step, loading" frame yet;
-    // InteractionManager is RN's own tool for "wait until the current
-    // animation/transition is done, then run this expensive JS work" — without it,
-    // the Continue tap from StepSelectStep feels like it froze instead of transitioning
-    // then spinning, because the heavy computation could still start before the fade paints.
+    // Guarantee the "Calculating plan preview…" frame has actually reached the
+    // screen before any further work runs. setPreviewLoading(true) alone only
+    // schedules a render — it doesn't guarantee a native paint before the next
+    // line executes, and the scheduling work below is heavy, synchronous JS
+    // with no internal await to yield the thread. Two rAFs is RN's standard
+    // "wait for the next paint, then confirm it landed" pattern: the first
+    // fires right before the upcoming frame is produced, the second confirms
+    // that frame was actually committed.
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    if (requestId !== previewRequestIdRef.current) return;
+
+    // Then wait for the step-change fade transition (and any other in-flight interaction)
+    // to actually finish before the synchronous scheduling work below runs — InteractionManager
+    // is RN's own tool for "wait until the current animation/transition is done, then run this
+    // expensive JS work," which keeps that scheduling work from stuttering the fade itself.
     await new Promise<void>((resolve) => {
       InteractionManager.runAfterInteractions(() => resolve());
     });
@@ -200,12 +215,26 @@ export function usePlanPreview(args: {
     }
   }
 
+  // Set right before precomputePreview() below calls updatePreview() itself —
+  // lets this effect's own `step` transition into 'preview' skip triggering a
+  // second, redundant recompute of the exact same draft/piles it was just
+  // precomputed for.
+  const skipNextAutoRecomputeRef = useRef(false);
   useEffect(() => {
     if (step === 'preview') {
+      if (skipNextAutoRecomputeRef.current) {
+        skipNextAutoRecomputeRef.current = false;
+        return;
+      }
       updatePreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, draft, piles, siteId, config.noNewStepCutoffMinutes]);
+
+  async function precomputePreview() {
+    skipNextAutoRecomputeRef.current = true;
+    await updatePreview();
+  }
 
   return {
     pendingTrackOverrides,
@@ -216,5 +245,6 @@ export function usePlanPreview(args: {
     previewRecomputing,
     previewLoading,
     planReferenceData,
+    precomputePreview,
   };
 }

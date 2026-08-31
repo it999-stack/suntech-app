@@ -21,6 +21,7 @@ import { View, Text, TextInput, Pressable, StyleSheet, Keyboard } from 'react-na
 import { Feather } from '@expo/vector-icons';
 import { CheckCircle2, Clock, ArrowRight, Calendar, Hourglass, ClipboardCheck } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
+import Button from '@components/shared/Button';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { formatTime, formatTimeWithDay, formatDuration, toLocalIsoString } from '@utils/formatTime';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
@@ -336,17 +337,16 @@ export default function ResumeTimeConfirmModal({
               <Text style={styles.charCount}>{remarks.length}/{REMARKS_MAX_LENGTH}</Text>
             </View>
 
-            <Pressable
-              style={[styles.confirmBtn, (remainingMinutes <= 0 || !pastTimeValid) && styles.confirmBtnDisabled]}
+            <Button
+              label="Confirm & Assign"
+              icon={ClipboardCheck}
               disabled={remainingMinutes <= 0 || !pastTimeValid}
               onPress={() => {
                 Keyboard.dismiss();
                 onConfirmPartial(toLocalIsoString(pastDate), remainingMinutes, remarks.trim());
               }}
-            >
-              <ClipboardCheck size={18} color={colors.white} />
-              <Text style={styles.confirmBtnText}>Confirm & Assign</Text>
-            </Pressable>
+              style={styles.confirmBtn}
+            />
           </>
         )}
 
@@ -370,17 +370,16 @@ export default function ResumeTimeConfirmModal({
               <Text style={styles.charCount}>{remarks.length}/{REMARKS_MAX_LENGTH}</Text>
             </View>
 
-            <Pressable
-              style={[styles.confirmBtn, !pastTimeValid && styles.confirmBtnDisabled]}
+            <Button
+              label="Confirm Completed"
+              icon={CheckCircle2}
               disabled={!pastTimeValid}
               onPress={() => {
                 Keyboard.dismiss();
                 onConfirmFull(toLocalIsoString(pastDate), remarks.trim());
               }}
-            >
-              <CheckCircle2 size={18} color={colors.white} />
-              <Text style={styles.confirmBtnText}>Confirm Completed</Text>
-            </Pressable>
+              style={styles.confirmBtn}
+            />
           </>
         )}
       </View>
@@ -591,16 +590,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
 
-  confirmBtn: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.sm + 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-  },
-  confirmBtnDisabled: { opacity: 0.4 },
-  confirmBtnText: { ...typography.body, fontWeight: '700', color: colors.white },
+  confirmBtn: { marginTop: spacing.lg },
 });
