@@ -7,7 +7,7 @@ export interface EligiblePile {
 }
 export interface SimpleMachine { id: string; machineNo: string; }
 export type MachineKind = 'rig' | 'crane';
-export type PileFilter = 'all' | 'pending' | 'assigned';
+export type PileFilter = 'all' | 'pending' | 'assigned' | 'completed';
 
 /** Sentinel activeLocationId meaning "every area for this plan" — the area
  * pill row's own "All" pill, distinct from any real location id. */

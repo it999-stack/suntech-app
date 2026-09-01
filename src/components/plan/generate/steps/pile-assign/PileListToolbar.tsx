@@ -17,6 +17,7 @@ interface PileListToolbarProps {
   allCount: number;
   pendingCount: number;
   assignedCount: number;
+  completedCount: number;
   locations: LocationFilterOption[];
   pileCountByLocationId: Record<string, number>;
   activeLocationId: string;
@@ -24,7 +25,7 @@ interface PileListToolbarProps {
 }
 
 export default function PileListToolbar({
-  search, onSearchChange, filter, onFilterChange, allCount, pendingCount, assignedCount,
+  search, onSearchChange, filter, onFilterChange, allCount, pendingCount, assignedCount, completedCount,
   locations, pileCountByLocationId, activeLocationId, onLocationChange,
 }: PileListToolbarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -35,6 +36,7 @@ export default function PileListToolbar({
     { label: 'All', value: 'all', count: allCount, color: colors.textSecondary },
     { label: 'Pending', value: 'pending', count: pendingCount, color: colors.warning },
     { label: 'Assigned', value: 'assigned', count: assignedCount, color: colors.success },
+    { label: 'Completed', value: 'completed', count: completedCount, color: colors.accentBlue },
   ];
 
   function toggleSearch(): void {

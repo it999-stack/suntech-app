@@ -17,8 +17,8 @@ interface MachinePilesPageProps {
   machine: MachineBadge;
   status: string | undefined;
   railColor: string;
-  activeGroups: PileGroup[];
-  upcomingGroups: PileGroup[];
+  groups: PileGroup[];
+  frontPileId: string | undefined;
   openIdle?: OpenIdleSession;
   hasActiveStep: boolean;
   onOpenPile: (checklistPileId: string) => void;
@@ -32,8 +32,8 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
   machine,
   status,
   railColor,
-  activeGroups,
-  upcomingGroups,
+  groups,
+  frontPileId,
   openIdle,
   hasActiveStep,
   onOpenPile,
@@ -42,8 +42,6 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
   onEndIdle,
   onEditSequence,
 }: MachinePilesPageProps) {
-  const sequenceGroups = [...activeGroups, ...upcomingGroups];
-  const hasUpNext = activeGroups.length > 0;
 
   return (
     <View style={styles.machinePage}>
@@ -58,11 +56,11 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
         onEndIdle={onEndIdle}
       />
 
-      {sequenceGroups.length > 0 && (
+      {groups.length > 0 && (
         <>
           <Text style={styles.sectionHeader}>Pile Sequence</Text>
           <View style={styles.sequenceList}>
-            {sequenceGroups.map((group, i) => (
+            {groups.map((group, i) => (
               <PileSequenceRow
                 key={group.checklistPileId}
                 index={i + 1}
@@ -70,7 +68,7 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
                 rigs={group.rigs}
                 cranes={group.cranes}
                 steps={group.steps}
-                circleVariant={hasUpNext && i === 0 ? 'upNext' : 'rail'}
+                circleVariant={group.checklistPileId === frontPileId ? 'upNext' : 'rail'}
                 railColor={railColor}
                 onPress={() => onOpenPile(group.checklistPileId)}
               />

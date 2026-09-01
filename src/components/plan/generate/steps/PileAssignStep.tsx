@@ -133,10 +133,9 @@ export default function PileAssignStep({
         // tab to scope to from the user's point of view.
         if (!q && activeLocationId !== ALL_LOCATIONS_ID && p.locationId !== activeLocationId) return false;
         if (q && !p.code.toLowerCase().replace(/-/g, '').includes(q)) return false;
-        // Completed piles count toward "assigned" (see pendingCount below) —
-        // they're done, not awaiting assignment.
         if (filter === 'pending' && (p.completed || isPileFullyAssigned(p.id))) return false;
-        if (filter === 'assigned' && !p.completed && !isPileFullyAssigned(p.id)) return false;
+        if (filter === 'assigned' && (p.completed || !isPileFullyAssigned(p.id))) return false;
+        if (filter === 'completed' && !p.completed) return false;
         return true;
       })
       .sort((a, b) => a.code.localeCompare(b.code));
@@ -157,6 +156,8 @@ export default function PileAssignStep({
   );
 
   const pendingCount = piles.filter((p) => !p.completed && !isPileFullyAssigned(p.id)).length;
+  const assignedCount = piles.filter((p) => !p.completed && isPileFullyAssigned(p.id)).length;
+  const completedCount = piles.filter((p) => p.completed).length;
 
   const allAssignedPiles = useMemo(() => {
     // draft.selectedPileIds is the plan's actual pile sequence — the same
@@ -320,7 +321,8 @@ export default function PileAssignStep({
           onFilterChange={handleFilterChange}
           allCount={piles.length}
           pendingCount={pendingCount}
-          assignedCount={piles.length - pendingCount}
+          assignedCount={assignedCount}
+          completedCount={completedCount}
           locations={locations}
           pileCountByLocationId={pileCountByLocationId}
           activeLocationId={activeLocationId}

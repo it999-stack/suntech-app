@@ -261,8 +261,8 @@ export default function FillActualsScreen() {
                 dividerStyle={{ marginTop: spacing.md }}
                 renderPage={(item) => {
                   const page = machinePagesById.get(item.value) ?? {
-                    activeGroups: EMPTY_PILE_GROUPS,
-                    upcomingGroups: EMPTY_PILE_GROUPS,
+                    groups: EMPTY_PILE_GROUPS,
+                    frontPileId: undefined,
                   };
                   const machine = activeMachines.find((m) => m.id === item.value);
                   if (!machine) return null;
@@ -271,8 +271,8 @@ export default function FillActualsScreen() {
                       machine={machine}
                       status={machineStatusById.get(machine.id)}
                       railColor={TRACK_META[machine.type].color}
-                      activeGroups={page.activeGroups}
-                      upcomingGroups={page.upcomingGroups}
+                      groups={page.groups}
+                      frontPileId={page.frontPileId}
                       openIdle={idleSessionByMachineId.get(item.value)}
                       hasActiveStep={currentStepByMachineId.has(machine.id)}
                       onOpenPile={setOpenCpId}

@@ -23,7 +23,7 @@ export function useMachinePages(args: {
 }): {
   activeMachines: MachineBadge[];
   pileGroupsByMachineId: Map<string, PileGroup[]>;
-  machinePagesById: Map<string, { activeGroups: PileGroup[]; upcomingGroups: PileGroup[] }>;
+  machinePagesById: Map<string, { groups: PileGroup[]; frontPileId: string | undefined }>;
   machineBadgeItems: SwipeableTabItem[];
   selectedMachineId: string | undefined;
   setSelectedMachineId: (id: string | undefined) => void;
@@ -74,13 +74,14 @@ export function useMachinePages(args: {
   // PagerView calls for every machine up front) so each page's props stay reference-stable
   // and MachinePilesPage's React.memo can actually skip untouched machine pages.
   const machinePagesById = useMemo(() => {
-    const map = new Map<string, { activeGroups: PileGroup[]; upcomingGroups: PileGroup[] }>();
+    const map = new Map<string, { groups: PileGroup[]; frontPileId: string | undefined }>();
     for (const m of activeMachines) {
       const bucket = pileGroupsByMachineId.get(m.id) ?? EMPTY_PILE_GROUPS;
-      const frontId = frontPileIdByMachineId.get(m.id);
       map.set(m.id, {
-        activeGroups: bucket.filter((g) => g.checklistPileId === frontId),
-        upcomingGroups: bucket.filter((g) => g.checklistPileId !== frontId),
+        // Kept in real plan sequence order — the front-of-queue pile is
+        // marked (frontPileId), not moved to the top.
+        groups: bucket,
+        frontPileId: frontPileIdByMachineId.get(m.id),
       });
     }
     return map;

@@ -96,9 +96,6 @@ export function useSequenceEditor(args: {
     if (!activeMachine || !draftRows) return [];
     return draftRows
       .filter((r) => (activeMachine.type === 'RIG' ? r.rigId : r.craneId) === activeMachine.id)
-      // A running pile's machine/position can't change until its current
-      // step finishes — excluded from the reorderable subset entirely.
-      .filter((r) => !pileProgressByPileId.get(r.pileId)?.isRunning)
       .map((r) => ({
         id: r.pileId,
         label: `Pile ${pileMap.get(r.pileId)?.pileIdCode ?? r.pileId}`,
