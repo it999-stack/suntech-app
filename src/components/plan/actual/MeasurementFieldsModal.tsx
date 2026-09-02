@@ -6,9 +6,10 @@
 // — parameterized by which fields/labels/units to show (see
 // pileMeasurementTriggers.ts for the five trigger points), rather than five
 // near-duplicate modals. Mirrors RemarksModal's low-friction, skippable
-// pattern: closing without saving (the header X, or the backdrop) is always
-// a valid outcome, never a hard gate on the actual-time entry that
-// triggered it. Reached from PileStepsModal.tsx.
+// pattern: closing without saving (tapping the backdrop — no header X here,
+// see showCloseButton={false} below) is always a valid outcome, never a
+// hard gate on the actual-time entry that triggered it. Reached from
+// PileStepsModal.tsx.
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, Keyboard, Platform } from 'react-native';
@@ -233,7 +234,8 @@ export default function MeasurementFieldsModal({
       onClose={onClose}
       title={title}
       position="bottom"
-      subtitle="Optional — skip any field you don't have yet"
+      subtitle=""
+      showCloseButton={false}
     >
       <View style={styles.content}>
         {groupFieldsIntoRows(fields).map((row) => (

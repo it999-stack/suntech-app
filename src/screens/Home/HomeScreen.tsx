@@ -5,7 +5,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks } from 'lucide-react-native';
+import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks, Eye } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import ProgressRing from '@components/shared/ProgressRing';
 import GradientTile from '@components/shared/GradientTile';
@@ -105,6 +105,8 @@ function NoPlanCard({ onGenerate }: { onGenerate: () => void }) {
 function ActivePlanCard({
   onView,
   onEdit,
+  onPreview,
+  hasProgress,
   supervisor,
   planStartTime,
   completed,
@@ -112,6 +114,8 @@ function ActivePlanCard({
 }: {
   onView: () => void;
   onEdit: () => void;
+  onPreview: () => void;
+  hasProgress: boolean;
   supervisor: string;
   planStartTime: string | null;
   completed: number;
@@ -131,7 +135,11 @@ function ActivePlanCard({
           </Text>
         </View>
 
-        <Button label="Edit Plan" size="sm" icon={PencilLine} onPress={onEdit} />
+        {hasProgress ? (
+          <Button label="Preview Plan" size="sm" icon={Eye} onPress={onPreview} />
+        ) : (
+          <Button label="Edit Plan" size="sm" icon={PencilLine} onPress={onEdit} />
+        )}
       </View>
 
       {/* Progress */}
@@ -245,6 +253,11 @@ export default function HomeScreen() {
     [actualSteps],
   );
 
+  const hasProgress = useMemo(
+    () => actualSteps.some((a) => a.actualStart || a.actualEnd),
+    [actualSteps],
+  );
+
   const pilesInProgressCount = useMemo(() => {
     if (planStatus === 'none') return 0;
     return checklistPiles.filter((cp) => {
@@ -311,6 +324,8 @@ export default function HomeScreen() {
             <ActivePlanCard
               onView={() => navigation.navigate('FillActuals', { date: workingDate })}
               onEdit={() => navigation.navigate('GeneratePlan', { edit: true, date: workingDate })}
+              onPreview={() => checklist && navigation.navigate('PlanDetail', { checklistId: checklist.id })}
+              hasProgress={hasProgress}
               supervisor={supervisorName}
               planStartTime={checklist?.planStartTime ?? null}
               completed={completedSteps}

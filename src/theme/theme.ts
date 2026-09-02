@@ -51,6 +51,7 @@ export const colors = {
   // Base
   white: '#FFFFFF',
   black: '#000000',
+  fade: '#EEEEEE',
   transparent: 'transparent',
 
   // Decorative gradient blob (used behind gradient-tile quick actions)

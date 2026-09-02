@@ -14,12 +14,17 @@ import { colors } from '@theme/theme';
 interface Props {
   /** e.g. "start time" / "finish time" — used in the confirmation copy. */
   label: string;
+  /** The currently-logged value being cleared, already formatted for
+   * display (e.g. "9:45 AM, 26 Aug") — shown in the confirm dialog so it's
+   * clear exactly which entry is about to go, not just which field. Omit if
+   * unavailable for some reason; the dialog still reads fine without it. */
+  valueLabel?: string;
   /** Extra sentence appended when clearing this field cascades to another (e.g. clearing start also clears finish). */
   cascadeWarning?: string;
   onConfirm: () => void | Promise<void>;
 }
 
-export default function DeleteTimeButton({ label, cascadeWarning, onConfirm }: Props) {
+export default function DeleteTimeButton({ label, valueLabel, cascadeWarning, onConfirm }: Props) {
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // See EditTimeButton's identical hasOpenedPicker — every completed step
@@ -63,7 +68,7 @@ export default function DeleteTimeButton({ label, cascadeWarning, onConfirm }: P
         <ConfirmDialog
           visible={confirmOpen}
           title="Clear time?"
-          message={`This will remove the logged ${label}.${cascadeWarning ? ` ${cascadeWarning}` : ''}`}
+          message={`This will remove the logged ${label}${valueLabel ? ` (${valueLabel})` : ''}.${cascadeWarning ? ` ${cascadeWarning}` : ''}`}
           confirmLabel="Clear"
           destructive
           confirmDisabled={busy}

@@ -21,6 +21,7 @@
 // recorded", with no guessing about how long an in-progress step will run.
 
 import type { ActualEntry, PileGroup } from '@app-types/plan';
+import { addMinutes, toLocalIsoString } from '@utils/formatTime';
 
 type MachineInterval = {
   stepId: string;
@@ -147,4 +148,56 @@ export function findPileStepConflict(
       return intervalsOverlap(start, end, otherStart, otherEnd);
     }) ?? null
   );
+}
+
+export type ExpectedStepStart = {
+  expectedStartIso: string;
+  /** Undefined for the base case — anchored on this step's own planned
+   * start because the machine has no earlier real completion to chain off. */
+  anchorPileCode?: string;
+  anchorStepName?: string;
+};
+
+/**
+ * Mirrors `expected_step_start` in suntech-core's delay_service.py /
+ * `expectedStepStart` in suntech-client's timelineMath.ts — see
+ * DELAY_CALCULATIONS.md's "Start Delay" section. A step's realistic start is
+ * that same machine's own most recent actual completion, at or before this
+ * step's own actual start, across every pile it works that day — by real
+ * chronological finish order, not the planned queue order (exactly what
+ * MachineFloorIndex already tracks, since only closed intervals are indexed)
+ * — plus this step's own buffer. No qualifying prior completion (this is the
+ * machine's first real work of the day, or every other assigned step
+ * finished after this one started) falls back to this step's own planned
+ * start instead.
+ */
+export function computeExpectedStepStart(
+  index: MachineFloorIndex,
+  machineId: string | undefined,
+  excludeChecklistPileId: string,
+  excludeStepId: string,
+  atOrBeforeIso: string,
+  plannedStartIso: string,
+  bufferMinutes: number,
+): ExpectedStepStart {
+  const intervals = machineId ? index.get(machineId) : undefined;
+  const atOrBefore = new Date(atOrBeforeIso).getTime();
+
+  let anchor: MachineInterval | null = null;
+  let anchorEnd = -Infinity;
+  for (const interval of intervals ?? []) {
+    if (interval.checklistPileId === excludeChecklistPileId && interval.stepId === excludeStepId) continue;
+    const end = new Date(interval.end).getTime();
+    if (end <= atOrBefore && end > anchorEnd) {
+      anchor = interval;
+      anchorEnd = end;
+    }
+  }
+
+  const anchorIso = anchor?.end ?? plannedStartIso;
+  return {
+    expectedStartIso: toLocalIsoString(addMinutes(new Date(anchorIso), bufferMinutes || 0)),
+    anchorPileCode: anchor?.pileCode,
+    anchorStepName: anchor?.stepName,
+  };
 }

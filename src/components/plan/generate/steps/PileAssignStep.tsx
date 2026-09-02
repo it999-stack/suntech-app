@@ -127,15 +127,14 @@ export default function PileAssignStep({
     const q = search.trim().toLowerCase().replace(/-/g, '');
     return piles
       .filter((p) => {
-        // While searching, match across every area selected for this plan
-        // instead of just the active tab — the location pills are hidden
-        // during search anyway (see PileListToolbar), so there's no active
-        // tab to scope to from the user's point of view.
+        // While searching, match across every area or status
         if (!q && activeLocationId !== ALL_LOCATIONS_ID && p.locationId !== activeLocationId) return false;
         if (q && !p.code.toLowerCase().replace(/-/g, '').includes(q)) return false;
-        if (filter === 'pending' && (p.completed || isPileFullyAssigned(p.id))) return false;
-        if (filter === 'assigned' && (p.completed || !isPileFullyAssigned(p.id))) return false;
-        if (filter === 'completed' && !p.completed) return false;
+        if (!q) {
+          if (filter === 'pending' && (p.completed || isPileFullyAssigned(p.id))) return false;
+          if (filter === 'assigned' && (p.completed || !isPileFullyAssigned(p.id))) return false;
+          if (filter === 'completed' && !p.completed) return false;
+        }
         return true;
       })
       .sort((a, b) => a.code.localeCompare(b.code));
