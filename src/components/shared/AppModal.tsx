@@ -56,6 +56,11 @@ interface Props {
    * swipe-down-to-dismiss to be the only way to close. Defaults to true; the
    * drag gesture itself is unaffected either way. */
   showCloseButton?: boolean;
+  /** Custom content for the header's trailing slot (next to the title, where
+   * the close button normally sits) — e.g. a small status pill. Renders
+   * alongside the close button when both are present; most callers pairing
+   * this with showCloseButton={false} to use that slot exclusively. */
+  headerRight?: React.ReactNode;
 }
 
 /** Renders nothing itself — registers its sheet content into the single
@@ -77,6 +82,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
     scrollable = true,
     avoidKeyboard = true,
     showCloseButton = true,
+    headerRight,
   },
   scrollRef,
 ) {
@@ -146,12 +152,13 @@ export default forwardRef<ScrollView, Props>(function AppModal(
             <View>
               {!isTop && !isCenter && <View style={styles.grabber} />}
 
-              {(title || subtitle) && (
+              {(title || subtitle || headerRight) && (
                 <View style={styles.headerRow}>
                   <View style={styles.headerTextWrap}>
                     {title && <Text style={styles.title}>{title}</Text>}
                     {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
                   </View>
+                  {headerRight}
                   {showCloseButton && (
                     <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
                       <X size={18} color={colors.textSecondary} />

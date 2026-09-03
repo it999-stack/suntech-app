@@ -67,15 +67,8 @@ export default function TileSelect({
 }: TileSelectProps) {
   const { name, suffix } = splitTileLabel(label);
   const isLongName = name.length >= SHORT_NAME_THRESHOLD;
-  // A disabled tile never shows the "selected" color treatment, even if it's
-  // technically still present in the caller's selected-ids list — the color
-  // is reserved for a live, user-made selection, not a stale/locked one.
   const showSelected = selected && !disabled;
   const tint = { color: showSelected ? color : colors.textSecondary };
-  // The icon chip only carries its track color once actually selected —
-  // otherwise every tile reads equally "colored" regardless of pick state,
-  // and the border becomes the only tell. Unselected falls back to the same
-  // neutral tone the border/label already use.
   const iconBg = showSelected ? soft : 'rgba(28,28,46,0.06)';
   const iconColor = showSelected ? color : colors.textSecondary;
 
@@ -95,15 +88,15 @@ export default function TileSelect({
       <View style={styles.textWrap}>
         {suffix && isLongName ? (
           <>
-            <Text style={[styles.label, tint]} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={[styles.label, tint]}>
               {name.toUpperCase()}
             </Text>
-            <Text style={styles.labelSuffix} numberOfLines={1}>
+            <Text style={styles.labelSuffix}>
               ({suffix})
             </Text>
           </>
         ) : (
-          <Text style={[styles.label, tint]} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={[styles.label, tint]}>
             {name.toUpperCase()}{suffix ? ` (${suffix})` : ''}
           </Text>
         )}
@@ -149,8 +142,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   textWrap: {
-    flex: 1,
-    minWidth: 0,
+    flexGrow: 1,
   },
   label: {
     ...typography.body,

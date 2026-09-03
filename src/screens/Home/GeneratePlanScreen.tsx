@@ -3,18 +3,19 @@
 // Owns transient PlanDraft state; commits to SQLite only on the final "Generate" press.
 //
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import NextStepFab from '@components/plan/generate/NextStepFab';
 import ReorderPilesOverlay from '@components/plan/generate/preview/ReorderPilesOverlay';
 import Button from '@components/shared/Button';
@@ -267,12 +268,24 @@ export default function GeneratePlanScreen() {
     setStep(STEP_ORDER[Math.min(idx + 1, STEP_ORDER.length - 1)]);
   }
 
-  function goToPrevStep() {
+  // Memoized (unlike goNext above) so the hardware-back listener below can
+  // depend on it without tearing down and re-registering on every render.
+  const goToPrevStep = useCallback(() => {
     const idx = STEP_ORDER.indexOf(step);
     if (idx === 0) return;
 
     setStep(STEP_ORDER[idx - 1]);
-  }
+  }, [step]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        goToPrevStep();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [goToPrevStep]),
+  );
 
   const {
     pendingTrackOverrides, setPendingTrackOverrides,
@@ -280,10 +293,6 @@ export default function GeneratePlanScreen() {
     previewRecomputing, previewLoading, planReferenceData, precomputePreview,
   } = usePlanPreview({ step, draft, updateDraft, piles, siteId, selectedPlanPiles, steps });
 
-  // Where a resume step effectively starts in the new plan (after skipping any opening
-  // non-working window) — the anchor ResumeConfirmStep's "plan finish time" picker
-  // measures duration against. Falls back to the raw plan start until reference data
-  // (non-working windows) has loaded.
   const effectiveDayStart = useMemo(
     () => resolveEffectiveDayStart(draft.planStartTime, planReferenceData?.rawWindows ?? []),
     [draft.planStartTime, planReferenceData],

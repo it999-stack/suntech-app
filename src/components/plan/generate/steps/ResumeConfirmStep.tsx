@@ -16,11 +16,12 @@
 
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { Clock, PencilLine } from 'lucide-react-native';
+import { CheckCircle2, Clock, PencilLine } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MachineBadge from '@components/shared/MachineBadge';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
+import { formatTime } from '@utils/formatTime';
 import { useScrollToField } from '@hooks/useScrollToField';
 import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
 import ResumeTimeConfirmModal from './resume-confirm/ResumeTimeConfirmModal';
@@ -173,7 +174,10 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
                   const needsConfirm = pileNeedsResumeConfirm(draft.resumeWorkByPileId, p.id);
                   const resumeWork = draft.resumeWorkByPileId[p.id];
                   const isConfirmed = !needsConfirm && !!resumeWork?.wasStarted;
-                  const statusColor = isConfirmed ? ACCENT_SOLID : colors.textSecondary;
+                  // Only the small status icon carries color now (outlined-pill
+                  // design) — border color follows via statusPillConfirmed/
+                  // statusPillPending, text and the edit pencil stay neutral.
+                  const iconColor = isConfirmed ? ACCENT_SOLID : colors.warning;
 
                   return (
                     <PileGroupRow
@@ -184,21 +188,53 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
                       subtitle={`Ø${p.dia}mm · ${p.depth}m`}
                       isLast={idx === group.piles.length - 1}
                       right={craneLabel && <MachineBadge track="CRANE" label={craneLabel} />}
-                      below={(needsConfirm || isConfirmed) && (
-                        <Pressable
-                          style={[styles.statusPill, isConfirmed ? styles.statusPillConfirmed : styles.statusPillPending]}
-                          onPress={() => resumeConfirm.openSingle(p.id)}
-                        >
-                          <Clock size={16} color={statusColor} style={styles.statusPillIcon} />
-                          <Text style={[styles.statusPillText, { color: statusColor }]} numberOfLines={1}>
-                            {isConfirmed
-                              ? `${resumeWork!.stepName ?? 'Step'} · ~${Math.floor(resumeWork!.remainingMinutes / 60)}h ${resumeWork!.remainingMinutes % 60}m remaining`
-                              : 'Ready to set finish time'}
-                          </Text>
-                          <View style={styles.statusPillEditBadge}>
-                            <PencilLine size={16} color={statusColor} />
-                          </View>
-                        </Pressable>
+                      below={(needsConfirm || isConfirmed || resumeWork?.lastConfirmedFull) && (
+                        <View style={styles.pillStack}>
+                          {(needsConfirm || isConfirmed) && (
+                            <Pressable
+                              style={[styles.statusPill, isConfirmed ? styles.statusPillConfirmed : styles.statusPillPending]}
+                              onPress={() => resumeConfirm.openSingle(p.id)}
+                            >
+                              <Clock size={16} color={iconColor} style={styles.statusPillIcon} />
+                              {isConfirmed ? (
+                                <View style={styles.statusPillTextWrap}>
+                                  <Text style={styles.statusPillText} numberOfLines={1}>
+                                    {resumeWork!.stepName ?? 'Step'}
+                                  </Text>
+                                  <Text style={styles.statusPillDetailText} numberOfLines={1}>
+                                    ~{Math.floor(resumeWork!.remainingMinutes / 60)}h {resumeWork!.remainingMinutes % 60}m remaining
+                                  </Text>
+                                </View>
+                              ) : (
+                                <Text style={styles.statusPillText} numberOfLines={1}>
+                                  Ready to set finish time
+                                </Text>
+                              )}
+                              <View style={styles.statusPillEditBadge}>
+                                <PencilLine size={16} color={colors.textSecondary} />
+                              </View>
+                            </Pressable>
+                          )}
+                          {resumeWork?.lastConfirmedFull && (
+                            <Pressable
+                              style={[styles.statusPill, styles.statusPillCompleted]}
+                              onPress={() => resumeConfirm.openEditCompleted(p.id)}
+                            >
+                              <CheckCircle2 size={16} color={colors.success} style={styles.statusPillIcon} />
+                              <View style={styles.statusPillTextWrap}>
+                                <Text style={styles.statusPillText} numberOfLines={1}>
+                                  {resumeWork.lastConfirmedFull.stepName}
+                                </Text>
+                                <Text style={styles.statusPillDetailText} numberOfLines={1}>
+                                  Completed {formatTime(resumeWork.lastConfirmedFull.pastEndIso)}
+                                </Text>
+                              </View>
+                              <View style={styles.statusPillEditBadge}>
+                                <PencilLine size={16} color={colors.textSecondary} />
+                              </View>
+                            </Pressable>
+                          )}
+                        </View>
                       )}
                     />
                   );
@@ -210,6 +246,24 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
       </View>
 
       {(() => {
+        if (resumeConfirm.editingCompletedPileId) {
+          const editPile = piles.find((p) => p.id === resumeConfirm.editingCompletedPileId);
+          const editResumeWork = editPile ? draft.resumeWorkByPileId[editPile.id] : undefined;
+          return editPile && editResumeWork?.lastConfirmedFull ? (
+            <ResumeTimeConfirmModal
+              visible
+              pileCode={editPile.code}
+              resumeWork={editResumeWork}
+              effectiveStart={effectiveDayStart}
+              onConfirmPartial={resumeConfirm.confirmPartial}
+              onConfirmFull={resumeConfirm.confirmFull}
+              editingCompleted
+              onConfirmEditedFull={resumeConfirm.editConfirmedFull}
+              onClose={resumeConfirm.cancelEditCompleted}
+            />
+          ) : null;
+        }
+
         const confirmPile = piles.find((p) => p.id === resumeConfirm.confirmQueue[0]);
         const confirmResumeWork = confirmPile ? draft.resumeWorkByPileId[confirmPile.id] : undefined;
         return confirmPile && confirmResumeWork ? (
@@ -257,23 +311,37 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: spacing.lg,
   },
+  // Outlined pill design — white fill throughout, a thin state-colored border
+  // plus the leading icon are the only color, text and the edit pencil stay
+  // neutral. Replaces the old filled purple/green tint pills with one
+  // consistent, lower-contrast treatment across all three states.
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: radius.sm,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm + 2,
-    marginTop: spacing.sm,
+    backgroundColor: colors.white,
+    borderWidth: 1,
   },
-  statusPillPending: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.warning },
-  statusPillConfirmed: { backgroundColor: colors.accentSoft },
+  pillStack: { gap: spacing.xs, marginTop: spacing.sm },
+  statusPillPending: { borderColor: colors.warning },
+  statusPillConfirmed: { borderColor: ACCENT_SOLID },
+  statusPillCompleted: { borderColor: colors.success },
   statusPillIcon: { marginRight: spacing.xs + 2 },
-  statusPillText: { ...typography.caption, fontWeight: '600', flex: 1 },
+  statusPillText: { ...typography.caption, fontWeight: '600', color: colors.textPrimary, flex: 1 },
+  // Wraps the confirmed/completed pills' two-line content (step name + the
+  // remaining-time or completed-time detail) — a long step name used to be
+  // combined with that detail into one line and truncate before the time
+  // ever became visible; splitting them into their own lines means the
+  // (always short) time detail is never the part that gets cut off.
+  statusPillTextWrap: { flex: 1 },
+  statusPillDetailText: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
   statusPillEditBadge: {
     width: 26,
     height: 26,
     borderRadius: radius.sm,
-    backgroundColor: colors.white,
+    backgroundColor: 'rgba(28,28,46,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: spacing.sm,

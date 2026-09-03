@@ -515,115 +515,127 @@ export default function PileStepsModal({
 
                   <View style={modalStyles.actualCard}>
                     <View style={modalStyles.actualRow}>
-                      <View style={modalStyles.iconChip}>
-                        <Link2 size={14} color={colors.accentBlue} />
+                      <View style={modalStyles.actualRowTop}>
+                        <View style={modalStyles.iconChip}>
+                          <Link2 size={14} color={colors.accentBlue} />
+                        </View>
+                        <View style={modalStyles.actualRowText}>
+                          <Text style={[modalStyles.actualRowLabel, modalStyles.actualRowLabelFaded]} numberOfLines={1}>Expected start</Text>
+                          <Text style={modalStyles.actualRowSubtitle}>
+                            {expectedStart?.anchorPileCode
+                              ? `${expectedStart.anchorPileCode} - ${expectedStart.anchorStepName} ended`
+                              : 'Planned start'}
+                          </Text>
+                        </View>
                       </View>
-                      <View style={modalStyles.actualRowText}>
-                        <Text style={modalStyles.actualRowLabel}>Expected start</Text>
-                        <Text style={modalStyles.actualRowSubtitle}>
-                          {expectedStart?.anchorPileCode
-                            ? `${expectedStart.anchorPileCode} - ${expectedStart.anchorStepName} ended`
-                            : 'Planned start'}
+                      <View style={modalStyles.actualRowBottom}>
+                        <Text style={[modalStyles.actualRowValue, modalStyles.actualRowValueFaded]}>
+                          {formatTimeWithDay(expectedStart?.expectedStartIso)}
                         </Text>
+                        <Pressable
+                          hitSlop={8}
+                          onPress={() =>
+                            notify.info(
+                              startDelayMinutes == null
+                                ? 'No expected start available for this step.'
+                                : startDelayMinutes === 0
+                                  ? 'Started right on the expected time.'
+                                  : startDelayMinutes > 0
+                                    ? `Started ${startDelayMinutes}m later than expected.`
+                                    : `Started ${Math.abs(startDelayMinutes)}m earlier than expected.`,
+                            )
+                          }
+                        >
+                          <Info size={16} color={colors.textSecondary} />
+                        </Pressable>
                       </View>
-                      <Text style={modalStyles.actualRowValue}>
-                        {formatTimeWithDay(expectedStart?.expectedStartIso)}
-                      </Text>
-                      <Pressable
-                        hitSlop={8}
-                        onPress={() =>
-                          notify.info(
-                            startDelayMinutes == null
-                              ? 'No expected start available for this step.'
-                              : startDelayMinutes === 0
-                                ? 'Started right on the expected time.'
-                                : startDelayMinutes > 0
-                                  ? `Started ${startDelayMinutes}m later than expected.`
-                                  : `Started ${Math.abs(startDelayMinutes)}m earlier than expected.`,
-                          )
-                        }
-                      >
-                        <Info size={16} color={colors.textSecondary} />
-                      </Pressable>
                     </View>
 
                     <View style={modalStyles.actualRow}>
-                      <View style={modalStyles.iconChip}>
-                        <CirclePlay size={14} color={colors.accentBlue} />
-                      </View>
-                      <View style={modalStyles.actualRowText}>
-                        <Text style={modalStyles.actualRowLabel}>Actual start</Text>
-                      </View>
-                      <Text style={modalStyles.actualRowValue}>{formatTimeWithDay(step.actualStartIso)}</Text>
-                      {!isHistorical && (
-                        <View style={modalStyles.fieldActions}>
-                          <EditTimeButton
-                            minutes={step.actualStart!}
-                            label="start time"
-                            minBoundIso={prevStep?.actualEndIso}
-                            minBoundConflict={
-                              prevStep
-                                ? formatOccupiedNotice(group.pileCode, prevStep.stepName, prevStep.actualStartIso, prevStep.actualEndIso)
-                                : undefined
-                            }
-                            maxBoundIso={step.actualEndIso}
-                            maxBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
-                            planWindowMinIso={planWindowMinIso}
-                            planWindowMaxIso={planWindowMaxIso}
-                            machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
-                            pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
-                            onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
-                            anchorIso={step.startAnchorIso}
-                            blocked={!isDone ? currentStepBlockedNotice : undefined}
-                          />
-                          <DeleteTimeButton
-                            label="start time"
-                            valueLabel={formatTimeWithDay(step.actualStartIso)}
-                            cascadeWarning={isDone ? 'This will also clear the finish time.' : undefined}
-                            onConfirm={() => onClearActualTime(step.stepId, 'actualStart')}
-                          />
+                      <View style={modalStyles.actualRowTop}>
+                        <View style={modalStyles.iconChip}>
+                          <CirclePlay size={14} color={colors.accentBlue} />
                         </View>
-                      )}
+                        <View style={modalStyles.actualRowText}>
+                          <Text style={modalStyles.actualRowLabel} numberOfLines={1}>Actual start</Text>
+                        </View>
+                      </View>
+                      <View style={modalStyles.actualRowBottom}>
+                        <Text style={modalStyles.actualRowValue}>{formatTimeWithDay(step.actualStartIso)}</Text>
+                        {!isHistorical && (
+                          <View style={modalStyles.fieldActions}>
+                            <EditTimeButton
+                              minutes={step.actualStart!}
+                              label="start time"
+                              minBoundIso={prevStep?.actualEndIso}
+                              minBoundConflict={
+                                prevStep
+                                  ? formatOccupiedNotice(group.pileCode, prevStep.stepName, prevStep.actualStartIso, prevStep.actualEndIso)
+                                  : undefined
+                              }
+                              maxBoundIso={step.actualEndIso}
+                              maxBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
+                              planWindowMinIso={planWindowMinIso}
+                              planWindowMaxIso={planWindowMaxIso}
+                              machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
+                              pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
+                              onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
+                              anchorIso={step.startAnchorIso}
+                              blocked={!isDone ? currentStepBlockedNotice : undefined}
+                            />
+                            <DeleteTimeButton
+                              label="start time"
+                              valueLabel={formatTimeWithDay(step.actualStartIso)}
+                              cascadeWarning={isDone ? 'This will also clear the finish time.' : undefined}
+                              onConfirm={() => onClearActualTime(step.stepId, 'actualStart')}
+                            />
+                          </View>
+                        )}
+                      </View>
                     </View>
 
                     {isDone && (
                       <View style={modalStyles.actualRow}>
-                        <View style={modalStyles.iconChip}>
-                          <CircleStop size={14} color={colors.accentBlue} />
-                        </View>
-                        <View style={modalStyles.actualRowText}>
-                          <Text style={modalStyles.actualRowLabel}>Actual end</Text>
-                        </View>
-                        <Text style={[modalStyles.actualRowValue, isLate && modalStyles.lateText]}>
-                          {formatTimeWithDay(step.actualEndIso)}
-                        </Text>
-                        {!isHistorical && (
-                          <View style={modalStyles.fieldActions}>
-                            <EditTimeButton
-                              minutes={step.actualEnd!}
-                              label="finish time"
-                              minBoundIso={step.actualStartIso}
-                              minBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
-                              maxBoundIso={nextStep?.actualStartIso}
-                              maxBoundConflict={
-                                nextStep
-                                  ? formatOccupiedNotice(group.pileCode, nextStep.stepName, nextStep.actualStartIso, nextStep.actualEndIso)
-                                  : undefined
-                              }
-                              planWindowMinIso={planWindowMinIso}
-                              planWindowMaxIso={planWindowMaxIso}
-                              machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
-                              pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
-                              onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
-                              anchorIso={step.endAnchorIso}
-                            />
-                            <DeleteTimeButton
-                              label="finish time"
-                              valueLabel={formatTimeWithDay(step.actualEndIso)}
-                              onConfirm={() => onClearActualTime(step.stepId, 'actualEnd')}
-                            />
+                        <View style={modalStyles.actualRowTop}>
+                          <View style={modalStyles.iconChip}>
+                            <CircleStop size={14} color={colors.accentBlue} />
                           </View>
-                        )}
+                          <View style={modalStyles.actualRowText}>
+                            <Text style={modalStyles.actualRowLabel} numberOfLines={1}>Actual end</Text>
+                          </View>
+                        </View>
+                        <View style={modalStyles.actualRowBottom}>
+                          <Text style={[modalStyles.actualRowValue, isLate && modalStyles.lateText]}>
+                            {formatTimeWithDay(step.actualEndIso)}
+                          </Text>
+                          {!isHistorical && (
+                            <View style={modalStyles.fieldActions}>
+                              <EditTimeButton
+                                minutes={step.actualEnd!}
+                                label="finish time"
+                                minBoundIso={step.actualStartIso}
+                                minBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
+                                maxBoundIso={nextStep?.actualStartIso}
+                                maxBoundConflict={
+                                  nextStep
+                                    ? formatOccupiedNotice(group.pileCode, nextStep.stepName, nextStep.actualStartIso, nextStep.actualEndIso)
+                                    : undefined
+                                }
+                                planWindowMinIso={planWindowMinIso}
+                                planWindowMaxIso={planWindowMaxIso}
+                                machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
+                                pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
+                                onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
+                                anchorIso={step.endAnchorIso}
+                              />
+                              <DeleteTimeButton
+                                label="finish time"
+                                valueLabel={formatTimeWithDay(step.actualEndIso)}
+                                onConfirm={() => onClearActualTime(step.stepId, 'actualEnd')}
+                              />
+                            </View>
+                          )}
+                        </View>
                       </View>
                     )}
                   </View>
@@ -928,7 +940,7 @@ const modalStyles = StyleSheet.create({
   planTimeText: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.textPrimary,
+    color: colors.textSecondary,
   },
   planBreakText: {
     fontSize: 12,
@@ -1048,8 +1060,17 @@ const modalStyles = StyleSheet.create({
     gap: spacing.sm,
   },
   actualRow: {
+    gap: spacing.xs,
+  },
+  actualRowTop: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.sm,
+  },
+  actualRowBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: spacing.sm,
   },
   iconChip: {
@@ -1062,11 +1083,10 @@ const modalStyles = StyleSheet.create({
   },
   actualRowText: { flex: 1 },
   actualRowLabel: { ...typography.caption, color: colors.textPrimary, fontWeight: '600' },
+  actualRowLabelFaded: { color: colors.textSecondary },
   actualRowSubtitle: { ...typography.smallTxt, color: colors.textSecondary, marginTop: 2 },
   actualRowValue: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
-  // Sits flat on actualSection's own tinted background (no card of its
-  // own) — just a top divider to separate it from the Expected/Actual
-  // start/end card above.
+  actualRowValueFaded: { color: colors.textSecondary },
   statsRow: {
     flexDirection: 'row',
     borderTopWidth: 1,
@@ -1078,9 +1098,6 @@ const modalStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
-  // Vertical ruler between columns — applied to the 2nd/3rd column only, so
-  // there's a divider on each side of the middle column but none leading
-  // the first.
   statsColRuled: {
     borderLeftWidth: 1,
     borderLeftColor: colors.border,

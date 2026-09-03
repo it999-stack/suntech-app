@@ -100,7 +100,7 @@ export default function MachineReplaceModal({
   });
 
   return (
-    <AppModal visible={visible} onClose={onClose} title={pileCode} subtitle={stepName} position="bottom">
+    <AppModal visible={visible} onClose={onClose} title={pileCode} subtitle={stepName} position="bottom" showCloseButton={false}>
       <View style={styles.page}>
         <View style={styles.divider} />
 

@@ -43,12 +43,38 @@ export type ResumeWork = {
   /** Same steps as completedStepNames, with plan + actual times. */
   completedSteps?: CompletedStepInfo[];
   /** The step after the in-progress one, if any — used when the supervisor
-   * confirms the in-progress step was actually fully completed yesterday. */
+   * confirms the in-progress step was actually fully completed on the
+   * previous day. */
   nextStep?: { stepId: string; stepName: string; remainingMinutes: number } | null;
   /** The historical checklist this resume work came from, and its date —
-   * lets the confirm modal anchor its "yesterday" time pickers correctly. */
+   * lets the confirm modal anchor its "previous day" time pickers correctly. */
   checklistId?: string;
   checklistDate?: string;
+  /** What the supervisor chose the last time this pile's resume was
+   * confirmed, and the exact values used — lets the modal reopen prefilled
+   * instead of resetting to a blank choice. Only ever set by confirmPartial;
+   * confirmFull's pile becomes unreachable via openSingle afterward (see
+   * useResumeConfirmQueue.ts), so there's nothing to reopen there. */
+  confirmedStatus?: 'partial';
+  confirmedPastEndIso?: string;
+  confirmedRemarks?: string;
+  /** The step this pile most recently had marked "Fully completed" via
+   * confirmFull — survives the pile's resume-work object being overwritten
+   * with the next step's info, so it stays reachable for a light edit
+   * (finish time + remarks only; see confirmFull/editConfirmedFull). */
+  lastConfirmedFull?: {
+    stepId: string;
+    stepName: string;
+    pastChecklistPileId: string;
+    pastActualStart: string | null;
+    pastEndIso: string;
+    remarks: string;
+    /** The historical checklist pastChecklistPileId belongs to — captured
+     * here since confirmFull's nextStep branch replaces the whole
+     * resume-work object (dropping the top-level checklistId), so
+     * editConfirmedFull needs its own copy to enqueue a sync. */
+    checklistId?: string;
+  };
 };
 
 /**

@@ -63,10 +63,11 @@ export interface ResumeWorkInfo {
   /** Same steps as completedStepNames, with plan + actual times — for Preview/Log Actuals display. */
   completedSteps: CompletedStepInfo[];
   /** The step immediately after the in-progress one, if any — used when the
-   * supervisor confirms the in-progress step was actually fully completed
-   * yesterday: the resume point advances here (fresh, full duration) instead
-   * of re-planning the already-finished step. Null when firstIncomplete was
-   * the last applicable step (pile is then fully done in that case). */
+   * supervisor confirms the in-progress step was actually fully completed on
+   * the previous day: the resume point advances here (fresh, full duration)
+   * instead of re-planning the already-finished step. Null when
+   * firstIncomplete was the last applicable step (pile is then fully done in
+   * that case). */
   nextStep: { stepId: string; stepName: string; remainingMinutes: number } | null;
   /** The historical checklist this pending work belongs to, and its date —
    * lets a caller (e.g. HomeScreen's "pending from previous day" card) link
@@ -228,8 +229,9 @@ export async function findResumeWorkForPiles(
       });
 
     // The step right after the in-progress one — used if the supervisor later
-    // confirms firstIncomplete was actually fully finished yesterday, so the
-    // resume point can advance instead of re-planning a finished step.
+    // confirms firstIncomplete was actually fully finished on the previous
+    // day, so the resume point can advance instead of re-planning a finished
+    // step.
     const nextIdx = referenceSteps.findIndex((s) => s.id === firstIncomplete.id) + 1;
     const nextStepDef = nextIdx > 0 ? referenceSteps[nextIdx] : undefined;
     const nextStep = nextStepDef
@@ -265,9 +267,9 @@ export async function findResumeWorkForPiles(
 /**
  * Close out the historical (paused) actual-step row a pile is resuming from,
  * writing the real time it stopped (partially completed) or finished (fully
- * completed) yesterday, plus an optional remarks note. `pastActualStart` must
- * be passed through unchanged — upsertActualStep overwrites actualStart/
- * actualEnd/remarks together, not a partial patch.
+ * completed) on the previous day, plus an optional remarks note.
+ * `pastActualStart` must be passed through unchanged — upsertActualStep
+ * overwrites actualStart/actualEnd/remarks together, not a partial patch.
  */
 export async function closeOutResumeStep(
   pastChecklistPileId: string,

@@ -247,11 +247,6 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
                           plannedStart: seg.start,
                           plannedEnd: seg.end,
                           durationMinutes: seg.durationMinutes,
-                          // seg.start is already the buffer-adjusted work-start timestamp
-                          // (splitStepByInternalWindows built it from stepWorkStart(s)), so
-                          // bufferMinutes must be 0 here on every segment — otherwise
-                          // StepTimelineRow's own stepWorkStart(step) call re-adds the buffer
-                          // on top of a start time that already includes it.
                           bufferMinutes: 0,
                         }}
                         isLast={isLastDisplayedStep && segIdx === internalSplit.segments.length - 1}
@@ -259,8 +254,6 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
                         isCompleted={false}
                         rigMachineNo={pile.rigMachineNo}
                         craneMachineNo={pile.craneMachineNo}
-                        // Interactive only on the first segment — one step, not two
-                        // independent ones to toggle the track of.
                         trackChoice={segIdx === 0 ? trackChoice : undefined}
                       />
                       {internalSplit.breaks[segIdx] && (

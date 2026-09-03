@@ -2,16 +2,17 @@
 //
 // Gate shown before a pile with a step in progress from a previous day can be
 // carried into today's plan. Single continuously-visible form, not a wizard:
-// the question — how much of the step was completed yesterday? (the
-// supervisor is the source of truth; the app never assumes an unlogged step
-// is still open) — stays on screen after answering, and the matching section
-// appears inline below it:
-//   - Partially completed — capture the real time work stopped yesterday
-//     (closes out yesterday's row), then set an absolute "plan finish time"
-//     for today's continuation — not an elapsed-time guess — which is
-//     converted into a remaining-duration override for this pile only.
-//   - Fully completed — capture the real finish time (closes out
-//     yesterday's row) and nothing else; this step isn't planned today.
+// the question — how much of the step was completed on the previous day?
+// (the supervisor is the source of truth; the app never assumes an unlogged
+// step is still open) — stays on screen after answering, and the matching
+// section appears inline below it:
+//   - Partially completed — capture the real time work stopped on the
+//     previous day (closes out that day's row), then set an absolute "plan
+//     finish time" for today's continuation — not an elapsed-time guess —
+//     which is converted into a remaining-duration override for this pile
+//     only.
+//   - Fully completed — capture the real finish time (closes out the
+//     previous day's row) and nothing else; this step isn't planned today.
 // Mirrors the same time-of-day picker design used for logging actual
 // start/finish times (see StepTimeControl.tsx) rather than a raw
 // "how many minutes" duration picker.
@@ -19,11 +20,12 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, Keyboard } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { CheckCircle2, Clock, ArrowRight, Calendar, Hourglass, ClipboardCheck } from 'lucide-react-native';
+import { CheckCircle2, Clock, Calendar, Hourglass, ClipboardCheck } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import Button from '@components/shared/Button';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { formatTime, formatTimeWithDay, formatDuration, toLocalIsoString } from '@utils/formatTime';
+import { notify } from '@utils/notify';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import type { ResumeWork } from '@/types/plan';
 
@@ -35,12 +37,26 @@ interface ResumeTimeConfirmModalProps {
    * non-working window) — the anchor the picked finish time's duration is measured
    * against. See pilingPlannerService.ts's resolveEffectiveDayStart. */
   effectiveStart: Date;
-  /** Step was genuinely still in progress: pastEndIso closes out yesterday's row,
-   * remainingMinutes/remarks continue it today. */
-  onConfirmPartial: (pastEndIso: string, remainingMinutes: number, remarks: string) => void;
-  /** Step actually finished yesterday, just never logged: pastEndIso closes out
-   * yesterday's row; nothing is planned for it today. */
-  onConfirmFull: (pastEndIso: string, remarks: string) => void;
+  /** Step was genuinely still in progress: pastEndIso closes out the previous
+   * day's row, remainingMinutes/remarks continue it today. Awaited — closes out
+   * the previous day's row and enqueues it for sync, so this must resolve (or
+   * throw) before the modal advances. */
+  onConfirmPartial: (pastEndIso: string, remainingMinutes: number, remarks: string) => Promise<void>;
+  /** Step actually finished on the previous day, just never logged: pastEndIso
+   * closes out that day's row; nothing is planned for it today. Awaited, same
+   * as above. */
+  onConfirmFull: (pastEndIso: string, remarks: string) => Promise<void>;
+  /** When true, the modal edits `resumeWork.lastConfirmedFull` — the step most
+   * recently marked "Fully completed" for this pile — instead of the pile's
+   * live in-progress step (which, once confirmFull has run, represents the
+   * *next* step, not the one being edited here). Skips the "Partially/Fully
+   * completed" choice entirely (no switching back to partial) and jumps
+   * straight to the finish-time + remarks fields, prefilled from
+   * lastConfirmedFull. Requires onConfirmEditedFull. */
+  editingCompleted?: boolean;
+  /** Saves an edit made in editingCompleted mode. Not awaited by anything but
+   * this modal's own handleConfirmFull, same pattern as onConfirmFull. */
+  onConfirmEditedFull?: (pastEndIso: string, remarks: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -55,7 +71,7 @@ const COMPLETED_STEPS_PREVIEW_LIMIT = 3;
 
 /** The step's canonical template duration (the same avg. minutes that seeds "Plan finish
  * time" below), added onto the day work actually started — a much better first guess for
- * "when did this actually stop/finish yesterday" than the wall-clock moment the supervisor
+ * "when did this actually stop/finish on the previous day" than the wall-clock moment the supervisor
  * happens to open this modal. Falls back to the historical checklist's date when there's no
  * logged start yet (this modal only opens for steps with a real actualStart in practice, via
  * pileNeedsResumeConfirm's wasStarted gate — see useResumeConfirmQueue.ts). */
@@ -78,31 +94,103 @@ export default function ResumeTimeConfirmModal({
   effectiveStart,
   onConfirmPartial,
   onConfirmFull,
+  editingCompleted = false,
+  onConfirmEditedFull,
   onClose,
 }: ResumeTimeConfirmModalProps) {
   const seedFinish = () =>
     new Date(effectiveStart.getTime() + Math.max(0, resumeWork.remainingMinutes) * 60000);
 
-  const [status, setStatus] = useState<ResumeStatus>(null);
-  const [pastDate, setPastDate] = useState<Date>(() =>
-    seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes),
+  // In editingCompleted mode, "the previous day" refers to lastConfirmedFull's own
+  // step — resumeWork.pastActualStart/stepName by then describe the *next*
+  // step confirmFull advanced to, not the one being edited here.
+  const activePastActualStart = editingCompleted
+    ? resumeWork.lastConfirmedFull?.pastActualStart ?? null
+    : resumeWork.pastActualStart;
+  const activeStepName = editingCompleted ? resumeWork.lastConfirmedFull?.stepName : resumeWork.stepName;
+
+  const [status, setStatus] = useState<ResumeStatus>(
+    editingCompleted ? 'full' : (resumeWork.confirmedStatus ?? null),
   );
+  const [pastDate, setPastDate] = useState<Date>(() => {
+    if (editingCompleted) {
+      return resumeWork.lastConfirmedFull ? new Date(resumeWork.lastConfirmedFull.pastEndIso) : new Date();
+    }
+    if (resumeWork.confirmedPastEndIso) return new Date(resumeWork.confirmedPastEndIso);
+    return seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes);
+  });
   const [finishDate, setFinishDate] = useState<Date>(seedFinish);
   const [pickerTarget, setPickerTarget] = useState<'past' | 'finish' | null>(null);
-  const [remarks, setRemarks] = useState('');
+  const [remarks, setRemarks] = useState(
+    editingCompleted ? (resumeWork.lastConfirmedFull?.remarks ?? '') : (resumeWork.confirmedRemarks ?? ''),
+  );
+  const [saving, setSaving] = useState(false);
+
+  async function handleConfirmPartial() {
+    setSaving(true);
+    try {
+      await onConfirmPartial(toLocalIsoString(pastDate), remainingMinutes, remarks.trim());
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : 'Could not save the previous day’s finish time. Please try again.', {
+        title: 'Failed to save',
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmFull() {
+    setSaving(true);
+    try {
+      if (editingCompleted) {
+        await onConfirmEditedFull?.(toLocalIsoString(pastDate), remarks.trim());
+      } else {
+        await onConfirmFull(toLocalIsoString(pastDate), remarks.trim());
+      }
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : 'Could not save the previous day’s finish time. Please try again.', {
+        title: 'Failed to save',
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!visible) return;
-    setStatus(null);
-    setPastDate(seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes));
+    if (editingCompleted) {
+      setStatus('full');
+      setPastDate(
+        resumeWork.lastConfirmedFull ? new Date(resumeWork.lastConfirmedFull.pastEndIso) : new Date(),
+      );
+      setRemarks(resumeWork.lastConfirmedFull?.remarks ?? '');
+      return;
+    }
+    setStatus(resumeWork.confirmedStatus ?? null);
+    setPastDate(
+      resumeWork.confirmedPastEndIso
+        ? new Date(resumeWork.confirmedPastEndIso)
+        : seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes),
+    );
     setFinishDate(seedFinish());
-    setRemarks('');
-  }, [visible, resumeWork.remainingMinutes, resumeWork.pastActualStart, resumeWork.checklistDate, effectiveStart]);
+    setRemarks(resumeWork.confirmedRemarks ?? '');
+  }, [
+    visible,
+    editingCompleted,
+    resumeWork.remainingMinutes,
+    resumeWork.pastActualStart,
+    resumeWork.checklistDate,
+    resumeWork.lastConfirmedFull,
+    resumeWork.confirmedStatus,
+    resumeWork.confirmedPastEndIso,
+    resumeWork.confirmedRemarks,
+    effectiveStart,
+  ]);
 
   const completedSteps = resumeWork.completedSteps ?? [];
   const visibleCompletedSteps = completedSteps.slice(0, COMPLETED_STEPS_PREVIEW_LIMIT);
   const extraCompletedCount = Math.max(0, completedSteps.length - COMPLETED_STEPS_PREVIEW_LIMIT);
-  const pastActualStartDate = resumeWork.pastActualStart ? new Date(resumeWork.pastActualStart) : null;
+  const pastActualStartDate = activePastActualStart ? new Date(activePastActualStart) : null;
   const pastTimeValid = !pastActualStartDate || pastDate.getTime() >= pastActualStartDate.getTime();
 
   function handleFinishPicked(date: Date) {
@@ -120,68 +208,73 @@ export default function ResumeTimeConfirmModal({
   );
 
   const title = pileCode;
-  const stepLabel = resumeWork.stepName ?? 'Step';
+  const stepLabel = (editingCompleted ? activeStepName : resumeWork.stepName) ?? 'Step';
 
   return (
-    <AppModal visible={visible} onClose={onClose} title={title} position="bottom">
-      <View style={styles.content}>
+    <AppModal
+      visible={visible}
+      onClose={onClose}
+      title={title}
+      position="bottom"
+      showCloseButton={false}
+      headerRight={
         <View style={styles.statusBadge}>
-          <Text style={styles.statusBadgeText}>{statusSubtitle(status)}</Text>
+          <Text style={styles.statusBadgeText}>
+            {editingCompleted ? 'Edit completed time' : statusSubtitle(status)}
+          </Text>
         </View>
-
-        <View style={styles.infoCardRow}>
-          <View style={[styles.infoCardHalf, styles.infoCardCompleted]}>
-            <View style={styles.infoCardHeaderRow}>
-              <View style={[styles.infoCardIconCircle, { backgroundColor: colors.success }]}>
-                <CheckCircle2 size={13} color={colors.white} />
+      }
+    >
+      <View style={styles.content}>
+        {!editingCompleted && (
+        <View style={styles.stepsSection}>
+          <Text style={styles.stepsSectionLabel}>Previous day&apos;s steps</Text>
+          <View style={styles.stepsListCard}>
+            {visibleCompletedSteps.map((c) => (
+              <View key={c.stepId} style={styles.timelineRow}>
+                <View style={[styles.timelineIconWrap, { backgroundColor: colors.successSoft }]}>
+                  <CheckCircle2 size={16} color={colors.success} />
+                </View>
+                <View style={styles.timelineInfo}>
+                  <Text style={styles.timelineStepName} numberOfLines={1}>{c.stepName}</Text>
+                  <Text style={[styles.timelineStatusText, { color: colors.success }]}>Completed</Text>
+                  {c.actualStart && c.actualEnd ? (
+                    <Text style={styles.timelineTimes}>
+                      {formatTime(c.actualStart)} → {formatTime(c.actualEnd)}
+                    </Text>
+                  ) : (
+                    <Text style={styles.timelineTimes}>No finish time logged</Text>
+                  )}
+                </View>
               </View>
-              <Text style={[styles.infoCardTitle, { color: colors.success }]}>Completed</Text>
-            </View>
-            <Text style={styles.infoCardSubtitle}>
-              {completedSteps.length} task{completedSteps.length === 1 ? '' : 's'} finished
-            </Text>
-            {completedSteps.length > 0 && (
-              <>
-                <View style={styles.infoCardDivider} />
-                {visibleCompletedSteps.map((c) => (
-                  <View key={c.stepId} style={styles.infoCardStepRow}>
-                    <Text style={styles.infoCardStepName} numberOfLines={1}>{c.stepName}</Text>
-                    {c.actualStart && c.actualEnd ? (
-                      <Text style={styles.infoCardStepTime}>
-                        {formatTime(c.actualStart)} → {formatTime(c.actualEnd)}
-                      </Text>
-                    ) : (
-                      <Text style={styles.infoCardStepTime}>No finish time logged</Text>
-                    )}
-                  </View>
-                ))}
-                {extraCompletedCount > 0 && (
-                  <Text style={styles.infoCardMoreText}>+{extraCompletedCount} more completed</Text>
+            ))}
+            {extraCompletedCount > 0 && (
+              <View style={styles.timelineRow}>
+                <Text style={styles.moreCompletedText}>+{extraCompletedCount} more completed</Text>
+              </View>
+            )}
+
+            <View style={[styles.timelineRow, styles.timelineRowLast]}>
+              <View style={[styles.timelineIconWrap, { backgroundColor: colors.warningSoft }]}>
+                <Clock size={16} color={colors.warning} />
+              </View>
+              <View style={styles.timelineInfo}>
+                <Text style={styles.timelineStepName} numberOfLines={1}>{stepLabel}</Text>
+                <Text style={[styles.timelineStatusText, { color: colors.warning }]}>In progress</Text>
+                {resumeWork.pastActualStart && (
+                  <Text style={styles.timelineTimes}>
+                    Started {formatTimeWithDay(resumeWork.pastActualStart)} · No finish time logged yet
+                  </Text>
                 )}
-              </>
-            )}
-          </View>
-
-          <View style={[styles.infoCardHalf, styles.infoCardInProgress]}>
-            <View style={styles.infoCardHeaderRow}>
-              <View style={[styles.infoCardIconCircle, { backgroundColor: colors.warning }]}>
-                <Clock size={13} color={colors.white} />
               </View>
-              <Text style={[styles.infoCardTitle, { color: colors.warning }]}>In progress</Text>
             </View>
-            <Text style={styles.infoCardSubtitle}>1 task in progress</Text>
-            <View style={styles.infoCardDivider} />
-            <Text style={styles.infoCardStepName} numberOfLines={1}>{stepLabel}</Text>
-            {resumeWork.pastActualStart && (
-              <>
-                <Text style={styles.infoCardMetaLine}>Started {formatTimeWithDay(resumeWork.pastActualStart)}</Text>
-                <Text style={styles.infoCardMetaLine}>No finish time logged yet</Text>
-              </>
-            )}
           </View>
         </View>
+        )}
 
-        <Text style={styles.question}>How much of &ldquo;{stepLabel}&rdquo; was completed yesterday?</Text>
+        {!editingCompleted && (
+        <>
+        <Text style={styles.question}>How much of &ldquo;{stepLabel}&rdquo; was completed on the previous day?</Text>
 
         <Pressable
           style={({ pressed }) => [
@@ -229,41 +322,46 @@ export default function ResumeTimeConfirmModal({
             <View style={styles.radioOuter} />
           )}
         </Pressable>
+        </>
+        )}
 
         {status && (
           <View style={styles.sectionCardBlue}>
             <View style={[styles.sectionHeaderBlue, styles.sectionHeaderBlueFirst]}>
               <Clock size={14} color={colors.accentBlue} />
-              <Text style={styles.sectionHeaderBlueText}>Yesterday&apos;s work details</Text>
+              <Text style={styles.sectionHeaderBlueText}>Previous day&apos;s work details</Text>
             </View>
             <Text style={styles.sectionHeaderSubtitle}>
-              When work actually started and {status === 'partial' ? 'stopped' : 'finished'} yesterday
+              When work actually started and {status === 'partial' ? 'stopped' : 'finished'} on the previous day
             </Text>
 
-            <View style={styles.pillPairRow}>
-              <View style={styles.compactPill}>
-                <Text style={styles.compactPillLabel}>Started yesterday</Text>
-                <View style={styles.compactPillValueRow}>
+            <View style={styles.stepsListCard}>
+              <View style={styles.timelineRow}>
+                <View style={[styles.timelineIconWrap, { backgroundColor: 'rgba(28,28,46,0.06)' }]}>
                   <Feather name="clock" size={16} color={colors.textSecondary} />
+                </View>
+                <View style={styles.timelineInfo}>
+                  <Text style={styles.compactPillLabel}>Started previous day</Text>
                   <Text style={styles.compactPillValue}>
-                    {resumeWork.pastActualStart ? formatTimeWithDay(resumeWork.pastActualStart) : '—'}
+                    {activePastActualStart ? formatTimeWithDay(activePastActualStart) : '—'}
                   </Text>
                 </View>
               </View>
 
-              <ArrowRight size={16} color={colors.textSecondary} style={styles.pillPairArrow} />
-
-              <Pressable style={styles.compactPill} onPress={() => setPickerTarget('past')}>
-                <View style={styles.compactPillTopRow}>
-                  <Text style={styles.compactPillLabel}>{status === 'partial' ? 'Stopped yesterday' : 'Finished yesterday'}</Text>
-                  <Feather name="edit-3" size={12} color={colors.accent} />
-                </View>
-                <View style={styles.compactPillValueRow}>
+              <Pressable
+                style={[styles.timelineRow, styles.timelineRowLast]}
+                onPress={() => setPickerTarget('past')}
+              >
+                <View style={[styles.timelineIconWrap, { backgroundColor: colors.accentSoft }]}>
                   <Feather name="clock" size={16} color={colors.accent} />
+                </View>
+                <View style={styles.timelineInfo}>
+                  <Text style={styles.compactPillLabel}>{status === 'partial' ? 'Stopped previous day' : 'Finished previous day'}</Text>
                   <Text style={[styles.compactPillValue, styles.compactPillValueActive]}>
                     {formatTimeWithDay(toLocalIsoString(pastDate))}
                   </Text>
                 </View>
+                <Feather name="edit-3" size={12} color={colors.accent} />
               </Pressable>
             </View>
 
@@ -271,11 +369,11 @@ export default function ResumeTimeConfirmModal({
               <Text style={styles.errorHint}>Must be after this step&apos;s start time.</Text>
             )}
 
-            {resumeWork.pastActualStart && (
+            {activePastActualStart && (
               <View style={styles.workedChip}>
                 <Clock size={14} color={colors.textSecondary} />
                 <Text style={styles.workedChipText}>
-                  Worked for {formatDuration(resumeWork.pastActualStart, toLocalIsoString(pastDate))}
+                  Worked for {formatDuration(activePastActualStart, toLocalIsoString(pastDate))}
                 </Text>
               </View>
             )}
@@ -284,39 +382,46 @@ export default function ResumeTimeConfirmModal({
 
         {status === 'partial' && (
           <>
-            <View style={[styles.sectionHeaderBlue, styles.sectionHeaderBlueSpaced]}>
-              <Calendar size={14} color={colors.accentBlue} />
-              <Text style={styles.sectionHeaderBlueText}>Today&apos;s plan</Text>
-            </View>
-
-            <View style={styles.pillPairRow}>
-              <View style={styles.compactPill}>
-                <Text style={styles.compactPillLabel}>Plan start</Text>
-                <View style={styles.compactPillValueRow}>
-                  <Feather name="clock" size={16} color={colors.textSecondary} />
-                  <Text style={styles.compactPillValue}>{formatTime(toLocalIsoString(effectiveStart))}</Text>
-                </View>
+            <View style={styles.sectionCardBlue}>
+              <View style={[styles.sectionHeaderBlue, styles.sectionHeaderBlueFirst]}>
+                <Calendar size={14} color={colors.accentBlue} />
+                <Text style={styles.sectionHeaderBlueText}>Today&apos;s plan</Text>
               </View>
 
-              <Pressable style={styles.compactPill} onPress={() => setPickerTarget('finish')}>
-                <View style={styles.compactPillTopRow}>
-                  <Text style={styles.compactPillLabel}>Plan finish time</Text>
-                  <Feather name="edit-3" size={12} color={colors.accent} />
+              <View style={[styles.stepsListCard, styles.stepsListCardSpaced]}>
+                <View style={styles.timelineRow}>
+                  <View style={[styles.timelineIconWrap, { backgroundColor: 'rgba(28,28,46,0.06)' }]}>
+                    <Feather name="clock" size={16} color={colors.textSecondary} />
+                  </View>
+                  <View style={styles.timelineInfo}>
+                    <Text style={styles.compactPillLabel}>Plan start</Text>
+                    <Text style={styles.compactPillValue}>{formatTime(toLocalIsoString(effectiveStart))}</Text>
+                  </View>
                 </View>
-                <View style={styles.compactPillValueRow}>
-                  <Feather name="clock" size={16} color={colors.accent} />
-                  <Text style={[styles.compactPillValue, styles.compactPillValueActive]}>
-                    {formatTime(toLocalIsoString(finishDate))}
-                  </Text>
-                </View>
-              </Pressable>
-            </View>
 
-            <View style={styles.remainingChip}>
-              <Hourglass size={14} color={colors.textSecondary} />
-              <Text style={styles.remainingChipText}>
-                ≈ {Math.floor(remainingMinutes / 60)}h {remainingMinutes % 60}m remaining
-              </Text>
+                <Pressable
+                  style={[styles.timelineRow, styles.timelineRowLast]}
+                  onPress={() => setPickerTarget('finish')}
+                >
+                  <View style={[styles.timelineIconWrap, { backgroundColor: colors.accentSoft }]}>
+                    <Feather name="clock" size={16} color={colors.accent} />
+                  </View>
+                  <View style={styles.timelineInfo}>
+                    <Text style={styles.compactPillLabel}>Plan finish time</Text>
+                    <Text style={[styles.compactPillValue, styles.compactPillValueActive]}>
+                      {formatTime(toLocalIsoString(finishDate))}
+                    </Text>
+                  </View>
+                  <Feather name="edit-3" size={12} color={colors.accent} />
+                </Pressable>
+              </View>
+
+              <View style={styles.remainingChip}>
+                <Hourglass size={14} color={colors.textSecondary} />
+                <Text style={styles.remainingChipText}>
+                  ≈ {Math.floor(remainingMinutes / 60)}h {remainingMinutes % 60}m remaining
+                </Text>
+              </View>
             </View>
 
             <Text style={styles.remarksLabel}>
@@ -341,9 +446,10 @@ export default function ResumeTimeConfirmModal({
               label="Confirm & Assign"
               icon={ClipboardCheck}
               disabled={remainingMinutes <= 0 || !pastTimeValid}
+              loading={saving}
               onPress={() => {
                 Keyboard.dismiss();
-                onConfirmPartial(toLocalIsoString(pastDate), remainingMinutes, remarks.trim());
+                handleConfirmPartial();
               }}
               style={styles.confirmBtn}
             />
@@ -371,12 +477,13 @@ export default function ResumeTimeConfirmModal({
             </View>
 
             <Button
-              label="Confirm Completed"
+              label={editingCompleted ? 'Save Changes' : 'Confirm Completed'}
               icon={CheckCircle2}
               disabled={!pastTimeValid}
+              loading={saving}
               onPress={() => {
                 Keyboard.dismiss();
-                onConfirmFull(toLocalIsoString(pastDate), remarks.trim());
+                handleConfirmFull();
               }}
               style={styles.confirmBtn}
             />
@@ -408,37 +515,62 @@ function statusSubtitle(status: ResumeStatus): string {
     case 'full':
       return 'Set plan finish time';
     default:
-      return 'Confirm yesterday’s progress';
+      return 'Confirm previous day’s progress';
   }
 }
 
 const styles = StyleSheet.create({
   content: { paddingBottom: spacing.md },
 
+  // Now rendered into AppModal's header (headerRight), next to the pile code
+  // title, instead of as the first row of scrollable content.
   statusBadge: {
     alignSelf: 'flex-start',
     backgroundColor: colors.accentSoft,
     borderRadius: radius.pill,
     paddingVertical: 4,
     paddingHorizontal: spacing.sm + 2,
-    marginBottom: spacing.md,
   },
   statusBadgeText: { ...typography.caption, fontWeight: '700', color: colors.accent },
 
-  infoCardRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
-  infoCardHalf: { flex: 1, borderRadius: radius.md, padding: spacing.sm + 2 },
-  infoCardCompleted: { backgroundColor: colors.successSoft },
-  infoCardInProgress: { backgroundColor: colors.warningSoft },
-  infoCardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: 2 },
-  infoCardIconCircle: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  infoCardTitle: { ...typography.caption, fontWeight: '800' },
-  infoCardSubtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  infoCardDivider: { height: 1, backgroundColor: 'rgba(20,20,31,0.08)', marginVertical: spacing.xs },
-  infoCardStepRow: { marginBottom: spacing.xs },
-  infoCardStepName: { ...typography.caption, fontWeight: '700', color: colors.textPrimary },
-  infoCardStepTime: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
-  infoCardMoreText: { ...typography.caption, color: colors.textSecondary, fontWeight: '700', marginTop: 2 },
-  infoCardMetaLine: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  stepsSection: { marginBottom: spacing.md },
+  stepsSectionLabel: {
+    ...typography.caption,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.xs,
+  },
+  stepsListCard: {
+    backgroundColor: colors.white,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm + 2,
+  },
+  stepsListCardSpaced: { marginTop: spacing.sm },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(28,28,46,0.06)',
+  },
+  timelineRowLast: { borderBottomWidth: 0 },
+  timelineIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timelineInfo: { flex: 1 },
+  timelineStepName: { ...typography.caption, fontWeight: '700', color: colors.textPrimary },
+  timelineStatusText: { ...typography.caption, fontWeight: '700', marginTop: 1 },
+  timelineTimes: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  moreCompletedText: { ...typography.caption, color: colors.textSecondary, fontWeight: '700', flex: 1 },
 
   question: {
     ...typography.body,
@@ -502,7 +634,6 @@ const styles = StyleSheet.create({
   },
   sectionHeaderBlue: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   sectionHeaderBlueFirst: { marginTop: 0 },
-  sectionHeaderBlueSpaced: { marginTop: spacing.lg },
   sectionHeaderBlueText: {
     ...typography.caption,
     fontWeight: '800',
@@ -517,19 +648,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
 
-  pillPairRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm },
-  pillPairArrow: { marginBottom: spacing.sm + 4 },
-  compactPill: {
-    flex: 1,
-    backgroundColor: colors.white,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.sm,
-  },
-  compactPillTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  // Label/value text styles reused inside the timelineRow-styled rows above
+  // (Previous day's work details / Today's plan) — same as the compact-pill
+  // wording before this section switched from side-by-side boxes to rows.
   compactPillLabel: { ...typography.caption, color: colors.textSecondary },
-  compactPillValueRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs },
   compactPillValue: { ...typography.body, fontWeight: '700', color: colors.textSecondary },
   compactPillValueActive: { color: colors.textPrimary },
 
