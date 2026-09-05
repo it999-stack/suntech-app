@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import NextStepFab from '@components/plan/generate/NextStepFab';
 import ReorderPilesOverlay from '@components/plan/generate/preview/ReorderPilesOverlay';
@@ -392,18 +393,15 @@ export default function GeneratePlanScreen() {
 
   if (dataLoading || editSeeding) {
     return (
-      <View style={[styles.flex, styles.center]}>
+      <LinearGradient colors={colors.backdropGradient} style={[styles.flex, styles.center]}>
         <ActivityIndicator size="large" color={colors.accent} />
         <Text style={styles.loadingText}>Loading site data…</Text>
-      </View>
+      </LinearGradient>
     );
   }
 
   return (
-    <View style={styles.flex}>
-      {/* Bottom only — the top inset and the backdrop are applied once in
-          App.tsx's AppShell. This screen still needs the bottom edge for its
-          footer FAB to clear the home indicator. */}
+    <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
       <SafeAreaView style={styles.flex} edges={['bottom']}>
         <ProgressHeader
           step={step}
@@ -412,13 +410,7 @@ export default function GeneratePlanScreen() {
           backDisabled={STEP_ORDER.indexOf(step) === 0}
         />
 
-        {/* key={step} remounts this wrapper on every step change so FadeIn replays each
-            time — a lightweight, UI-thread-only crossfade (no exiting side, see discussion)
-            that also gives the screen a real paint boundary between steps, same idea as
-            MainTabNavigator's `animation: 'fade'` but implemented by hand since these steps
-            are conditional JSX, not separate navigator routes. */}
         <Animated.View key={step} entering={FadeIn.duration(180)} style={styles.flex}>
-        {/* Piles and Resume steps own their own FlatList — must NOT be inside a ScrollView */}
         {step === 'piles' || step === 'resume' ? (
           <View style={styles.pilesStepContainer}>
             {step === 'piles' ? (
@@ -533,12 +525,6 @@ export default function GeneratePlanScreen() {
         )}
         </Animated.View>
 
-        {/* Every step but Preview: a floating next-step chevron instead of a
-            full-width "Continue" bar — Preview's own button below is a real
-            submit action (Generate Plan / Save Changes), not just "next".
-            Rendered here as the single shared instance for every step
-            (including Piles, unless it's showing BulkAssignBar instead) so
-            its screen position never drifts between steps. */}
         {step !== 'preview' && !(step === 'piles' && pilesHasSelection) && (
           <NextStepFab
             onPress={goNext}
@@ -577,7 +563,7 @@ export default function GeneratePlanScreen() {
           />
         ) : null}
       </SafeAreaView>
-    </View>
+    </LinearGradient>
   );
 }
 

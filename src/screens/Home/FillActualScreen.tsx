@@ -12,6 +12,7 @@ import {
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { HomeStackParamList } from '@app-types/navigation';
 import { ChevronLeft } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { colors, spacing, typography } from '@theme/theme';
 import { TRACK_META } from '@utils/helpers';
 import { usePlan } from '@state/PlanContext';
@@ -203,7 +204,15 @@ export default function FillActualsScreen() {
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <View style={styles.flex}>
+    // A real (opaque) copy of the app's shared backdrop gradient, not the
+    // transparent contentStyle HomeStackNavigator normally relies on — this
+    // screen gets pushed on top of HomeScreen, which stays mounted
+    // underneath (native-stack never unmounts a blurred screen), and a
+    // transparent root here let HomeScreen's own real content bleed through
+    // during the slide-in transition (and through any layout gap at rest).
+    // Same colors as AppShell's gradient, so it's visually indistinguishable
+    // from the shared canvas — just genuinely opaque now.
+    <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
       <View style={styles.flex}>
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
@@ -348,6 +357,7 @@ export default function FillActualsScreen() {
           onClose={() => setAddPileModalOpen(false)}
           siteId={siteId}
           checklistId={checklist.id}
+          targetDate={workingDate}
           draftRows={draftRows ?? []}
           excludePileIds={new Set((draftRows ?? []).map((r) => r.pileId))}
           lockedMachine={{
@@ -360,7 +370,7 @@ export default function FillActualsScreen() {
           onConfirm={handleAddPileConfirm}
         />
       )}
-    </View>
+    </LinearGradient>
   );
 }
 

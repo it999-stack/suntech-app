@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { RefreshCw } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import Button from '@components/shared/Button';
 import { colors, spacing, typography } from '@theme/theme';
 import { HomeStackParamList } from '@app-types/navigation';
@@ -238,19 +239,25 @@ export default function PlanDetailScreen() {
     return map;
   }, [detailPiles]);
 
+  // Both branches below render an opaque copy of the app's shared backdrop
+  // gradient, not the transparent contentStyle HomeStackNavigator normally
+  // relies on — this screen gets pushed on top of HomeScreen, which stays
+  // mounted underneath (native-stack never unmounts a blurred screen), and a
+  // transparent root here let HomeScreen's own real content bleed through
+  // during the slide-in transition (and through any layout gap at rest).
   if (loading) {
     return (
-      <View style={styles.flex}>
+      <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
         <View style={[styles.flex, styles.center]}>
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>Loading plan details…</Text>
         </View>
-      </View>
+      </LinearGradient>
     );
   }
 
   return (
-    <View style={styles.flex}>
+    <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
       <View style={styles.flex}>
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
@@ -302,7 +309,7 @@ export default function PlanDetailScreen() {
           <PilesCard piles={detailPiles} planSteps={planSteps} actualSteps={actualSteps} />
         </ScrollView>
       </View>
-    </View>
+    </LinearGradient>
   );
 }
 

@@ -72,7 +72,11 @@ function StepTimelineRow({
       <View style={styles.stepInfo}>
         <Text style={styles.stepName}>{step.stepName}</Text>
         {!isPlanned ? (
-          <Text style={styles.stepTimes}>–</Text>
+          // Same wording as the list-level hint above ("faded steps carry
+          // over") — a bare "–" here said WHAT (no time) but not WHY, which
+          // reads as "skipped" rather than "cut off by the window, will be
+          // attempted next time".
+          <Text style={styles.stepTimes}>Carries over — not scheduled yet</Text>
         ) : isCompleted ? (
           <View style={styles.completedWrap}>
             <View style={styles.completedRow}>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks, Eye, Trash2 } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import ProgressRing from '@components/shared/ProgressRing';
@@ -224,6 +224,7 @@ function SiteSnapshotRow({
 
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
+  const isFocused = useIsFocused();
   const user = useAuthStore((s) => s.user);
   const {
     checklist,
@@ -375,7 +376,7 @@ export default function HomeScreen() {
   const [calendarSheetVisible, setCalendarSheetVisible] = useState(false);
   const [workingDateSheetVisible, setWorkingDateSheetVisible] = useState(false);
 
-  if (isLoading) {
+  if (isLoading && isFocused) {
     return (
       <View style={styles.flex}>
         <View style={[styles.flex, styles.center]}>

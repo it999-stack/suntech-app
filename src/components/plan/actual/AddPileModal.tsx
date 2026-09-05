@@ -16,11 +16,13 @@ import {
   Dimensions,
 } from 'react-native';
 import { X } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MachineSelect from '@components/plan/generate/steps/pile-assign/MachineSelect';
 import StepTimelineRow from '@components/plan/generate/preview/StepTimelineRow';
 import { type TrackChoice } from '@components/plan/generate/preview/TrackChoiceTiles';
 import {
+  getPilesBySite,
   getPilesBySiteWithDimensionsPage,
   getPileCountsByLocationForSite,
   type PileWithDimension,
@@ -29,6 +31,7 @@ import { getLocationsBySite } from '@repositories/locationsRepository';
 import { getSteps } from '@repositories/stepsRepository';
 import { getAllDurationTemplates } from '@repositories/durationTemplatesRepository';
 import { buildTemplateKeySet, getApplicableSteps } from '@/services/pileApplicableSteps';
+import { findResumeWorkForPiles } from '@/services/resumeWorkService';
 import type { PilingMachine, PilingLocation, PilingStep } from '@db/schema';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import SearchToggleField from '@components/shared/SearchToggleField';
@@ -48,6 +51,11 @@ interface AddPileModalProps {
   onClose: () => void;
   siteId: string;
   checklistId: string;
+  /** "YYYY-MM-DD" — the checklist's own date. Passed straight to
+   * findResumeWorkForPiles as `beforeDate`, so "completed" means completed on
+   * some checklist strictly before this one — same as usePlanDraft.ts's own
+   * exclusion for the fresh-generate wizard. */
+  targetDate: string;
   /** The Sequence editor's current in-progress draft — the pile being added
    * here is previewed alongside these so the preview's machine-availability
    * picture matches exactly what "Save Changes" would actually schedule. */
@@ -67,6 +75,7 @@ export default function AddPileModal({
   onClose,
   siteId,
   checklistId,
+  targetDate,
   draftRows,
   excludePileIds,
   lockedMachine,
@@ -77,6 +86,7 @@ export default function AddPileModal({
 }: AddPileModalProps) {
   const { config } = useAppConfig();
   const { previewEditPlanMidDay } = usePlan();
+  const insets = useSafeAreaInsets();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -88,7 +98,10 @@ export default function AddPileModal({
       hideSub.remove();
     };
   }, []);
-  const availableHeight = keyboardHeight > 0 ? SCREEN_HEIGHT - keyboardHeight - TOP_CLEARANCE : SCREEN_HEIGHT;
+  const availableHeight =
+    keyboardHeight > 0
+      ? SCREEN_HEIGHT - insets.top - insets.bottom - keyboardHeight - TOP_CLEARANCE
+      : SCREEN_HEIGHT - insets.top - insets.bottom;
   const cardMaxHeight = Math.min(SCREEN_HEIGHT * 1.0, availableHeight);
   const cardBrowsingHeight = Math.min(SCREEN_HEIGHT * 0.8, availableHeight);
 
@@ -105,6 +118,25 @@ export default function AddPileModal({
   const [locations, setLocations] = useState<PilingLocation[]>([]);
   const [countByLocationId, setCountByLocationId] = useState<Record<string, number>>({});
   const [totalPileCount, setTotalPileCount] = useState(0);
+
+  // Piles whose lifetime work is already done — must never be offered here,
+  // same rule the fresh-generate wizard already enforces for its own pile
+  // picker (see usePlanDraft.ts's assignablePiles / completedPileIds). Scanned
+  // once per modal-open rather than per keystroke/page, same reasoning as the
+  // locations/counts fetch below.
+  const [completedPileIds, setCompletedPileIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!visible || !siteId) return;
+    let cancelled = false;
+    getPilesBySite(siteId).then((allPiles) =>
+      findResumeWorkForPiles(siteId, allPiles.map((p) => p.id), targetDate).then((result) => {
+        if (!cancelled) setCompletedPileIds(new Set(result.completedPileIds));
+      }),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, siteId, targetDate]);
 
   const [pendingPile, setPendingPile] = useState<PileWithDimension | null>(null);
   const [otherMachineId, setOtherMachineId] = useState<string | null>(null);
@@ -216,8 +248,14 @@ export default function AddPileModal({
   }, [debouncedSearch, activeLocationId]);
 
   // Stable string key so a parent re-render that recreates excludePileIds
-  // (same contents, new Set instance) doesn't retrigger a fetch.
-  const excludeKey = useMemo(() => Array.from(excludePileIds).sort().join(','), [excludePileIds]);
+  // (same contents, new Set instance) doesn't retrigger a fetch. Merges in
+  // completedPileIds — both the picker query and the location pill counts
+  // below key off this single set, so an already-finished pile is excluded
+  // from both consistently rather than just hidden from one.
+  const excludeKey = useMemo(
+    () => Array.from(new Set([...excludePileIds, ...completedPileIds])).sort().join(','),
+    [excludePileIds, completedPileIds],
+  );
 
   useEffect(() => {
     if (!visible || !siteId) return;
@@ -365,7 +403,7 @@ export default function AddPileModal({
         style={[
           styles.card,
           { maxHeight: cardMaxHeight },
-          !pendingPile && [styles.cardBrowsing, { height: cardBrowsingHeight }],
+          [styles.cardBrowsing, { height: cardBrowsingHeight }],
         ]}
       >
         <View style={styles.headerRow}>
@@ -435,77 +473,80 @@ export default function AddPileModal({
             </View>
           </View>
         ) : (
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            <View style={styles.selectedRow}>
-              <Text style={styles.selectedLabel}>Pile {pendingPile.pileIdCode}</Text>
-              {isSaving && <ActivityIndicator size="small" color={colors.accent} />}
-            </View>
-            <View pointerEvents={isSaving ? 'none' : 'auto'} style={isSaving && styles.dimmed}>
-              <MachineSelect
-                label="Rig"
-                kind="rig"
-                options={lockedMachine.kind === 'rig' ? [lockedMachine.machine] : rigs}
-                valueId={lockedMachine.kind === 'rig' ? lockedMachine.machine.id : otherMachineId}
-                onSelect={lockedMachine.kind === 'rig' ? () => {} : setOtherMachineId}
-              />
-              <MachineSelect
-                label={lockedMachine.kind === 'rig' ? 'Crane (optional)' : 'Crane'}
-                kind="crane"
-                options={lockedMachine.kind === 'crane' ? [lockedMachine.machine] : cranes}
-                valueId={lockedMachine.kind === 'crane' ? lockedMachine.machine.id : otherMachineId}
-                onSelect={lockedMachine.kind === 'crane' ? () => {} : setOtherMachineId}
-                onClear={lockedMachine.kind === 'rig' ? () => setOtherMachineId(null) : undefined}
-              />
+          <View style={styles.pendingArea}>
+            <ScrollView
+              style={styles.pendingScroll}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.selectedRow}>
+                <Text style={styles.selectedLabel}>Pile {pendingPile.pileIdCode}</Text>
+                {isSaving && <ActivityIndicator size="small" color={colors.accent} />}
+              </View>
+              <View pointerEvents={isSaving ? 'none' : 'auto'} style={isSaving && styles.dimmed}>
+                <MachineSelect
+                  label="Rig"
+                  kind="rig"
+                  options={lockedMachine.kind === 'rig' ? [lockedMachine.machine] : rigs}
+                  valueId={lockedMachine.kind === 'rig' ? lockedMachine.machine.id : otherMachineId}
+                  onSelect={lockedMachine.kind === 'rig' ? () => {} : setOtherMachineId}
+                />
+                <MachineSelect
+                  label={lockedMachine.kind === 'rig' ? 'Crane (optional)' : 'Crane'}
+                  kind="crane"
+                  options={lockedMachine.kind === 'crane' ? [lockedMachine.machine] : cranes}
+                  valueId={lockedMachine.kind === 'crane' ? lockedMachine.machine.id : otherMachineId}
+                  onSelect={lockedMachine.kind === 'crane' ? () => {} : setOtherMachineId}
+                  onClear={lockedMachine.kind === 'rig' ? () => setOtherMachineId(null) : undefined}
+                />
 
-              {applicableSteps.length > 0 && (
-                <View style={styles.stepsSection}>
-                  <View style={styles.stepsSectionHeader}>
-                    <Text style={styles.fieldLabel}>Steps</Text>
-                    {previewLoading && <ActivityIndicator size="small" color={colors.accent} />}
+                {applicableSteps.length > 0 && (
+                  <View style={styles.stepsSection}>
+                    <View style={styles.stepsSectionHeader}>
+                      <Text style={styles.fieldLabel}>Steps</Text>
+                      {previewLoading && <ActivityIndicator size="small" color={colors.accent} />}
+                    </View>
+                    {previewError ? (
+                      <Text style={styles.previewErrorText}>{previewError}</Text>
+                    ) : (
+                      <>
+                        {!previewComplete && (
+                          <Text style={styles.previewHint}>
+                            Not every step fits in the remaining plan window — faded steps carry over.
+                          </Text>
+                        )}
+                        {displayRows.map((row, idx) => {
+                          const forcedRig = !resolvedCrane;
+                          return (
+                            <StepTimelineRow
+                              key={row.stepId}
+                              step={row}
+                              isLast={idx === displayRows.length - 1}
+                              isPlanned={row.plannedStart !== ''}
+                              rigMachineNo={resolvedRig?.machineNo ?? '—'}
+                              craneMachineNo={forcedRig ? undefined : resolvedCrane?.machineNo}
+                              trackChoice={
+                                forcedRig
+                                  ? undefined
+                                  : {
+                                      selected: row.track === 'RIG' ? 'RIG' : ('CRANE' as TrackChoice),
+                                      onSelect: (track) =>
+                                        setStepTrackOverrides((prev) =>
+                                          track === 'RIG'
+                                            ? [...prev, row.stepId]
+                                            : prev.filter((id) => id !== row.stepId),
+                                        ),
+                                    }
+                              }
+                            />
+                          );
+                        })}
+                      </>
+                    )}
                   </View>
-                  {previewError ? (
-                    <Text style={styles.previewErrorText}>{previewError}</Text>
-                  ) : (
-                    <>
-                      {!previewComplete && (
-                        <Text style={styles.previewHint}>
-                          Not every step fits in the remaining plan window — faded steps carry over.
-                        </Text>
-                      )}
-                      {displayRows.map((row, idx) => {
-                        // No crane chosen at all — every CRANE step auto-runs on
-                        // the rig, same rule as _resolve_step_execution's
-                        // no_crane case. Nothing to toggle in that case.
-                        const forcedRig = !resolvedCrane;
-                        return (
-                          <StepTimelineRow
-                            key={row.stepId}
-                            step={row}
-                            isLast={idx === displayRows.length - 1}
-                            isPlanned={row.plannedStart !== ''}
-                            rigMachineNo={resolvedRig?.machineNo ?? '—'}
-                            craneMachineNo={forcedRig ? undefined : resolvedCrane?.machineNo}
-                            trackChoice={
-                              forcedRig
-                                ? undefined
-                                : {
-                                    selected: row.track === 'RIG' ? 'RIG' : ('CRANE' as TrackChoice),
-                                    onSelect: (track) =>
-                                      setStepTrackOverrides((prev) =>
-                                        track === 'RIG'
-                                          ? [...prev, row.stepId]
-                                          : prev.filter((id) => id !== row.stepId),
-                                      ),
-                                  }
-                            }
-                          />
-                        );
-                      })}
-                    </>
-                  )}
-                </View>
-              )}
-            </View>
+                )}
+              </View>
+            </ScrollView>
             <Button
               label="Add to plan"
               loading={isSaving}
@@ -513,7 +554,7 @@ export default function AddPileModal({
               onPress={confirm}
               style={styles.saveBtn}
             />
-          </ScrollView>
+          </View>
         )}
       </View>
       </KeyboardAvoidingView>
@@ -588,6 +629,14 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   selectedLabel: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
+  // pendingArea/pendingScroll: flex:1 + minHeight:0 is what lets
+  // pendingScroll actually shrink to "whatever's left after the footer"
+  // instead of growing to fit all its content — the standard RN recipe for
+  // a fixed-position footer below a scrollable region. minHeight:0
+  // overrides a flex child's default min-height:auto, which would otherwise
+  // refuse to shrink below its content's natural size.
+  pendingArea: { flex: 1, minHeight: 0 },
+  pendingScroll: { flex: 1, minHeight: 0 },
   dimmed: { opacity: 0.5 },
   stepsSection: { marginTop: spacing.md },
   stepsSectionHeader: {

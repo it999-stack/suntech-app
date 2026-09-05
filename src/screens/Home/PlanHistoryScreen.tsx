@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, ChevronRight, ChevronLeft } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import GlassCard from '@components/shared/GlassCard';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { HomeStackParamList } from '@app-types/navigation';
@@ -109,7 +110,13 @@ export default function PlanHistoryScreen() {
   }, [user?.siteId]);
 
   return (
-    <View style={styles.flex}>
+    // A real (opaque) copy of the app's shared backdrop gradient, not the
+    // transparent contentStyle HomeStackNavigator normally relies on — this
+    // screen gets pushed on top of HomeScreen, which stays mounted
+    // underneath (native-stack never unmounts a blurred screen), and a
+    // transparent root here let HomeScreen's own real content bleed through
+    // during the slide-in transition (and through any layout gap at rest).
+    <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
       <View style={styles.flex}>
         <View style={styles.headerArea}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={10}>
@@ -184,7 +191,7 @@ export default function PlanHistoryScreen() {
           )}
         </View>
       </View>
-    </View>
+    </LinearGradient>
   );
 }
 
