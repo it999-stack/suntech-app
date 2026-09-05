@@ -478,7 +478,7 @@ export default function PileStepsModal({
                   reference (nothing validates against it), never as a plan. */}
               {!isPlanned ? (
                 <View style={modalStyles.planTimeRow}>
-                  <Text style={modalStyles.planTimeText}>Not planned</Text>
+                  <Text style={modalStyles.planTimeText}>Planned Later</Text>
                    {step.templateMinutes != null && (
                       <Text style={modalStyles.planReferenceText}>
                         · Avg. {formatDurationMinutes(step.templateMinutes)}
@@ -551,7 +551,7 @@ export default function PileStepsModal({
                               ? `${expectedStart.anchorPileCode} - ${expectedStart.anchorStepName} ended`
                               : isPlanned
                                 ? 'Planned start'
-                                : 'Not planned'}
+                                : 'Planned Later'}
                           </Text>
                         </View>
                       </View>
@@ -656,7 +656,7 @@ export default function PileStepsModal({
                         <Text style={modalStyles.statsColValue}>
                           {isPlanned && step.plannedEndIso != null
                             ? formatDuration(step.plannedStartIso!, step.plannedEndIso)
-                            : 'Not planned'}
+                            : 'Planned Later'}
                         </Text>
                       </View>
                       <View style={[modalStyles.statsCol, modalStyles.statsColRuled]}>
