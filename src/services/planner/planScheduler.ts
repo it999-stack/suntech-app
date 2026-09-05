@@ -5,6 +5,7 @@
 import type { PilingStep } from '@db/schema';
 import { toLocalIsoString } from '@utils/formatTime';
 import { generateId } from '@utils/helpers';
+import { templateKey } from '@/services/pileApplicableSteps';
 import { resolveWindows, skipNonWorkingWindows } from './planWindows';
 import { resolveStepExecution } from './planResources';
 import type { EffectiveWindow, PreviewPileInput, PreviewPlanStep, EffectivePlanWindow, PlanRawWindow } from './planTypes';
@@ -29,15 +30,30 @@ function scheduleOneStep(
   planEnd: Date,
   resumeWork?: PreviewPileInput['resumeWork'],
 ): Date {
-  const tmpl = templateMap.get(`${dimId}|${step.id}`);
+  const tmpl = templateMap.get(templateKey(dimId, step.id));
   const isResumeStep = resumeWork?.stepId === step.id;
-  const durationMinutes = isResumeStep
-    ? resumeWork.remainingMinutes
-    : (tmpl?.durationMinutes ?? 60);
+  // No 60-minute default any more: a step with no duration template for this
+  // pile's dimension is not schedulable at all (the server rejects such a plan
+  // with a 400, and Pass 1 below filters those steps out before they reach
+  // here). Reaching this throw would mean Pass 1's applicability filter and
+  // this lookup disagree — an invariant violation, not a case to paper over
+  // with an invented duration.
+  const durationMinutes = isResumeStep ? resumeWork.remainingMinutes : tmpl?.durationMinutes;
+  if (durationMinutes == null) {
+    throw new Error(
+      `[planner] No duration template for step "${step.stepName}" on dimension ${dimId} ` +
+        `(checklist pile ${checklistPileId}).`,
+    );
+  }
   const bufferBefore = isResumeStep
     ? (resumeWork.bufferMinutes ?? 0)
     : (tmpl?.bufferBeforeMinutes ?? 0);
-  const { start, end } = skipNonWorkingWindows(
+  // effectiveBuffer, not bufferBefore: Phase 1 drops the buffer when a break
+  // interrupted the setup and the machine then sat idle through the whole
+  // window. Recording the requested value instead of the effective one would
+  // make plannedStart + bufferMinutes disagree with the schedule — and that
+  // sum is exactly what the UI renders as the work start.
+  const { start, end, bufferMinutes: effectiveBuffer } = skipNonWorkingWindows(
     startFrom,
     bufferBefore,
     durationMinutes,
@@ -61,7 +77,7 @@ function scheduleOneStep(
     // no committed end time is persisted for it (see isContinuingStep).
     plannedEnd: end.getTime() > planEnd.getTime() ? null : toLocalIsoString(end),
     durationMinutes,
-    bufferMinutes: bufferBefore,
+    bufferMinutes: effectiveBuffer,
     assignedMachineId: machineId,
     createdAt: now,
     stepName: step.stepName,
@@ -134,19 +150,40 @@ export function scheduleComponent(
       continue;
     }
 
-    const stepsWithTemplates = pileSteps.filter((s) => templateMap.has(`${dimensionId}|${s.id}`));
-    const activeSteps = stepsWithTemplates.length > 0 ? stepsWithTemplates : pileSteps;
+    // The pile's applicable steps: the in-scope catalog ∩ the duration
+    // templates configured for its dimension. A step with no template is NOT
+    // applicable — there is no duration to schedule it with, and nothing
+    // invents one (see scheduleOneStep). The old "fall back to the unfiltered
+    // catalog and use 60 minutes each" branch is gone: it produced a plan the
+    // server now rejects with a 400, and silently committed the site to
+    // timings nobody configured.
+    const activeSteps = pileSteps.filter((s) => templateMap.has(templateKey(dimensionId, s.id)));
 
-    if (stepsWithTemplates.length === 0) {
+    if (activeSteps.length === 0) {
       console.warn(
-        `[planner] No duration templates for pile ${pileIdCode} — using 60min default per step`,
+        `[planner] No duration templates for pile ${pileIdCode} (dimension ${dimensionId}) — cannot schedule it`,
       );
       warningPileIds.push(pile.checklistPileId);
+      continue;
     }
 
     const resumeOrder = pile.resumeWork
       ? activeSteps.find((step) => step.id === pile.resumeWork!.stepId)?.sequenceOrder
       : undefined;
+
+    // A resuming pile whose resume step isn't applicable (its template was
+    // removed, say) must not be planned: resumeOrder would be undefined, and
+    // the pile would silently be re-planned from its FIRST step, re-scheduling
+    // work already completed on a previous day.
+    if (pile.resumeWork && resumeOrder === undefined) {
+      console.warn(
+        `[planner] Pile ${pileIdCode} resumes from step ${pile.resumeWork.stepId}, which has no duration ` +
+          `template for dimension ${dimensionId} — cannot schedule it`,
+      );
+      warningPileIds.push(pile.checklistPileId);
+      continue;
+    }
+
     const applicableSteps = resumeOrder === undefined
       ? activeSteps
       : activeSteps.filter((step) => step.sequenceOrder >= resumeOrder);

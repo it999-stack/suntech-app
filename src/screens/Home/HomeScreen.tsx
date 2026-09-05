@@ -2,10 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks, Eye } from 'lucide-react-native';
+import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks, Eye, Trash2 } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import ProgressRing from '@components/shared/ProgressRing';
 import GradientTile from '@components/shared/GradientTile';
@@ -14,6 +12,8 @@ import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { usePlan } from '@state/PlanContext';
 import GeneratePlanCalendarSheet from '@components/plan/generate/GeneratePlanCalendarSheet';
 import WorkingDateSheet from '@components/shared/WorkingDateSheet';
+import ConfirmDialog from '@components/shared/ConfirmDialog';
+import { notify } from '@utils/notify';
 import { useAuthStore } from '@store/authStore';
 import { useWorkingDate } from '@store/workingDateStore';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
@@ -106,6 +106,8 @@ function ActivePlanCard({
   onView,
   onEdit,
   onPreview,
+  onDelete,
+  isDeleting,
   hasProgress,
   supervisor,
   planStartTime,
@@ -115,6 +117,8 @@ function ActivePlanCard({
   onView: () => void;
   onEdit: () => void;
   onPreview: () => void;
+  onDelete: () => void;
+  isDeleting: boolean;
   hasProgress: boolean;
   supervisor: string;
   planStartTime: string | null;
@@ -135,11 +139,23 @@ function ActivePlanCard({
           </Text>
         </View>
 
-        {hasProgress ? (
-          <Button label="Preview Plan" size="sm" icon={Eye} onPress={onPreview} />
-        ) : (
-          <Button label="Edit Plan" size="sm" icon={PencilLine} onPress={onEdit} />
-        )}
+        <View style={styles.planHeaderActions}>
+          {hasProgress ? (
+            <Button label="Preview Plan" size="sm" icon={Eye} onPress={onPreview} />
+          ) : (
+            <Button label="Edit Plan" size="sm" icon={PencilLine} onPress={onEdit} />
+          )}
+          <Button
+            icon={Trash2}
+            size="sm"
+            variant="secondary"
+            iconColor={colors.danger}
+            onPress={onDelete}
+            disabled={isDeleting}
+            hitSlop={8}
+            accessibilityLabel="Delete today's plan"
+          />
+        </View>
       </View>
 
       {/* Progress */}
@@ -209,8 +225,20 @@ function SiteSnapshotRow({
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
-  const { checklist, planStatus, actualSteps, planSteps, checklistPiles, loadChecklist, isLoading } = usePlan();
+  const {
+    checklist,
+    planStatus,
+    actualSteps,
+    planSteps,
+    checklistPiles,
+    pileMeasurementsByPileId,
+    loadChecklist,
+    deletePlan,
+    isDeleting,
+    isLoading,
+  } = usePlan();
   const workingDate = useWorkingDate();
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
 
   useEffect(() => {
     if (user?.siteId) {
@@ -258,6 +286,60 @@ export default function HomeScreen() {
     [actualSteps],
   );
 
+  /**
+   * Everything the delete actually destroys, spelled out. Counts come straight
+   * from context — no round trip while the user waits on a modal, and it works
+   * on a flaky connection.
+   */
+  const deleteConfirmMessage = useMemo(() => {
+    const loggedEntries = actualSteps.filter((a) => a.actualStart || a.actualEnd).length;
+    const measuredPiles = checklistPiles.filter((cp) =>
+      pileMeasurementsByPileId.has(cp.pileId),
+    ).length;
+    const machinesNeedingAttention = machines.filter(
+      (m) =>
+        m.status !== 'ACTIVE' &&
+        checklistPiles.some((cp) => cp.rigId === m.id || cp.craneId === m.id),
+    ).length;
+
+    const parts: string[] = [];
+    parts.push(
+      `This removes the plan for ${workingDate} — ${checklistPiles.length} piles, their planned steps, and ${loggedEntries} logged actual entries.`,
+    );
+
+    if (measuredPiles > 0) {
+      // Measurements are one row per physical pile for its whole lifetime, so
+      // this can reach back past today. The user has to know that.
+      parts.push(
+        `It also removes recorded measurements for ${measuredPiles} ${measuredPiles === 1 ? 'pile' : 'piles'}. Some of those values may have been recorded on earlier days — measurements are stored once per pile, not per day.`,
+      );
+    }
+
+    if (loggedEntries === 0 && measuredPiles === 0) {
+      parts.push('Nothing has been logged against it yet.');
+    } else {
+      // The single most likely way to lose work here: delete + regenerate does
+      // NOT carry actuals over, because regenerating creates fresh
+      // checklist-pile rows with no actual steps attached.
+      parts.push(
+        'Logged progress won’t carry over to a new plan — use Edit Plan instead if you want to keep it.',
+      );
+    }
+
+    if (machinesNeedingAttention > 0) {
+      // A BREAKDOWN/IDLE event permanently flips the machine's status and
+      // deleting the plan doesn't revert it, while plan generation rejects
+      // those machines — so a blocked regenerate would otherwise read as
+      // "delete broke the app".
+      parts.push(
+        'One or more machines are marked broken down or idle — you’ll need to mark them active again before they can be used in a new plan.',
+      );
+    }
+
+    parts.push('This can’t be undone from the app. You can generate a new plan for this date afterwards.');
+    return parts.join('\n\n');
+  }, [actualSteps, checklistPiles, pileMeasurementsByPileId, machines, workingDate]);
+
   const pilesInProgressCount = useMemo(() => {
     if (planStatus === 'none') return 0;
     return checklistPiles.filter((cp) => {
@@ -295,18 +377,18 @@ export default function HomeScreen() {
 
   if (isLoading) {
     return (
-      <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-        <SafeAreaView style={[styles.flex, styles.center]} edges={['top']}>
+      <View style={styles.flex}>
+        <View style={[styles.flex, styles.center]}>
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={[styles.loadingText, { marginTop: spacing.md }]}>Loading your plan…</Text>
-        </SafeAreaView>
-      </LinearGradient>
+        </View>
+      </View>
     );
   }
 
   return (
-    <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={[styles.flex, styles.space]}>
-      <SafeAreaView style={styles.flex} edges={['top']}>
+    <View style={[styles.flex, styles.space]}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <HeaderArea
             userName={userName}
@@ -325,6 +407,8 @@ export default function HomeScreen() {
               onView={() => navigation.navigate('FillActuals', { date: workingDate })}
               onEdit={() => navigation.navigate('GeneratePlan', { edit: true, date: workingDate })}
               onPreview={() => checklist && navigation.navigate('PlanDetail', { checklistId: checklist.id })}
+              onDelete={() => setDeleteConfirmVisible(true)}
+              isDeleting={isDeleting}
               hasProgress={hasProgress}
               supervisor={supervisorName}
               planStartTime={checklist?.planStartTime ?? null}
@@ -363,7 +447,7 @@ export default function HomeScreen() {
             totalPiles={checklistPiles.length}
           />
         </ScrollView>
-      </SafeAreaView>
+      </View>
 
       {user?.siteId && (
         <GeneratePlanCalendarSheet
@@ -381,7 +465,30 @@ export default function HomeScreen() {
         visible={workingDateSheetVisible}
         onClose={() => setWorkingDateSheetVisible(false)}
       />
-    </LinearGradient>
+
+      <ConfirmDialog
+        visible={deleteConfirmVisible}
+        destructive
+        title="Delete today's plan?"
+        message={deleteConfirmMessage}
+        confirmLabel="Delete plan"
+        onCancel={() => setDeleteConfirmVisible(false)}
+        onConfirm={async () => {
+          if (!user?.siteId || !checklist) return;
+          try {
+            await deletePlan(user.siteId, checklist.id, workingDate);
+            setDeleteConfirmVisible(false);
+            notify.success('Plan deleted');
+          } catch (err) {
+            setDeleteConfirmVisible(false);
+            const message =
+              (err as any)?.response?.data?.detail ||
+              (err instanceof Error ? err.message : 'Please try again.');
+            notify.error(message, { title: 'Could not delete plan' });
+          }
+        }}
+      />
+    </View>
   );
 }
 
@@ -497,6 +604,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+  },
+  planHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
 
   progressSection: {

@@ -23,12 +23,13 @@ import {
 } from '@/utils/personnelRoles';
 
 import type { PlanDraft, ShiftTeamAssignment } from '@/types/plan';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { PreviewPile } from '@app-types/previewTypes';
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import type { PilingStep } from '@/db/schema';
-import DurationWarningCard from '../preview/DurationWarningCard';
+import DurationWarningCard, { type UnschedulableStep } from '../preview/DurationWarningCard';
 import CoreTeamCard, { type RoleTarget } from '../preview/CoreTeamCard';
 import MachineTimelineCard from '../preview/MachineTimelineCard';
 import PilesCard from '../preview/PilesCard';
@@ -65,11 +66,11 @@ export interface ShiftDetail {
 
 interface PreviewStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'setMachineRole' | 'setShiftIncharge' | 'setProjectManager' | 'setPlanningEngineer' | 'assignPiles'>;
   /** Not-yet-confirmed Rig/Crane tile selections, owned by GeneratePlanScreen so the
    * "Confirm Reassignment" action can live in its fixed footer instead of here. Tapping
-   * a tile only ever calls onPendingTrackOverridesChange — never onUpdate() — so nothing
-   * recomputes until the parent's Confirm button commits it into `draft`. */
+   * a tile only ever calls onPendingTrackOverridesChange — never a draft action — so nothing
+   * recomputes until the debounced commit (see usePlanPreview) lands it into `draft`. */
   pendingTrackOverrides: Record<string, string[]>;
   onPendingTrackOverridesChange: (
     updater: Record<string, string[]> | ((prev: Record<string, string[]>) => Record<string, string[]>),
@@ -88,7 +89,8 @@ interface PreviewStepProps {
   /** Non-working windows actually applied per machine, from generatePlanPreview(). */
   windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
   piles: PreviewPile[];
-  warningPileCodes?: string[];
+  /** Pile×step pairs the plan cannot schedule — see DurationWarningCard. */
+  unschedulableSteps?: UnschedulableStep[];
   siteId: string;
   onNavigateToStep: (step: Step) => void;
   /** Opens the reorder overlay for a machine (pencil icon in the Machine Timeline). */
@@ -105,7 +107,7 @@ interface PreviewStepProps {
 
 export default function PreviewStep({
   draft,
-  onUpdate,
+  actions,
   pendingTrackOverrides,
   onPendingTrackOverridesChange,
   planSteps,
@@ -113,7 +115,7 @@ export default function PreviewStep({
   allSteps = [],
   windowsByMachineId,
   piles,
-  warningPileCodes = [],
+  unschedulableSteps = [],
   siteId,
   onNavigateToStep,
   onEditMachine,
@@ -245,10 +247,6 @@ export default function PreviewStep({
   function otherTeamForSlot(slot: 1 | 2): ShiftTeamAssignment {
     return slot === 1 ? cp.shift2 : cp.shift1;
   }
-  function updateTeamForSlot(slot: 1 | 2, patch: Partial<ShiftTeamAssignment>) {
-    const key = slot === 1 ? 'shift1' : 'shift2';
-    updatePersonnel({ [key]: { ...teamForSlot(slot), ...patch } });
-  }
 
   if (isLoading) {
     return (
@@ -259,22 +257,13 @@ export default function PreviewStep({
     );
   }
 
-  function updatePersonnel(patch: Partial<PlanDraft['checklistPersonnel']>) {
-    onUpdate({ checklistPersonnel: { ...cp, ...patch } });
-  }
-
   // Apply stays open (spinner shown via isApplyingMachine) until the effect above
   // observes planSteps actually refresh, instead of closing immediately.
   function commitMachinePicker() {
     if (!machinePickerPileId || !pendingRigId) return;
     appliedMachinePickerRef.current = true;
     setIsApplyingMachine(true);
-    onUpdate({
-      assignments: {
-        ...draft.assignments,
-        [machinePickerPileId]: { rig: pendingRigId, crane: pendingCraneId ?? undefined },
-      },
-    });
+    actions.assignPiles([machinePickerPileId], pendingRigId, pendingCraneId);
   }
 
   function machineNoFor(machineId: string): string {
@@ -308,7 +297,7 @@ export default function PreviewStep({
           personnel: pmCandidates,
           selectedId: cp.projectManagerId,
           allowNone: false,
-          onSelect: (id: string | null) => updatePersonnel({ projectManagerId: id }),
+          onSelect: (id: string | null) => actions.setProjectManager(id),
         };
       case 'PLANNING_ENGINEER':
         return {
@@ -316,7 +305,7 @@ export default function PreviewStep({
           personnel: peCandidates,
           selectedId: cp.planningEngineerId,
           allowNone: true,
-          onSelect: (id: string | null) => updatePersonnel({ planningEngineerId: id }),
+          onSelect: (id: string | null) => actions.setPlanningEngineer(id),
         };
       case 'SHIFT_INCHARGE':
         return {
@@ -328,7 +317,7 @@ export default function PreviewStep({
             getShiftInchargeDisabledIds(otherTeamForSlot(target.slot).shiftInchargeId),
             target.slot,
           ),
-          onSelect: (id: string | null) => updateTeamForSlot(target.slot, { shiftInchargeId: id }),
+          onSelect: (id: string | null) => actions.setShiftIncharge(target.slot, id),
         };
       case 'ENGINEER': {
         const team = teamForSlot(target.slot);
@@ -349,12 +338,7 @@ export default function PreviewStep({
             ]),
             target.slot,
           ),
-          onSelect: (id: string | null) => {
-            const engineerByMachineId = { ...team.engineerByMachineId };
-            if (id) engineerByMachineId[target.machineId] = id;
-            else delete engineerByMachineId[target.machineId];
-            updateTeamForSlot(target.slot, { engineerByMachineId });
-          },
+          onSelect: (id: string | null) => actions.setMachineRole(target.slot, 'ENGINEER', target.machineId, id),
         };
       }
       case 'SUPERVISOR': {
@@ -376,12 +360,7 @@ export default function PreviewStep({
             ]),
             target.slot,
           ),
-          onSelect: (id: string | null) => {
-            const supervisorByMachineId = { ...team.supervisorByMachineId };
-            if (id) supervisorByMachineId[target.machineId] = id;
-            else delete supervisorByMachineId[target.machineId];
-            updateTeamForSlot(target.slot, { supervisorByMachineId });
-          },
+          onSelect: (id: string | null) => actions.setMachineRole(target.slot, 'SUPERVISOR', target.machineId, id),
         };
       }
       case 'MACHINE_OPERATOR': {
@@ -401,12 +380,7 @@ export default function PreviewStep({
             ),
             target.slot,
           ),
-          onSelect: (id: string | null) => {
-            const operatorByMachineId = { ...team.operatorByMachineId };
-            if (id) operatorByMachineId[target.machineId] = id;
-            else delete operatorByMachineId[target.machineId];
-            updateTeamForSlot(target.slot, { operatorByMachineId });
-          },
+          onSelect: (id: string | null) => actions.setMachineRole(target.slot, 'MACHINE_OPERATOR', target.machineId, id),
         };
       }
     }
@@ -420,7 +394,7 @@ export default function PreviewStep({
       <PlanWindowBar startLabel={fmtPlanTime(draft.planStartTime)} endLabel={fmtPlanTime(endIso)} />
 
       {/* ── Duration warnings ───────────────────────────────────────────── */}
-      <DurationWarningCard pileCodes={warningPileCodes} siteId={siteId} />
+      <DurationWarningCard items={unschedulableSteps} siteId={siteId} />
 
       {/* ── Core Team (Leadership / Shift Incharge / Machine Teams) ──────── */}
       <CoreTeamCard

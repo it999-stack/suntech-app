@@ -18,8 +18,9 @@ import { colors, spacing, radius, typography } from '@/theme/theme';
 import { type PlanDraft, planEndTime } from '@/types/plan';
 import type { TimelineStop } from '@/types/timeline';
 import { matchesRoleDesignation } from '@/utils/personnelRoles';
-import { formatTime, toLocalIsoString, toLocalDateStr, formatRelativeDayLabel } from '@/utils/formatTime';
+import { formatTime, formatRelativeDayLabel } from '@/utils/formatTime';
 import { planGenerationDateRule } from '@/utils/validationRules';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ const fmtPlanDate = (iso: string) =>
 
 interface StartTimeStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'setStartTime' | 'setProjectManager' | 'setPlanningEngineer'>;
   personnel: SimplePersonnel[];
 }
 
@@ -102,7 +103,7 @@ function RolePickerCard({
   );
 }
 
-export default function StartTimeStep({ draft, onUpdate, personnel }: StartTimeStepProps) {
+export default function StartTimeStep({ draft, actions, personnel }: StartTimeStepProps) {
   const endIso = planEndTime(draft.planStartTime);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
 
@@ -139,10 +140,7 @@ export default function StartTimeStep({ draft, onUpdate, personnel }: StartTimeS
   );
 
   function handleTimeChange(picked: Date) {
-    onUpdate({
-      date: toLocalDateStr(picked),
-      planStartTime: toLocalIsoString(picked),
-    });
+    actions.setStartTime(picked);
   }
 
   return (
@@ -172,9 +170,7 @@ export default function StartTimeStep({ draft, onUpdate, personnel }: StartTimeS
         label="Project Manager"
         personnel={projectManagers}
         selectedId={draft.checklistPersonnel.projectManagerId}
-        onSelect={(id) =>
-          onUpdate({ checklistPersonnel: { ...draft.checklistPersonnel, projectManagerId: id } })
-        }
+        onSelect={(id) => actions.setProjectManager(id)}
       />
 
       <RolePickerCard
@@ -182,9 +178,7 @@ export default function StartTimeStep({ draft, onUpdate, personnel }: StartTimeS
         label="Planning Engineer"
         personnel={planningEngineers}
         selectedId={draft.checklistPersonnel.planningEngineerId}
-        onSelect={(id) =>
-          onUpdate({ checklistPersonnel: { ...draft.checklistPersonnel, planningEngineerId: id } })
-        }
+        onSelect={(id) => actions.setPlanningEngineer(id)}
         allowNone
       />
 

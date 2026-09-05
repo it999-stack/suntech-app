@@ -2,8 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing, radius, typography } from '@/theme/theme';
 import GlassCard from '@components/shared/GlassCard';
@@ -118,11 +116,8 @@ export default function StepsScreen() {
   }, [templates]);
 
   return (
-    <LinearGradient
-      colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-      style={styles.flex}
-    >
-      <SafeAreaView style={styles.flex} edges={[]}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <Text style={styles.pageTitle}>Piling Steps</Text>
           <Text style={styles.pageSubtitle}>{steps.length} steps · duration by dia/depth</Text>
@@ -145,8 +140,8 @@ export default function StepsScreen() {
             )}
           />
         )}
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 

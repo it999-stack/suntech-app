@@ -30,6 +30,13 @@ import {
   upsertActualStep,
   type ActualStepWithMeta,
 } from '@repositories/planRepository';
+import { enqueueChecklistSync } from '@repositories/syncQueueRepository';
+import {
+  buildTemplateMinutesMap,
+  getApplicableSteps,
+  templateKey,
+} from '@/services/pileApplicableSteps';
+import type { PendingCloseOut } from '@app-types/plan';
 import { generateId } from '@utils/helpers';
 
 /** One step already completed (actualEnd set) on the pile's most recent past
@@ -74,6 +81,11 @@ export interface ResumeWorkInfo {
    * straight back to that day's Fill Actuals screen. */
   checklistId: string;
   checklistDate: string;
+  /** That checklist's plan window — bounds a close-out time to the day it
+   * actually belongs to. Null on legacy checklists generated before the
+   * window was persisted; callers must treat it as "unbounded", not as zero. */
+  pastPlanStartTime: string | null;
+  pastPlanEndTime: string | null;
 }
 
 export interface ResumeWorkScanResult {
@@ -97,13 +109,6 @@ export async function findResumeWorkForPiles(
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   if (!checklists.length) return empty;
 
-  // Walk newest-to-oldest, collecting EVERY checklist-pile row per pile — a
-  // pile's real progress can straddle more than one day/junction row (a new
-  // pil_checklist_piles row is created each time a pile carries over into a
-  // new plan), and earlier steps completed under an older row must still be
-  // recognized as done. The most-recent row per pile is kept separately as
-  // the "anchor" — the default rig/crane and the fallback resume point for
-  // steps nobody has touched yet.
   const pileIdSet = new Set(pileIds);
   const anchorCpByPile = new Map<string, PilingChecklistPile>();
   const cpRowsByPile = new Map<string, PilingChecklistPile[]>();
@@ -122,8 +127,10 @@ export async function findResumeWorkForPiles(
   if (!anchorCpByPile.size) return empty;
 
   const checklistDateById = new Map(checklists.map((c) => [c.id, c.date]));
+  const planWindowById = new Map(
+    checklists.map((c) => [c.id, { start: c.planStartTime, end: c.planEndTime }]),
+  );
 
-  // Fetch actual + plan steps once per distinct checklist involved.
   const checklistIds = new Set([...cpById.values()].map((cp) => cp.checklistId));
   const actualStepsByCpId = new Map<string, ActualStepWithMeta[]>();
   const planStepByCpAndStepId = new Map<string, Map<string, { plannedStart: string; plannedEnd: string | null }>>();
@@ -143,10 +150,6 @@ export async function findResumeWorkForPiles(
     }
   }
 
-  // Applicable step catalog per pile's dimension — checked in full, not just
-  // whatever happened to get a pile_plan_steps row, so steps the planner
-  // never reached (e.g. cut off by the end-of-window rule) still surface as
-  // pending next time.
   const db = await initDb();
   const pileRows = await db
     .select()
@@ -167,16 +170,23 @@ export async function findResumeWorkForPiles(
     .innerJoin(pilingDimensions, eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id))
     .where(eq(pilingDimensions.siteId, siteId))
     .all();
-  const templateMap = new Map(templateRows.map((t) => [`${t.dimensionId}|${t.stepId}`, t.durationMinutes]));
+  const templateMap = buildTemplateMinutesMap(templateRows);
 
   const pendingWorkItems: ResumeWorkInfo[] = [];
   const completedPileIds: string[] = [];
   for (const [pileId, anchorCp] of anchorCpByPile) {
     const dimensionId = pileById.get(pileId)?.dimensionId;
-    const applicableSteps = dimensionId
-      ? allSteps.filter((s) => templateMap.has(`${dimensionId}|${s.id}`))
-      : [];
-    const referenceSteps = applicableSteps.length > 0 ? applicableSteps : allSteps;
+    // The pile's applicable step set — catalog ∩ templates for its dimension,
+    // shared with usePileGroups/AddPileModal (see pileApplicableSteps.ts).
+    const referenceSteps = getApplicableSteps(allSteps, dimensionId, templateMap);
+
+    // No applicable steps at all (unknown dimension, or a dimension with no
+    // duration templates configured). Deliberately neither "pending" nor
+    // "completed": reporting it complete would silently drop the pile from
+    // every future plan, and there is no step to resume from either. It stays
+    // assignable, and plan generation reports the missing templates for real
+    // (see findMissingTemplateCoverage / planScheduler's warningPileIds).
+    if (!referenceSteps.length) continue;
 
     // Merge actual steps across EVERY checklist-pile row this pile has ever
     // had (not just its most recent one) — a step completed under an older
@@ -193,7 +203,7 @@ export async function findResumeWorkForPiles(
 
     const firstIncomplete = referenceSteps.find((s) => !actualByStepId.get(s.id)?.actualEnd);
     if (!firstIncomplete) {
-      completedPileIds.push(pileId); // fully done — exclude from re-assignment
+      completedPileIds.push(pileId);
       continue;
     }
 
@@ -205,7 +215,11 @@ export async function findResumeWorkForPiles(
     // Remaining duration is never derived from the historical plan/actual
     // timestamps — only the step's canonical template duration seeds the
     // supervisor's confirmation modal; they enter the real remaining time.
-    const remainingMinutes = (dimensionId ? templateMap.get(`${dimensionId}|${firstIncomplete.id}`) : undefined) ?? 60;
+    // The `?? 60` here is a picker SEED the supervisor immediately overwrites,
+    // not a scheduling input — unlike planScheduler, where the same default
+    // was removed outright.
+    const remainingMinutes =
+      (dimensionId ? templateMap.get(templateKey(dimensionId, firstIncomplete.id)) : undefined) ?? 60;
 
     const completedStepNames = referenceSteps
       .filter((s) => actualByStepId.get(s.id)?.actualEnd)
@@ -238,8 +252,9 @@ export async function findResumeWorkForPiles(
       ? {
           stepId: nextStepDef.id,
           stepName: nextStepDef.stepName,
+          // Same seed-not-input reasoning as remainingMinutes above.
           remainingMinutes:
-            (dimensionId ? templateMap.get(`${dimensionId}|${nextStepDef.id}`) : undefined) ?? 60,
+            (dimensionId ? templateMap.get(templateKey(dimensionId, nextStepDef.id)) : undefined) ?? 60,
         }
       : null;
 
@@ -258,6 +273,8 @@ export async function findResumeWorkForPiles(
       nextStep,
       checklistId: resolvedCp.checklistId,
       checklistDate: checklistDateById.get(resolvedCp.checklistId) ?? beforeDate,
+      pastPlanStartTime: planWindowById.get(resolvedCp.checklistId)?.start ?? null,
+      pastPlanEndTime: planWindowById.get(resolvedCp.checklistId)?.end ?? null,
     });
   }
 
@@ -271,6 +288,36 @@ export async function findResumeWorkForPiles(
  * `pastActualStart` must be passed through unchanged — upsertActualStep
  * overwrites actualStart/actualEnd/remarks together, not a partial patch.
  */
+/**
+ * Writes every close-out the wizard accumulated, once the plan it belongs to
+ * has actually been generated. Call this ONLY after generation succeeds — the
+ * whole point of deferring is that abandoning the wizard leaves the historical
+ * checklist untouched (see PendingCloseOut).
+ *
+ * Sequential rather than concurrent: these are SQLite writes through the same
+ * connection, and the enqueue is deduped across piles because several piles
+ * confirmed in one session commonly share a single historical checklist —
+ * previously each confirmation enqueued it again.
+ */
+export async function flushResumeCloseOuts(closeOuts: PendingCloseOut[]): Promise<void> {
+  const checklistIds = new Set<string>();
+  for (const c of closeOuts) {
+    await closeOutResumeStep(
+      c.pastChecklistPileId,
+      c.stepId,
+      c.pastActualStart,
+      c.pastEndIso,
+      c.remarks || undefined,
+    );
+    if (c.checklistId) checklistIds.add(c.checklistId);
+  }
+  // Enqueued after every write lands, so a failure part-way through can't
+  // queue a push for rows that were never written.
+  for (const checklistId of checklistIds) {
+    await enqueueChecklistSync(checklistId);
+  }
+}
+
 export async function closeOutResumeStep(
   pastChecklistPileId: string,
   stepId: string,

@@ -9,7 +9,8 @@ import AssigneeChip from '@components/shared/AssigneeChip';
 import PersonnelPickerList, { type SimplePersonnel } from '@components/shared/PersonnelPickerList';
 import RequiredMark from '@components/shared/RequiredMark';
 import { colors, spacing, radius, typography } from '@/theme/theme';
-import type { PlanDraft, ShiftTeamAssignment } from '@/types/plan';
+import type { PlanDraft } from '@/types/plan';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 import {
   matchesRoleDesignation,
   getEngineerOrSupervisorCandidates,
@@ -37,7 +38,7 @@ export interface TeamAssignStepHandle {
 
 interface TeamAssignStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'setShiftIncharge' | 'setMachineRole'>;
   /** Which shift's roster this instance edits — GeneratePlanScreen mounts one per shift. */
   shiftSlot: 1 | 2;
   activeRigs: SimpleMachine[];
@@ -94,7 +95,7 @@ function fieldKey(role: 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR', machineI
 
 const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(function TeamAssignStep({
   draft,
-  onUpdate,
+  actions,
   shiftSlot,
   activeRigs,
   activeCranes,
@@ -176,34 +177,6 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [activeRigs, activeCranes, team, scrollToField]);
 
-  function updateTeam(patch: Partial<ShiftTeamAssignment>) {
-    const key = shiftSlot === 1 ? 'shift1' : 'shift2';
-    onUpdate({
-      checklistPersonnel: { ...draft.checklistPersonnel, [key]: { ...team, ...patch } },
-    });
-  }
-
-  function setEngineer(machineId: string, personnelId: string | null) {
-    const engineerByMachineId = { ...team.engineerByMachineId };
-    if (personnelId) engineerByMachineId[machineId] = personnelId;
-    else delete engineerByMachineId[machineId];
-    updateTeam({ engineerByMachineId });
-  }
-
-  function setSupervisor(machineId: string, personnelId: string | null) {
-    const supervisorByMachineId = { ...team.supervisorByMachineId };
-    if (personnelId) supervisorByMachineId[machineId] = personnelId;
-    else delete supervisorByMachineId[machineId];
-    updateTeam({ supervisorByMachineId });
-  }
-
-  function setOperator(machineId: string, personnelId: string | null) {
-    const operatorByMachineId = { ...team.operatorByMachineId };
-    if (personnelId) operatorByMachineId[machineId] = personnelId;
-    else delete operatorByMachineId[machineId];
-    updateTeam({ operatorByMachineId });
-  }
-
   const operatorCandidates = useMemo(() => {
     if (!pickerTarget || pickerTarget.role !== 'MACHINE_OPERATOR') return [];
     return getOperatorMachineCandidates(pickerTarget.type, personnel);
@@ -221,7 +194,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
           allowNone: true,
           emptyLabel: 'No matching shift incharges synced for this site.',
           disabledDetails: toDisabledDetails(getShiftInchargeDisabledIds(otherTeam.shiftInchargeId)),
-          onSelect: (id: string | null) => updateTeam({ shiftInchargeId: id }),
+          onSelect: (id: string | null) => actions.setShiftIncharge(shiftSlot, id),
         };
       case 'ENGINEER':
         return {
@@ -241,7 +214,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
               ...getCrossRoleDisabledIds(team.supervisorByMachineId),
             ]),
           ),
-          onSelect: (id: string | null) => setEngineer(pickerTarget.machineId, id),
+          onSelect: (id: string | null) => actions.setMachineRole(shiftSlot, 'ENGINEER', pickerTarget.machineId, id),
         };
       case 'SUPERVISOR':
         return {
@@ -261,7 +234,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
               ...getCrossRoleDisabledIds(team.engineerByMachineId),
             ]),
           ),
-          onSelect: (id: string | null) => setSupervisor(pickerTarget.machineId, id),
+          onSelect: (id: string | null) => actions.setMachineRole(shiftSlot, 'SUPERVISOR', pickerTarget.machineId, id),
         };
       case 'MACHINE_OPERATOR':
         return {
@@ -278,7 +251,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
               { excludeSameShiftOtherMachines: true },
             ),
           ),
-          onSelect: (id: string | null) => setOperator(pickerTarget.machineId, id),
+          onSelect: (id: string | null) => actions.setMachineRole(shiftSlot, 'MACHINE_OPERATOR', pickerTarget.machineId, id),
         };
     }
   }, [
@@ -291,6 +264,8 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
     machineNoFor,
     currentShiftLabel,
     otherShiftLabel,
+    actions,
+    shiftSlot,
   ]);
 
   return (

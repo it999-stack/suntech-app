@@ -17,6 +17,7 @@ import { useElapsedSeconds } from '@hooks/useElapsedSeconds';
 import type { LogMachineEventInput } from '@state/PlanContext';
 import type { PilMachineEvent } from '@db/schema';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
+import { formatOpenSessionNotice } from '@utils/timeValidation';
 import NotesField from './machineEvents/NotesField';
 import Button from '@components/shared/Button';
 import { useSaveMachineEvent } from './machineEvents/useSaveMachineEvent';
@@ -120,6 +121,14 @@ export default function MachineIdleModal({
             label={eventType === 'IDLE_START' ? 'Start time' : 'End time'}
             value={occurredAt}
             onChange={setOccurredAt}
+            // An idle period can't end before it began. Only bounded when
+            // ending, and only when the open session is in this modal's history.
+            minBoundIso={eventType === 'IDLE_END' ? openIdleStart?.occurredAt : undefined}
+            minBoundConflict={
+              eventType === 'IDLE_END' && openIdleStart
+                ? formatOpenSessionNotice('Went idle', openIdleStart.occurredAt)
+                : undefined
+            }
           />
 
           <NotesField

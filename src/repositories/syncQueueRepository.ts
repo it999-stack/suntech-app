@@ -71,6 +71,24 @@ export async function markSynced(checklistIds: string[]): Promise<void> {
     .where(and(inArray(pilSyncQueue.checklistId, checklistIds), eq(pilSyncQueue.status, 'syncing')));
 }
 
+/**
+ * Drop queue rows outright, whatever their status — used when the checklist
+ * itself no longer exists (deleted on this device, or reported deleted by the
+ * server's delta pull).
+ *
+ * Deliberately NOT status-filtered, unlike markSynced(): that guard exists to
+ * protect a row re-enqueued by a write that landed mid-flush, so the new edit
+ * isn't lost. Here the opposite is true — the checklist those edits belong to
+ * is gone server-side, so a surviving row would just retry a push that can
+ * never succeed, and (because deltaPull skips purging dirty checklists) would
+ * keep the local copy pinned in place forever.
+ */
+export async function dequeueChecklistSync(checklistIds: string[]): Promise<void> {
+  if (!checklistIds.length) return;
+  const db = await initDb();
+  await db.delete(pilSyncQueue).where(inArray(pilSyncQueue.checklistId, checklistIds));
+}
+
 /** Checklist ids with any unsynced local change — a row only exists here while dirty. */
 export async function getDirtyChecklistIds(): Promise<string[]> {
   const db = await initDb();

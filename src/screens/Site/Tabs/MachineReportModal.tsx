@@ -13,6 +13,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { AlertTriangle, Wrench, CheckCircle2 } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import CompactTimeRow from '@components/plan/actual/machineEvents/CompactTimeRow';
+import { formatOpenSessionNotice } from '@utils/timeValidation';
 import NotesField from '@components/plan/actual/machineEvents/NotesField';
 import Button from '@components/shared/Button';
 import { useSaveMachineEvent } from '@components/plan/actual/machineEvents/useSaveMachineEvent';
@@ -126,6 +127,14 @@ export default function MachineReportModal({
             label={screen === 'BREAKDOWN' ? 'Reported at' : 'Resumed at'}
             value={occurredAt}
             onChange={setOccurredAt}
+            // Fleet-level, so no checklist and no plan window — but "can't
+            // resume before it broke" holds regardless of context.
+            minBoundIso={screen === 'RESUMED' ? openBreakdown?.occurredAt : undefined}
+            minBoundConflict={
+              screen === 'RESUMED' && openBreakdown
+                ? formatOpenSessionNotice('Reported down', openBreakdown.occurredAt)
+                : undefined
+            }
           />
 
           <NotesField

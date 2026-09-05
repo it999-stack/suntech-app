@@ -19,8 +19,9 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { CheckCircle2, Clock, PencilLine } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import MachineBadge from '@components/shared/MachineBadge';
-import type { PlanDraft } from '@/types/plan';
+import { planEndTime, type PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 import { formatTime } from '@utils/formatTime';
 import { useScrollToField } from '@hooks/useScrollToField';
 import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
@@ -43,7 +44,7 @@ export interface ResumeConfirmStepHandle {
 
 interface ResumeConfirmStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'confirmResume'>;
   piles?: EligiblePile[];
   activeRigs?: SimpleMachine[];
   activeCranes?: SimpleMachine[];
@@ -57,10 +58,10 @@ interface ResumeConfirmStepProps {
 }
 
 const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepProps>(function ResumeConfirmStep({
-  draft, onUpdate, piles = [], activeRigs = [], activeCranes = [],
+  draft, actions, piles = [], activeRigs = [], activeCranes = [],
   effectiveDayStart, allSteps = [],
 }, ref) {
-  const resumeConfirm = useResumeConfirmQueue(draft, onUpdate, allSteps);
+  const resumeConfirm = useResumeConfirmQueue(draft, actions.confirmResume, allSteps);
   const { scrollViewRef, scrollYRef, onScroll, scrollEventThrottle } = useTrackedScrollView();
   const { registerField, scrollToField } = useScrollToField(scrollViewRef, scrollYRef);
 
@@ -259,6 +260,7 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
               onConfirmFull={resumeConfirm.confirmFull}
               editingCompleted
               onConfirmEditedFull={resumeConfirm.editConfirmedFull}
+              todayPlanEndIso={planEndTime(draft.planStartTime)}
               onClose={resumeConfirm.cancelEditCompleted}
             />
           ) : null;
@@ -274,6 +276,7 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
             effectiveStart={effectiveDayStart}
             onConfirmPartial={resumeConfirm.confirmPartial}
             onConfirmFull={resumeConfirm.confirmFull}
+            todayPlanEndIso={planEndTime(draft.planStartTime)}
             onClose={resumeConfirm.cancel}
           />
         ) : null;

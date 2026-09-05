@@ -28,6 +28,7 @@ import {
 import { getLocationsBySite } from '@repositories/locationsRepository';
 import { getSteps } from '@repositories/stepsRepository';
 import { getAllDurationTemplates } from '@repositories/durationTemplatesRepository';
+import { buildTemplateKeySet, getApplicableSteps } from '@/services/pileApplicableSteps';
 import type { PilingMachine, PilingLocation, PilingStep } from '@db/schema';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
 import SearchToggleField from '@components/shared/SearchToggleField';
@@ -40,8 +41,6 @@ import { useAppConfig } from '@state/AppConfigContext';
 import { usePlan, type EditPlanPileInput, type EditPlanPreviewStep } from '@state/PlanContext';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
-// Breathing room from the very top of the screen once the card is pushed up
-// flush against the keyboard, so its header never slides in under the status bar.
 const TOP_CLEARANCE = 24;
 
 interface AddPileModalProps {
@@ -78,10 +77,6 @@ export default function AddPileModal({
 }: AddPileModalProps) {
   const { config } = useAppConfig();
   const { previewEditPlanMidDay } = usePlan();
-  // Tracked so the card's own height can be clamped to whatever room is
-  // actually left above the keyboard — otherwise a keyboard tall enough
-  // (card height + keyboard height > screen height) pushes the card's top
-  // off-screen above the status bar instead of just shrinking to fit.
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -94,7 +89,7 @@ export default function AddPileModal({
     };
   }, []);
   const availableHeight = keyboardHeight > 0 ? SCREEN_HEIGHT - keyboardHeight - TOP_CLEARANCE : SCREEN_HEIGHT;
-  const cardMaxHeight = Math.min(SCREEN_HEIGHT * 0.9, availableHeight);
+  const cardMaxHeight = Math.min(SCREEN_HEIGHT * 1.0, availableHeight);
   const cardBrowsingHeight = Math.min(SCREEN_HEIGHT * 0.8, availableHeight);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -114,9 +109,9 @@ export default function AddPileModal({
   const [pendingPile, setPendingPile] = useState<PileWithDimension | null>(null);
   const [otherMachineId, setOtherMachineId] = useState<string | null>(null);
 
-  // Applicable step catalog for the picked pile's dimension — same
-  // "allSteps filtered to whatever has a duration template for this
-  // dimension" derivation resumeWorkService.ts already uses elsewhere.
+  // Applicable step catalog for the picked pile's dimension — the shared
+  // "catalog ∩ duration templates for this dimension" derivation, see
+  // services/pileApplicableSteps.ts.
   const [applicableSteps, setApplicableSteps] = useState<PilingStep[]>([]);
   // Step ids whose CRANE-track step this pile should run on the Rig instead
   // — sent through as stepTrackOverrides on confirm.
@@ -131,8 +126,9 @@ export default function AddPileModal({
     let cancelled = false;
     Promise.all([getSteps(), getAllDurationTemplates(siteId)]).then(([allSteps, templates]) => {
       if (cancelled) return;
-      const templateKeys = new Set(templates.map((t) => `${t.dimensionId}|${t.stepId}`));
-      setApplicableSteps(allSteps.filter((s) => templateKeys.has(`${pendingPile.dimensionId}|${s.id}`)));
+      setApplicableSteps(
+        getApplicableSteps(allSteps, pendingPile.dimensionId, buildTemplateKeySet(templates)),
+      );
     });
     return () => {
       cancelled = true;
@@ -546,7 +542,7 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxHeight: SCREEN_HEIGHT * 0.9,
+    maxHeight: SCREEN_HEIGHT * 1.0,
     backgroundColor: colors.white,
     borderRadius: radius.lg,
     padding: spacing.lg,

@@ -8,12 +8,20 @@ import CoordinatorCallModal from '@components/shared/CoordinatorCallModal';
 import { getSiteCoordinatorsBySite } from '@repositories/siteCoordinatorsRepository';
 import type { PilSiteCoordinator } from '@db/schema';
 
+/** One pile×step that cannot be scheduled. `stepName` is absent when the
+ * scheduler rejected the whole pile (e.g. no dimension set on it, or no
+ * machine assigned for a step's track) rather than one specific step. */
+export interface UnschedulableStep {
+  pileCode: string;
+  stepName?: string;
+}
+
 interface DurationWarningCardProps {
-  pileCodes: string[];
+  items: UnschedulableStep[];
   siteId: string;
 }
 
-export default function DurationWarningCard({ pileCodes, siteId }: DurationWarningCardProps) {
+export default function DurationWarningCard({ items, siteId }: DurationWarningCardProps) {
   const [open, setOpen] = useState(true);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [coordinators, setCoordinators] = useState<PilSiteCoordinator[]>([]);
@@ -23,14 +31,14 @@ export default function DurationWarningCard({ pileCodes, siteId }: DurationWarni
     getSiteCoordinatorsBySite(siteId).then(setCoordinators);
   }, [siteId]);
 
-  if (pileCodes.length === 0) return null;
+  if (items.length === 0) return null;
 
   return (
     <View style={styles.card}>
       <Pressable style={styles.header} onPress={() => setOpen((v) => !v)}>
         <AlertTriangle size={18} color={colors.danger} />
         <Text style={styles.headerText}>
-          {pileCodes.length} pile{pileCodes.length === 1 ? '' : 's'} defaulting to 60m duration
+          {items.length} step{items.length === 1 ? '' : 's'} cannot be scheduled
         </Text>
         {open ? (
           <ChevronUp size={18} color={colors.textSecondary} strokeWidth={2} />
@@ -41,16 +49,22 @@ export default function DurationWarningCard({ pileCodes, siteId }: DurationWarni
 
       {open && (
         <View style={styles.body}>
+          {/* Nothing defaults any more: a step with no duration template for a
+              pile's dimension is left out of the plan entirely (the server
+              rejects such a plan too), so this is a blocker to fix, not a
+              caveat to accept. */}
           <Text style={styles.description}>
-            No dimension template matches these piles, so their steps use a 60-minute default.
-            Connect Head Office to pull the correct durations.
+            No duration is configured for these piles&apos; sizes, so their steps can&apos;t be scheduled.
+            Connect Head Office to pull the correct durations, or remove the step from this plan.
           </Text>
 
           <Text style={styles.sectionLabel}>Affected piles</Text>
           <View style={styles.pillRow}>
-            {pileCodes.map((code) => (
-              <View key={code} style={styles.pill}>
-                <Text style={styles.pillText}>{code}</Text>
+            {items.map((item) => (
+              <View key={`${item.pileCode}-${item.stepName ?? ''}`} style={styles.pill}>
+                <Text style={styles.pillText}>
+                  {item.stepName ? `${item.pileCode} · ${item.stepName}` : item.pileCode}
+                </Text>
               </View>
             ))}
           </View>

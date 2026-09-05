@@ -197,6 +197,12 @@ export type PileTiming = {
   plannedEnd: string | null;   // latest pile_plan_steps.planned_end for this pile
   actualStart: string | null;  // earliest pile_actual_steps.actual_start for this pile
   actualEnd: string | null;    // latest pile_actual_steps.actual_end, only once status is COMPLETED
+  /** How many steps this pile's plan covered. */
+  plannedStepCount: number;
+  /** How many steps were actually worked with no plan row at all — see
+   * ChecklistPileProgress, which needs both to keep an only-partly-planned
+   * pile from reading as fully complete. */
+  unplannedStepCount: number;
 };
 
 /**
@@ -230,6 +236,11 @@ export async function getChecklistPileTimings(checklistId: string): Promise<Pile
     const started = actuals.filter((s): s is PileActualStep & { actualStart: string } => !!s.actualStart);
     const finished = actuals.filter((s): s is PileActualStep & { actualEnd: string } => !!s.actualEnd);
 
+    // Work recorded against a step the plan never covered — the pile's planned
+    // span therefore doesn't span all of its actual work.
+    const plannedStepIds = new Set(plans.map((s) => s.stepId));
+    const unplannedStepCount = actuals.filter((s) => !plannedStepIds.has(s.stepId)).length;
+
     return {
       checklistPileId: pile.id,
       status: pile.status as PileTiming['status'],
@@ -247,6 +258,8 @@ export async function getChecklistPileTimings(checklistId: string): Promise<Pile
       actualEnd: pile.status === 'COMPLETED' && finished.length
         ? finished.reduce((max, s) => (s.actualEnd > max ? s.actualEnd : max), finished[0].actualEnd)
         : null,
+      plannedStepCount: plans.length,
+      unplannedStepCount,
     };
   });
 }
@@ -306,6 +319,10 @@ export async function hydrateChecklistFromServer(serverChecklist: {
       actual_start: string | null;
       actual_end: string | null;
       remarks: string | null;
+      /** Which machine actually performed the step — see
+       * pileActualSteps.assignedMachineId. Optional: absent from responses
+       * predating the column. */
+      assigned_machine_id?: string | null;
       // See checklist_piles[].updated_at above — same purpose, per actual step.
       updated_at?: string | null;
     }>;
@@ -434,6 +451,7 @@ export async function hydrateChecklistFromServer(serverChecklist: {
           actualStart: as.actual_start,
           actualEnd: as.actual_end,
           remarks: as.remarks,
+          assignedMachineId: as.assigned_machine_id ?? null,
           createdAt: now,
           updatedAt: now,
           serverUpdatedAt: as.updated_at ?? null,

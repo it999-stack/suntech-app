@@ -11,10 +11,8 @@ import { colors, spacing, typography } from '@/theme/theme';
 import Avatar from '@components/shared/Avatar';
 
 interface AssigneeChipProps {
-  /** Assigned person's name, or null if unassigned. */
   name: string | null;
   onPress: () => void;
-  /** Icon color shown in the unassigned state. Defaults to the existing warning/amber tone. */
   placeholder?: string;
 }
 

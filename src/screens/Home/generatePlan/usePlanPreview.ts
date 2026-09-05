@@ -2,8 +2,13 @@
 //
 // Drives the Preview step: fetches the session's duration-template/window
 // reference data once, debounces rig/crane track-override tile taps into a
-// single recompute, and runs generatePlanPreview() whenever the user is on
-// (or changes something on) the preview step.
+// single recompute, runs generatePlanPreview() whenever the user is on (or
+// changes something on) the preview step, and (via usePreviewReorder)
+// builds the per-pile machine-label rows and reorder-overlay wiring. Returns
+// everything as one PlanResult plus the handful of imperative controls a
+// step component needs (tile taps, opening the reorder overlay, the
+// Steps-screen precompute). Every draft write goes through the `actions`
+// usePlanDraft provides — this hook never calls setDraft/updateDraft itself.
 
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { InteractionManager } from 'react-native';
@@ -11,6 +16,8 @@ import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
 import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { PlanStepWithMeta } from '@repositories/planRepository';
+import type { MachineInfo } from '@/types/timeline';
+import type { PreviewPile } from '@app-types/previewTypes';
 import {
   generatePlanPreview,
   fetchPlanReferenceData,
@@ -19,26 +26,42 @@ import {
   type PlanRawWindow,
   type PlanScheduleCache,
 } from '@/services/pilingPlannerService';
-import type { EligiblePile } from './useGeneratePlanData';
+import type { EligiblePile, SimpleMachine } from './useGeneratePlanData';
+import type { PlanDraftActions } from './usePlanDraft';
+import { usePreviewReorder } from './usePreviewReorder';
 import { useAppConfig } from '@state/AppConfigContext';
+
+export type PlanResult = {
+  steps: PlanStepWithMeta[];
+  warningPileIds: string[];
+  windowsByMachineId: Record<string, EffectivePlanWindow[]>;
+  isRecomputing: boolean;
+  isLoading: boolean;
+  referenceData: { templateRows: PlanTemplateRow[]; rawWindows: PlanRawWindow[] } | null;
+  pendingTrackOverrides: PlanDraft['stepTrackOverrides'];
+  previewPiles: PreviewPile[];
+  machineOverlay: {
+    editingMachine: MachineInfo | undefined;
+    isOpen: boolean;
+    pilesForMachine: (m: MachineInfo) => { id: string; label: string }[];
+  };
+};
 
 export function usePlanPreview(args: {
   step: Step;
   draft: PlanDraft;
-  updateDraft: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'reorderPiles' | 'setStepTrackOverrides'>;
   piles: EligiblePile[];
   siteId: string;
   selectedPlanPiles: EligiblePile[];
   steps: PilingStep[];
+  activeRigs: SimpleMachine[];
+  activeCranes: SimpleMachine[];
 }): {
-  pendingTrackOverrides: PlanDraft['stepTrackOverrides'];
+  result: PlanResult;
   setPendingTrackOverrides: Dispatch<SetStateAction<PlanDraft['stepTrackOverrides']>>;
-  previewSteps: PlanStepWithMeta[];
-  previewWarningPileIds: string[];
-  previewWindowsByMachineId: Record<string, EffectivePlanWindow[]>;
-  previewRecomputing: boolean;
-  previewLoading: boolean;
-  planReferenceData: { templateRows: PlanTemplateRow[]; rawWindows: PlanRawWindow[] } | null;
+  setEditingMachineId: (id: string | undefined) => void;
+  handleReorderMachine: (newSubsetOrder: string[]) => void;
   /** Runs the same recompute as arriving on the preview step, but while the
    * caller is still on whatever step it's called from — for StepSelectStep's
    * Continue button to await before actually navigating, so the FAB's own
@@ -46,7 +69,7 @@ export function usePlanPreview(args: {
    * registered, and Preview opens already fully computed. */
   precomputePreview: () => Promise<void>;
 } {
-  const { step, draft, updateDraft, piles, siteId, selectedPlanPiles, steps } = args;
+  const { step, draft, actions, piles, siteId, selectedPlanPiles, steps, activeRigs, activeCranes } = args;
   const { config } = useAppConfig();
 
   // Not-yet-confirmed Rig/Crane tile selections from the Preview step's PilesCard.
@@ -74,10 +97,10 @@ export function usePlanPreview(args: {
     if (pendingTrackOverrides === draft.stepTrackOverrides) return; // nothing pending
     setHasPendingTrackChange(true);
     const timer = setTimeout(() => {
-      updateDraft({ stepTrackOverrides: pendingTrackOverrides });
+      actions.setStepTrackOverrides(pendingTrackOverrides);
     }, 500);
     return () => clearTimeout(timer);
-  }, [pendingTrackOverrides, draft.stepTrackOverrides]);
+  }, [pendingTrackOverrides, draft.stepTrackOverrides, actions]);
 
   const [previewSteps, setPreviewSteps] = useState<PlanStepWithMeta[]>([]);
   const [previewWarningPileIds, setPreviewWarningPileIds] = useState<string[]>([]);
@@ -236,15 +259,32 @@ export function usePlanPreview(args: {
     await updatePreview();
   }
 
-  return {
+  const {
+    builtPreviewPiles, setEditingMachineId, editingMachine, isMachineOverlayOpen,
+    pilesForMachine, handleReorderMachine,
+  } = usePreviewReorder({ draft, reorderPiles: actions.reorderPiles, selectedPlanPiles, activeRigs, activeCranes });
+
+  const result: PlanResult = {
+    steps: previewSteps,
+    warningPileIds: previewWarningPileIds,
+    windowsByMachineId: previewWindowsByMachineId,
+    isRecomputing: previewRecomputing,
+    isLoading: previewLoading,
+    referenceData: planReferenceData,
     pendingTrackOverrides,
+    previewPiles: builtPreviewPiles,
+    machineOverlay: {
+      editingMachine,
+      isOpen: isMachineOverlayOpen,
+      pilesForMachine,
+    },
+  };
+
+  return {
+    result,
     setPendingTrackOverrides,
-    previewSteps,
-    previewWarningPileIds,
-    previewWindowsByMachineId,
-    previewRecomputing,
-    previewLoading,
-    planReferenceData,
+    setEditingMachineId,
+    handleReorderMachine,
     precomputePreview,
   };
 }

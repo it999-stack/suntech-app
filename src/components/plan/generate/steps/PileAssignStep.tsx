@@ -18,6 +18,7 @@ import Pager from '@components/shared/Pager';
 import AppModal from '@components/shared/AppModal';
 import MachineBadge from '@components/shared/MachineBadge';
 import { useAppConfig } from '@state/AppConfigContext';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 
 import PileListToolbar, { type LocationFilterOption } from './pile-assign/PileListToolbar';
 import BulkAssignBar from './pile-assign/BulkAssignBar';
@@ -33,7 +34,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 interface PileAssignStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'assignPiles' | 'unassignPiles'>;
   piles?: EligiblePile[];
   locations?: LocationFilterOption[];
   activeRigs?: SimpleMachine[];
@@ -68,7 +69,7 @@ function commonAssignedValue(
 }
 
 export default function PileAssignStep({
-  draft, onUpdate, piles = [], locations = [], activeRigs = [], activeCranes = [],
+  draft, actions, piles = [], locations = [], activeRigs = [], activeCranes = [],
   onSelectionChange,
 }: PileAssignStepProps) {
   const { config } = useAppConfig();
@@ -102,13 +103,7 @@ export default function PileAssignStep({
   }
 
   function commitAssignment(rigId: string, craneId: string | null, pileIds: string[]): void {
-    const newAssignments = { ...draft.assignments };
-    const newSelectedPileIds = [...draft.selectedPileIds];
-    pileIds.forEach((id) => {
-      newAssignments[id] = { rig: rigId, crane: craneId ?? undefined };
-      if (!newSelectedPileIds.includes(id)) newSelectedPileIds.push(id);
-    });
-    onUpdate({ assignments: newAssignments, selectedPileIds: newSelectedPileIds });
+    actions.assignPiles(pileIds, rigId, craneId);
     setLastUsedRigId(rigId);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setSelectedIds(new Set());
@@ -289,12 +284,7 @@ export default function PileAssignStep({
   function unassignSelected(): void {
     const pileIds = [...selectedIds];
     if (pileIds.length === 0) return;
-    const newAssignments = { ...draft.assignments };
-    pileIds.forEach((id) => { newAssignments[id] = { rig: '', crane: undefined }; });
-    onUpdate({
-      assignments: newAssignments,
-      selectedPileIds: draft.selectedPileIds.filter((id) => !pileIds.includes(id)),
-    });
+    actions.unassignPiles(pileIds);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setSelectedIds(new Set());
     setBulkOpen(false);

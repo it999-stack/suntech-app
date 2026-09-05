@@ -93,6 +93,13 @@ export type PlanStepWithMeta = PilePlanStep & {
    * wizard-preview rows (pilingPlannerService.ts) and on persisted/synced rows
    * (getPlanStepsForChecklist above). */
   businessTrack?: string;
+  /** piling_steps.is_splittable — whether the scheduler may pause this step for a
+   * non-working window. Undefined on live wizard-preview rows, which don't need it:
+   * those carry the scheduler's own already-relocated windows, so a non-splittable
+   * step's break is correctly absent from them. Persisted rows do need it, because
+   * their break labels are re-derived from windows at their NOMINAL positions —
+   * see splitStepByInternalWindows. */
+  isSplittable?: boolean;
 };
 
 export async function getPlanStepsForChecklist(
@@ -119,6 +126,7 @@ export async function getPlanStepsForChecklist(
         stepName: pilingSteps.stepName,
         track: pilingSteps.track,
         sequenceOrder: pilingSteps.sequenceOrder,
+        isSplittable: pilingSteps.isSplittable,
         assignedMachineNo: pilingMachines.machineNo,
         // Which type the CURRENTLY assigned machine actually is — the ground truth of
         // what executed this step. Falls back to the step definition's own track when
@@ -222,6 +230,13 @@ export async function reassignMachineFromStep(
  * stepId (not stepId alone) — stepId is a shared step-definition id reused
  * across every pile, so matching on it alone would conflate different
  * piles' actuals for the "same" step.
+ *
+ * `assignedMachineId` is a PATCH field, unlike the others: omitting it (i.e.
+ * leaving it `undefined`) leaves whatever is already stored untouched, where
+ * passing null clears it. Callers that know the machine (the Log Actuals
+ * write path) always pass it; the resume close-out, which writes a previous
+ * day's finish time and has no machine context at all, deliberately omits it
+ * rather than blanking a machine that was correctly recorded earlier.
  */
 export async function upsertActualStep(
   entry: Omit<NewPileActualStep, 'createdAt' | 'updatedAt'>,
@@ -251,6 +266,12 @@ export async function upsertActualStep(
         actualStart: entry.actualStart,
         actualEnd: entry.actualEnd,
         remarks: entry.remarks,
+        // Spread conditionally rather than passed through as undefined — the
+        // patch semantics above are then explicit here instead of resting on
+        // the query builder happening to drop undefined keys.
+        ...(entry.assignedMachineId !== undefined
+          ? { assignedMachineId: entry.assignedMachineId }
+          : {}),
         updatedAt: now,
       })
       .where(eq(pileActualSteps.id, existing[0].id));
@@ -357,6 +378,7 @@ export async function getActualStepsForChecklist(
         actualStart: pileActualSteps.actualStart,
         actualEnd: pileActualSteps.actualEnd,
         remarks: pileActualSteps.remarks,
+        assignedMachineId: pileActualSteps.assignedMachineId,
         createdAt: pileActualSteps.createdAt,
         updatedAt: pileActualSteps.updatedAt,
         serverUpdatedAt: pileActualSteps.serverUpdatedAt,
@@ -378,6 +400,7 @@ export async function getActualStepsForChecklist(
         actualStart: r.actualStart,
         actualEnd: r.actualEnd,
         remarks: r.remarks,
+        assignedMachineId: r.assignedMachineId,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         serverUpdatedAt: r.serverUpdatedAt,

@@ -4,8 +4,6 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, ChevronRight, ChevronLeft } from 'lucide-react-native';
@@ -111,8 +109,8 @@ export default function PlanHistoryScreen() {
   }, [user?.siteId]);
 
   return (
-    <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-      <SafeAreaView style={styles.flex} edges={['top']}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={10}>
             <ChevronLeft size={22} color={colors.accent} />
@@ -185,8 +183,8 @@ export default function PlanHistoryScreen() {
             </ScrollView>
           )}
         </View>
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 

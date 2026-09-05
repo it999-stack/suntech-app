@@ -6,8 +6,8 @@ import { toLocalIsoString } from '@utils/formatTime';
 /** Assignment of rig (+ optional crane) to a single pile. A rig alone is a
  * valid plan — a rig can perform any CRANE-track step, never the reverse. */
 export type PileAssignment = {
-  rig: string;      // pilingMachines.id (type=RIG)
-  crane?: string;   // pilingMachines.id (type=CRANE) — optional
+  rig: string;
+  crane?: string;
 };
 
 /** A step already completed (actualEnd set) on the pile's most recent past
@@ -21,6 +21,32 @@ export type CompletedStepInfo = {
   plannedEnd: string | null;
   actualStart: string | null;
   actualEnd: string | null;
+};
+
+/**
+ * A previous-day step close-out the supervisor has confirmed in the wizard but
+ * which has NOT been written yet.
+ *
+ * These used to be written to pil_actual_steps the instant the supervisor
+ * answered "Partially/Fully completed" — permanently, and queued for sync —
+ * while the remaining-minutes estimate they entered alongside it lived only in
+ * this draft. Abandoning the wizard therefore committed half the answer and
+ * discarded the other half, leaving the step indistinguishable from a fully
+ * completed one: the next generation skipped it entirely and its remaining
+ * work silently vanished from the plan.
+ *
+ * Holding them here instead means the close-out and the remaining time live or
+ * die together — nothing touches the database until the plan is actually
+ * generated. See flushResumeCloseOuts.
+ */
+export type PendingCloseOut = {
+  pastChecklistPileId: string;
+  stepId: string;
+  pastActualStart: string | null;
+  pastEndIso: string;
+  remarks: string;
+  /** The historical checklist to enqueue for sync once written. */
+  checklistId?: string;
 };
 
 /** A per-pile override used when an unfinished step continues on a new day. */
@@ -50,6 +76,12 @@ export type ResumeWork = {
    * lets the confirm modal anchor its "previous day" time pickers correctly. */
   checklistId?: string;
   checklistDate?: string;
+  /** That historical checklist's own plan window (plan_start_time →
+   * plan_end_time, a 24h span). The close-out time the supervisor records
+   * belongs to THAT day, so it is bounded by THAT day's window — not today's.
+   * See buildResumeCloseOutRules. */
+  pastPlanStartTime?: string | null;
+  pastPlanEndTime?: string | null;
   /** What the supervisor chose the last time this pile's resume was
    * confirmed, and the exact values used — lets the modal reopen prefilled
    * instead of resetting to a blank choice. Only ever set by confirmPartial;
@@ -74,6 +106,11 @@ export type ResumeWork = {
      * resume-work object (dropping the top-level checklistId), so
      * editConfirmedFull needs its own copy to enqueue a sync. */
     checklistId?: string;
+    /** That checklist's plan window, captured for the same reason as
+     * checklistId above — the edit-completed path has no other route back to
+     * it once the resume-work object has been replaced. */
+    pastPlanStartTime?: string | null;
+    pastPlanEndTime?: string | null;
   };
 };
 
@@ -134,6 +171,11 @@ export type PlanDraft = {
   assignments: Record<string, PileAssignment>;
   /** Pending work keyed by physical pile id. */
   resumeWorkByPileId: Record<string, ResumeWork>;
+  /** Previous-day close-outs confirmed in the wizard, keyed by physical pile
+   * id, flushed only once the plan generates. Keyed (not a list) so
+   * re-confirming or editing a pile replaces its entry instead of queueing a
+   * second write for the same step. */
+  pendingCloseOuts: Record<string, PendingCloseOut>;
   /** checklistPileId (pile.id in the draft) -> stepIds overridden to run on the Rig instead of Crane. One-off, not persisted beyond this plan generation. */
   stepTrackOverrides: Record<string, string[]>;
   /** All personnel role assignments for this checklist. */
@@ -164,9 +206,16 @@ export type ActualEntry = {
   businessTrack?: 'RIG' | 'CRANE' | 'COMPRESSOR';
   /** piling_steps.sequence_order — the source of truth for step ordering, not plannedStart. */
   sequenceOrder: number;
-  /** Planned start — minutes since midnight. */
-  plannedStart: number;
-  /** Planned end — minutes since midnight. Undefined when this step is "continuing" (no committed end). */
+  /**
+   * Planned start — minutes since midnight. Undefined when this step has NO
+   * plan row at all: the scheduler stopped planning the pile before reaching
+   * it (not enough of the 24h window left), yet the crew ran ahead and
+   * performed it anyway. Such a step has no planned time and never will —
+   * tomorrow's continuation is a different row — so this must stay undefined
+   * and never be coerced to 0, which renders as midnight.
+   */
+  plannedStart?: number;
+  /** Planned end — minutes since midnight. Undefined when this step is "continuing" (no committed end), or unplanned entirely (see plannedStart). */
   plannedEnd?: number;
   /** Actual start — minutes since midnight, undefined if not yet logged. */
   actualStart?: number;
@@ -193,6 +242,13 @@ export type ActualEntry = {
    * suggested default start time once the assigned machine becomes free
    * (machineFloor + bufferMinutes). Never a hard floor. 0 when null/legacy. */
   bufferMinutes: number;
+  /** This step's configured duration template for the pile's dimension, in
+   * minutes. A purely informational reference for an UNPLANNED step ("Not
+   * planned · ~60 min") — it is what the step would have been scheduled for,
+   * not a commitment, and nothing validates against it. Undefined when the
+   * step's plan row already carries real planned times, or when no template
+   * exists (in which case the step isn't applicable at all). */
+  templateMinutes?: number;
   /** Configured non-working window(s) (lunch, shift change, etc.) that landed
    * strictly inside this step's own plan span, re-derived at render time via
    * splitStepByInternalWindows — not persisted, since pil_plan_steps has no
@@ -289,6 +345,7 @@ export function defaultPlanDraft(today: string): PlanDraft {
     selectedStepIds: [],
     assignments: {},
     resumeWorkByPileId: {},
+    pendingCloseOuts: {},
     stepTrackOverrides: {},
     checklistPersonnel: {
       projectManagerId: null,

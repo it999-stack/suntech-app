@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserCircle2 } from 'lucide-react-native';
 
 import { colors, spacing, radius, typography } from '@theme/theme';
@@ -75,11 +74,8 @@ export default function PersonnelScreen() {
   }, [siteId]);
 
   return (
-    <LinearGradient
-      colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-      style={styles.flex}
-    >
-      <SafeAreaView style={styles.flex} edges={[]}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <Text style={styles.pageTitle}>Working Personnel</Text>
           <Text style={styles.pageSubtitle}>
@@ -107,8 +103,8 @@ export default function PersonnelScreen() {
             showsVerticalScrollIndicator={false}
           />
         )}
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 

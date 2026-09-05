@@ -6,21 +6,19 @@
 // for actual-time entries lives here too.
 
 import { useCallback } from 'react';
-import { toLocalIsoString, resolveOvernightDate, resolveActualTimeAnchor } from '@utils/formatTime';
-import type { PlanStepWithMeta, ActualStepWithMeta } from '@repositories/planRepository';
+import { toLocalIsoString, resolveOvernightDate } from '@utils/formatTime';
 import type { PilingDailyChecklist } from '@db/schema';
 import type { PileGroup, PileMeasurementFields } from '@app-types/plan';
 
 export function useActualTimeActions(args: {
   openGroup: PileGroup | null;
-  planSteps: PlanStepWithMeta[];
-  actualSteps: ActualStepWithMeta[];
   checklist: PilingDailyChecklist | null;
   setActualTime: (
     checklistPileId: string,
     stepId: string,
     field: 'actualStart' | 'actualEnd',
     isoTimestamp: string,
+    assignedMachineId?: string | null,
   ) => Promise<void>;
   clearActualTime: (checklistPileId: string, stepId: string, field: 'actualStart' | 'actualEnd') => Promise<void>;
   setRemarks: (checklistPileId: string, stepId: string, remarks: string) => Promise<void>;
@@ -38,8 +36,6 @@ export function useActualTimeActions(args: {
 } {
   const {
     openGroup,
-    planSteps,
-    actualSteps,
     checklist,
     setActualTime,
     clearActualTime,
@@ -57,6 +53,13 @@ export function useActualTimeActions(args: {
   // a day if the picked time-of-day is earlier than the anchor's, so
   // overnight continuations land on the correct date instead of always
   // being forced onto "today".
+  //
+  // That anchor is read off the step row itself (usePileGroups precomputes
+  // start/endAnchorIso with resolveActualTimeAnchor) rather than re-derived
+  // from the plan rows here. It has to be: a step the plan never covered has
+  // no plan row to derive one from, so the old lookup silently fell all the
+  // way through to the checklist's plan start. It also guarantees the picker
+  // and the save path agree — they now read the exact same field.
   const handleSetActualTime = useCallback(
     async (
       stepId: string,
@@ -66,36 +69,30 @@ export function useActualTimeActions(args: {
     ) => {
       if (!openGroup) return;
 
+      const step = openGroup.steps.find((s) => s.stepId === stepId && !s.isHistorical);
+
       let dt: Date;
       if (explicitDate) {
         dt = explicitDate;
       } else {
-        const cpPlanSteps = planSteps
-          .filter((s) => s.checklistPileId === openGroup.checklistPileId)
-          .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
-        const cpActualSteps = actualSteps.filter((a) => a.checklistPileId === openGroup.checklistPileId);
-        const idx = cpPlanSteps.findIndex((s) => s.stepId === stepId);
-
-        const thisPlan = cpPlanSteps[idx];
-        const thisActual = cpActualSteps.find((a) => a.stepId === stepId);
-        const prevPlan = idx > 0 ? cpPlanSteps[idx - 1] : null;
-        const prevActual = prevPlan ? cpActualSteps.find((a) => a.stepId === prevPlan.stepId) : null;
-
-        const anchorIso = resolveActualTimeAnchor(
-          field,
-          { plannedStart: thisPlan?.plannedStart, plannedEnd: thisPlan?.plannedEnd, actualStart: thisActual?.actualStart },
-          prevPlan
-            ? { plannedStart: prevPlan.plannedStart, plannedEnd: prevPlan.plannedEnd, actualEnd: prevActual?.actualEnd }
-            : null,
-          checklist?.planStartTime,
-        );
-
+        const anchorIso =
+          (field === 'actualStart' ? step?.startAnchorIso : step?.endAnchorIso) ??
+          checklist?.planStartTime ??
+          toLocalIsoString(new Date());
         dt = resolveOvernightDate(anchorIso, minutesSinceMidnight);
       }
 
-      await setActualTime(openGroup.checklistPileId, stepId, field, toLocalIsoString(dt));
+      // The machine that actually performed the step, persisted onto the
+      // actual row — for an unplanned step there is no plan row holding it.
+      await setActualTime(
+        openGroup.checklistPileId,
+        stepId,
+        field,
+        toLocalIsoString(dt),
+        step?.assignedMachineId ?? null,
+      );
     },
-    [openGroup, planSteps, actualSteps, checklist, setActualTime],
+    [openGroup, checklist, setActualTime],
   );
 
   const handleClearActualTime = useCallback(

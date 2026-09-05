@@ -23,6 +23,7 @@ import { colors, spacing, radius, typography } from '@theme/theme';
 import { toLocalIsoString, formatElapsedHMS, formatTimeWithDay } from '@utils/formatTime';
 import { useElapsedSeconds } from '@hooks/useElapsedSeconds';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
+import { formatOpenSessionNotice } from '@utils/timeValidation';
 import NotesField from './machineEvents/NotesField';
 import Button from '@components/shared/Button';
 import { useSaveMachineEvent } from './machineEvents/useSaveMachineEvent';
@@ -130,6 +131,15 @@ export default function MachineDownModal({
             label={screen === 'BREAKDOWN' ? 'Reported at' : 'Resumed at'}
             value={occurredAt}
             onChange={setOccurredAt}
+            // A machine can't resume before it broke down. Only bounded on the
+            // RESUMED screen, and only when the open session is visible in the
+            // history this modal was handed.
+            minBoundIso={screen === 'RESUMED' ? openBreakdown?.occurredAt : undefined}
+            minBoundConflict={
+              screen === 'RESUMED' && openBreakdown
+                ? formatOpenSessionNotice('Reported down', openBreakdown.occurredAt)
+                : undefined
+            }
           />
 
           <NotesField

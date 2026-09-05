@@ -407,15 +407,16 @@ export async function initDb() {
 
   await sqlite.execAsync(`
     CREATE TABLE IF NOT EXISTS pil_actual_steps (
-      id                 TEXT PRIMARY KEY NOT NULL,
-      checklist_pile_id  TEXT NOT NULL,
-      step_id            TEXT NOT NULL,
-      actual_start       TEXT,
-      actual_end         TEXT,
-      remarks            TEXT,
-      created_at         INTEGER NOT NULL,
-      updated_at         INTEGER NOT NULL,
-      server_updated_at  TEXT
+      id                  TEXT PRIMARY KEY NOT NULL,
+      checklist_pile_id   TEXT NOT NULL,
+      step_id             TEXT NOT NULL,
+      actual_start        TEXT,
+      actual_end          TEXT,
+      remarks             TEXT,
+      assigned_machine_id TEXT,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL,
+      server_updated_at   TEXT
     );
   `);
 
@@ -423,6 +424,21 @@ export async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_actual_steps_unique
       ON pil_actual_steps (checklist_pile_id, step_id);
   `);
+
+  // Migration: add assigned_machine_id to an already-installed DB. An actual
+  // step can now exist without a matching plan row (a step the scheduler never
+  // planned but the crew performed anyway — see pileActualSteps in schema.ts),
+  // so the plan row is no longer a reliable place to read the machine from.
+  // A plain additive column, so unlike the two NOT NULL relaxations above this
+  // needs no table rebuild — just an idempotent ADD COLUMN, guarded by a
+  // pragma check because SQLite has no ADD COLUMN IF NOT EXISTS. Runs after
+  // the CREATE above, so pragma_table_info always returns the real shape.
+  const actualStepColumns = await sqlite.getAllAsync<{ name: string }>(
+    `SELECT name FROM pragma_table_info('pil_actual_steps');`,
+  );
+  if (!actualStepColumns.some((c) => c.name === 'assigned_machine_id')) {
+    await sqlite.execAsync(`ALTER TABLE pil_actual_steps ADD COLUMN assigned_machine_id TEXT;`);
+  }
 
   // Migration: relax checklist_id/pile_id to nullable (a fleet-level
   // breakdown/resume reported from the Machines screen has neither — see

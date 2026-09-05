@@ -28,6 +28,25 @@ export type PileMeasurementPatch = Partial<
 export type PileMeasurementSyncRow = Omit<NewPilPileMeasurement, 'id' | 'createdAt' | 'updatedAt'>;
 
 /**
+ * Hard-delete the measurement rows for the given physical piles.
+ *
+ * Called when a day's plan is deleted — the server soft-deletes those
+ * measurements (see soft_delete_checklist) and reports the affected pile ids
+ * in the delta pull's `deleted_measurement_pile_ids`. Local rows are removed
+ * outright rather than flagged: this table is a cache of server state, exactly
+ * like purgeChecklistsByIds treats checklists.
+ *
+ * Keyed by pileId, not by the server's measurement id — saveMeasurementsBatch
+ * mints its own local ids and upserts on pileId, so a server id would not
+ * match anything here.
+ */
+export async function deletePileMeasurementsByPileIds(pileIds: string[]): Promise<void> {
+  if (!pileIds.length) return;
+  const db = await initDb();
+  await db.delete(pilPileMeasurements).where(inArray(pilPileMeasurements.pileId, pileIds));
+}
+
+/**
  * Get one physical pile's measurements row, or undefined if nothing has been
  * recorded for it yet.
  */

@@ -20,6 +20,14 @@ export interface SyncActualStep {
   actual_end?: string | null;
   remarks?: string | null;
   /**
+   * Which machine actually performed the step. Sent because an actual step can
+   * now exist with no plan row at all (a step the scheduler never planned but
+   * the crew performed once the machine came free), so the server cannot
+   * recover the machine from the plan. Accepted on both this push and
+   * PATCH /piling/checklist-piles/{id}/actual.
+   */
+  assigned_machine_id?: string | null;
+  /**
    * Optimistic-concurrency base version — the server's own `updated_at`,
    * echoed back verbatim from the last pull/hydrate (see
    * pileActualSteps.serverUpdatedAt / pilingChecklistPiles.serverUpdatedAt).
@@ -111,7 +119,13 @@ export interface SyncConflict {
   entity: 'actual_step' | 'checklist_pile';
   id: string;
   reason: string;
-  current_updated_at: string;
+  /** Absent when the conflict is not a version race — an actual step rejected
+   * for falling outside its checklist day has no server version to catch up
+   * to, because the row was never stored. */
+  current_updated_at?: string;
+  /** Human-readable explanation, present only for rejections the operator can
+   * act on (reason === 'outside_plan_window'). */
+  detail?: string;
 }
 
 /**
@@ -128,6 +142,22 @@ export interface SyncedVersion {
   updated_at: string;
 }
 
+/**
+ * A pushed checklist the server discarded instead of applying, because that
+ * day's plan has been deleted server-side.
+ *
+ * Reported separately from `errors` on purpose: an error means "retry later",
+ * and this can never succeed — leaving it in the sync queue would both spin
+ * forever and keep the local copy pinned (deltaPull won't purge a checklist
+ * that still has queued edits). Treated as synced by deltaPush so the queue
+ * row clears and the following pull can remove it.
+ */
+export interface SyncDroppedChecklist {
+  id: string;
+  /** Currently always 'deleted'. */
+  reason: string;
+}
+
 export interface SyncAppPlanResponse {
   success: boolean;
   checklists_synced: number;
@@ -140,4 +170,5 @@ export interface SyncAppPlanResponse {
   errors?: Array<{ checklist_id: string; error: string }>;
   conflicts?: SyncConflict[];
   synced_versions?: SyncedVersion[];
+  dropped_checklists?: SyncDroppedChecklist[];
 }

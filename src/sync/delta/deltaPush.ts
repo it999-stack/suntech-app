@@ -13,7 +13,11 @@ import {
   markFailed,
 } from '@repositories/syncQueueRepository';
 import { getChecklistsForSync, applySyncedVersions } from '@repositories/syncRepository';
-import type { SyncAppPlanResponse, SyncConflict } from '@sync/SyncAppPlanPayload';
+import type {
+  SyncAppPlanResponse,
+  SyncConflict,
+  SyncDroppedChecklist,
+} from '@sync/SyncAppPlanPayload';
 
 export type FlushResult = {
   /** Checklists that were dirty and attempted this flush (0 if skipped/no-op). */
@@ -25,6 +29,9 @@ export type FlushResult = {
   /** Per-row conflicts reported by the server — informational only in Phase 3
    * (see runDeltaSync.ts: the pull that follows corrects the local value). */
   conflicts?: SyncAppPlanResponse['conflicts'];
+  /** Checklists the server discarded because that day's plan was deleted —
+   * counted as succeeded, not failed. See onChecklistsDropped(). */
+  dropped?: SyncAppPlanResponse['dropped_checklists'];
 };
 
 let isFlushing = false;
@@ -64,6 +71,28 @@ function notifyConflicts(conflicts: SyncConflict[] | undefined): void {
   conflictListeners.forEach((listener) => listener(conflicts));
 }
 
+type DroppedListener = (dropped: SyncDroppedChecklist[]) => void;
+const droppedListeners = new Set<DroppedListener>();
+
+/**
+ * Subscribe to be notified when the server discards a pushed checklist because
+ * that day's plan was deleted (typically from another device).
+ *
+ * Worth surfacing: the server reports these as dropped rather than as errors
+ * — deliberately, so this device's queue clears instead of retrying forever —
+ * which means whatever was queued for that day is silently gone. Without a
+ * notice the supervisor just sees their entries vanish.
+ */
+export function onChecklistsDropped(listener: DroppedListener): () => void {
+  droppedListeners.add(listener);
+  return () => droppedListeners.delete(listener);
+}
+
+function notifyDropped(dropped: SyncDroppedChecklist[] | undefined): void {
+  if (!dropped?.length) return;
+  droppedListeners.forEach((listener) => listener(dropped));
+}
+
 /**
  * No-ops if offline, already flushing, not logged into a site, or nothing is
  * queued.
@@ -91,6 +120,10 @@ export async function deltaPush(): Promise<FlushResult> {
 
     const errors = data.errors ?? [];
     const failedIds = new Set(errors.map((e) => e.checklist_id));
+    // Dropped checklists (the day's plan was deleted server-side) carry no
+    // error, so they fall into succeededIds and get their queue row cleared —
+    // which is exactly right: retrying is pointless, and only once the row is
+    // gone can the delta pull that follows purge the local copy.
     const succeededIds = checklistIds.filter((id) => !failedIds.has(id));
 
     // Advance the local optimistic-concurrency cache for every row this push
@@ -111,6 +144,7 @@ export async function deltaPush(): Promise<FlushResult> {
     }
 
     notifyConflicts(data.conflicts);
+    notifyDropped(data.dropped_checklists);
 
     return {
       attempted: checklistIds.length,
@@ -118,6 +152,7 @@ export async function deltaPush(): Promise<FlushResult> {
       failed: errors.length,
       error: errors[0]?.error,
       conflicts: data.conflicts,
+      dropped: data.dropped_checklists,
     };
   } catch (err) {
     // Whole-batch failure (e.g. connection dropped mid-request) — leave every

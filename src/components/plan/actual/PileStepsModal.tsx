@@ -44,24 +44,12 @@ import {
   formatDuration,
   formatDurationMinutes,
   durationMinutes,
-  addMinutes,
-  toLocalIsoString,
 } from '@utils/formatTime';
-import {
-  findMachineConflict,
-  findPileStepConflict,
-  computeExpectedStepStart,
-  type MachineFloorIndex,
-} from '@utils/machineFloor';
-import { formatOccupiedNotice, type ConflictNotice } from '@utils/timeValidation';
+import { computeExpectedStepStart, type MachineFloorIndex } from '@utils/machineFloor';
+import { type ConflictNotice } from '@utils/timeValidation';
+import { buildActualTimeRules } from '@utils/actualTimeRules';
 import { getTrackBadgeColors } from '@utils/helpers';
 import { notify } from '@utils/notify';
-
-/** Current time-of-day as minutes-since-midnight. */
-function nowMinutes(): number {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-}
 
 /** Signed duration for a delay chip — e.g. 460 → "+7h 40m", -10 → "-10m", 0 → "On time". */
 function formatSignedDuration(minutes: number): string {
@@ -89,12 +77,7 @@ interface Props {
   group: PileGroup;
   machines: PilingMachine[];
   machineFloorIndex: MachineFloorIndex;
-  /** Site-scoped contractor master list — backs the "Name of Pile
-   * Contractor" / "Name of Cage Contractor" measurement fields. */
   contractors: PilContractor[];
-  /** Caps actual start/finish entry to this checklist's own plan window
-   * (planStartTime .. planEndTime + 1h grace) — null/missing fields mean no
-   * plan generated yet, so no restriction is applied. */
   checklist: Pick<PilingDailyChecklist, 'planStartTime' | 'planEndTime'> | null;
   onClose: () => void;
   onSetActualTime: (
@@ -124,7 +107,25 @@ export default function PileStepsModal({
   onLogMachineEvent,
   onSaveMeasurements,
 }: Props) {
-  const steps = [...group.steps].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+  // Memoised on group.steps (itself stable — usePileGroups builds it in a
+  // useMemo). Without this the sort produces a new array identity every
+  // render, which silently defeats every downstream useMemo keyed on `steps`
+  // — currentMachineIdByTrack, the two conflict-check maps, and
+  // expectedStartByStepId were all recomputing on each render.
+  const steps = useMemo(
+    () => [...group.steps].sort((a, b) => a.sequenceOrder - b.sequenceOrder),
+    [group.steps],
+  );
+  // "Current" is now a purely VISUAL hint — the accent circle and the
+  // auto-scroll target. It no longer gates which step's CARD renders a fill
+  // control: a pile's plan can cover only part of its applicable steps (see
+  // usePileGroups), so a later unplanned step would otherwise stay hidden
+  // behind a step nobody is going to fill. Every not-yet-completed step
+  // renders one, but starting it is still gated on every earlier step being
+  // done first (see earliestIncompletePredecessor below) — a pile's steps
+  // are one physical sequence regardless of what got planned. Once a step is
+  // allowed to start, the time bounds (see buildActualTimeRules) constrain
+  // which moment it lands on.
   const currentStepId = steps.find((s) => s.actualEnd === undefined)?.stepId;
   const allDone = !currentStepId;
 
@@ -202,49 +203,25 @@ export default function PileStepsModal({
     };
   }, [machineEventFor, group.checklistPileId]);
 
-  // Caps actual start/finish entry to this checklist's own plan window —
-  // plan_start_time through plan_end_time + 1h grace. undefined (no
-  // restriction) when the checklist has no plan yet.
-  const planWindowMinIso = checklist?.planStartTime ?? undefined;
-  const planWindowMaxIso = useMemo(
-    () => (checklist?.planEndTime ? toLocalIsoString(addMinutes(new Date(checklist.planEndTime), 60)) : undefined),
-    [checklist?.planEndTime],
+  // Every bound, conflict check, and picker seed for this pile's time entry —
+  // assembled once here instead of spelled out at each of the four call
+  // sites. See utils/actualTimeRules.ts for why it's a plain builder rather
+  // than a hook.
+  const rules = useMemo(
+    () =>
+      buildActualTimeRules({
+        steps,
+        checklistPileId: group.checklistPileId,
+        pileCode: group.pileCode,
+        machineFloorIndex,
+        planWindowMinIso: checklist?.planStartTime ?? undefined,
+        planWindowMaxIso: checklist?.planEndTime ?? undefined,
+      }),
+    [steps, group.checklistPileId, group.pileCode, machineFloorIndex, checklist?.planStartTime, checklist?.planEndTime],
   );
 
   const currentMachineIdByTrack = useMemo(() => getCurrentMachineIdByTrack(steps), [steps]);
   const currentStep = steps.find((s) => s.stepId === currentStepId);
-
-  // Both maps below return a "Machine occupied" notice naming exactly what's
-  // blocking the candidate time (or null when there's no conflict), instead
-  // of a bare boolean, so StepTimeControl/EditTimeButton can surface it
-  // instead of a generic "Invalid time". Same shared format as the
-  // minBoundConflict/maxBoundConflict notices built below, via
-  // formatOccupiedNotice.
-  const machineConflictChecksByStepId = useMemo(() => {
-    const map = new Map<string, { forStart: (c: Date) => ConflictNotice | null; forFinish: (c: Date) => ConflictNotice | null }>();
-    for (const step of steps) {
-      if (!step.assignedMachineId) continue;
-      const machineId = step.assignedMachineId;
-      const ownStart = step.actualStartIso ? new Date(step.actualStartIso) : undefined;
-      const ownEnd = step.actualEndIso ? new Date(step.actualEndIso) : undefined;
-      const describe = (candidateStart: Date, candidateEnd?: Date) => {
-        const conflict = findMachineConflict(
-          machineFloorIndex,
-          machineId,
-          group.checklistPileId,
-          step.stepId,
-          candidateStart,
-          candidateEnd,
-        );
-        return conflict ? formatOccupiedNotice(conflict.pileCode, conflict.stepName, conflict.start, conflict.end) : null;
-      };
-      map.set(step.stepId, {
-        forStart: (candidate) => describe(candidate, ownEnd),
-        forFinish: (candidate) => describe(ownStart ?? candidate, candidate),
-      });
-    }
-    return map;
-  }, [steps, machineFloorIndex, group.checklistPileId]);
 
   // "Expected start" per step — see DELAY_CALCULATIONS.md's Start Delay
   // chain: that step's own assigned machine's most recent real completion
@@ -254,43 +231,89 @@ export default function PileStepsModal({
   // Only computed once a step has an actualStart — Start Delay is undefined
   // before that.
   const expectedStartByStepId = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof computeExpectedStepStart>>();
+    const map = new Map<string, NonNullable<ReturnType<typeof computeExpectedStepStart>>>();
     for (const step of steps) {
       if (!step.actualStartIso) continue;
-      map.set(
+      const expected = computeExpectedStepStart(
+        machineFloorIndex,
+        step.assignedMachineId,
+        group.checklistPileId,
         step.stepId,
-        computeExpectedStepStart(
-          machineFloorIndex,
-          step.assignedMachineId,
-          group.checklistPileId,
-          step.stepId,
-          step.actualStartIso,
-          step.plannedStartIso!,
-          step.bufferMinutes,
-        ),
+        step.actualStartIso,
+        // May be absent for an unplanned step — computeExpectedStepStart then
+        // returns null unless the machine has a real earlier completion to
+        // chain off, and nothing is fabricated either way.
+        step.plannedStartIso,
+        step.bufferMinutes,
       );
+      if (expected) map.set(step.stepId, expected);
     }
     return map;
   }, [steps, machineFloorIndex, group.checklistPileId]);
 
-  const pileConflictChecksByStepId = useMemo(() => {
-    const map = new Map<string, { forStart: (c: Date) => ConflictNotice | null; forFinish: (c: Date) => ConflictNotice | null }>();
-    for (const step of steps) {
-      const ownStart = step.actualStartIso ? new Date(step.actualStartIso) : undefined;
-      const ownEnd = step.actualEndIso ? new Date(step.actualEndIso) : undefined;
-      const describe = (candidateStart: Date, candidateEnd?: Date) => {
-        const conflict = findPileStepConflict(steps, step.stepId, candidateStart, candidateEnd);
-        return conflict
-          ? formatOccupiedNotice(group.pileCode, conflict.stepName, conflict.actualStartIso, conflict.actualEndIso)
-          : null;
+  /**
+   * The nearest step before this one (by sequence order, across the whole
+   * pile regardless of track) that hasn't been completed yet — historical
+   * rows never count, since they're carry-over steps that are always already
+   * finished. `undefined` once every earlier step has an actualEnd.
+   *
+   * This is what actually stops BORING from being started before CASING is
+   * done. actualTimeRules.ts's latestEarlierEnd only bounds WHEN a step's
+   * start may land once starting it is allowed — when no earlier step has
+   * finished yet, there's nothing recorded to bound against, so that alone
+   * would let the picker accept any time at all.
+   *
+   * Used directly at the render site to HIDE the "Fill start time" control
+   * altogether (with an inline caption naming what's blocking it) rather than
+   * showing a disabled button or a tap-to-toast — unlike the machine
+   * breakdown/idle block below, there is nothing to resolve by interacting
+   * with this step's own card, so a live control here would just invite a
+   * wasted tap.
+   */
+  function earliestIncompletePredecessor(step: ActualEntry): ActualEntry | undefined {
+    return steps.find(
+      (other) => !other.isHistorical && other.sequenceOrder < step.sequenceOrder && other.actualEnd === undefined,
+    );
+  }
+
+  /**
+   * Why time entry is blocked for ONE step right now, or undefined — covers
+   * breakdown and idle (see StepTimeControl/EditTimeButton's `blocked` prop):
+   * the fill/edit buttons still render and stay tappable, tapping one just
+   * surfaces this via notify.error instead of opening the picker. Never locks
+   * the whole card — Replace Machine / the banners above must stay reachable
+   * so the user has a way to resolve it either way.
+   *
+   * Deliberately does NOT cover an incomplete previous step — see
+   * earliestIncompletePredecessor above, which hides the control instead of
+   * leaving it tappable.
+   *
+   * Resolved per step from that step's OWN assigned machine, not from the
+   * pile's single "current" step: now that every unfinished step is fillable,
+   * keying the block on the current step alone would let an idle machine's
+   * later steps be filled straight past the block (and would pin the block to
+   * the wrong step whenever the pile's current step sits on a different
+   * machine). group.hasBreakdownWarning / group.isBlockedByIdle keep their
+   * current-step meaning for the pile-level banners and card badges.
+   */
+  function blockedNoticeForStep(step: ActualEntry): ConflictNotice | undefined {
+    if (step.isHistorical) return undefined;
+    if (!step.assignedMachineId) return undefined;
+    const machine = machines.find((m) => m.id === step.assignedMachineId);
+    if (machine?.status === 'BREAKDOWN') {
+      return {
+        title: `${machine.machineNo ?? 'Machine'} is down`,
+        message: 'Replace the machine or mark it resumed to continue.',
       };
-      map.set(step.stepId, {
-        forStart: (candidate) => describe(candidate, ownEnd),
-        forFinish: (candidate) => describe(ownStart ?? candidate, candidate),
-      });
     }
-    return map;
-  }, [steps]);
+    if (machine?.status === 'IDLE') {
+      return {
+        title: `${machine.machineNo ?? 'Machine'} is idle`,
+        message: 'End the idle session to continue.',
+      };
+    }
+    return undefined;
+  }
 
   const currentStepHasBreakdown =
     group.hasBreakdownWarning &&
@@ -303,24 +326,6 @@ export default function PileStepsModal({
     !!currentStep &&
     !!currentStep.assignedMachineId &&
     machines.find((m) => m.id === currentStep.assignedMachineId)?.status === 'IDLE';
-
-  // Single centralized "why is time entry blocked right now" notice — covers
-  // breakdown and idle the same way (see StepTimeControl/EditTimeButton's
-  // `blocked` prop): the fill/edit buttons still render and stay tappable,
-  // tapping one just surfaces this via notify.error instead of opening the
-  // picker. Never locks the whole card — Replace Machine / the banners above
-  // must stay reachable so the user has a way to resolve it either way.
-  const currentStepBlockedNotice: ConflictNotice | undefined = currentStepHasBreakdown
-    ? {
-        title: `${machines.find((m) => m.id === currentStep!.assignedMachineId)?.machineNo ?? 'Machine'} is down`,
-        message: 'Replace the machine or mark it resumed to continue.',
-      }
-    : currentStepBlockedByIdle
-      ? {
-          title: `${machines.find((m) => m.id === currentStep!.assignedMachineId)?.machineNo ?? 'Machine'} is idle`,
-          message: 'End the idle session to continue.',
-        }
-      : undefined;
 
   const subtitle = [
     group.rigs.length > 0 && `Rig ${group.rigs.join(', ')}`,
@@ -382,26 +387,30 @@ export default function PileStepsModal({
         </Pressable>
       )}
 
-      {steps.map((step, idx) => {
-        const prevStep = idx > 0 ? steps[idx - 1] : undefined;
-        const nextStep = idx < steps.length - 1 ? steps[idx + 1] : undefined;
+      {steps.map((step) => {
         const isDone = step.actualEnd !== undefined;
         const isStarted = step.actualStart !== undefined;
         const isCurrent = step.stepId === currentStepId;
-        const isLocked = !isDone && !isCurrent;
         const isHistorical = !!step.isHistorical;
+        // A step the plan never covered has no planned span, so it can be
+        // neither on time nor late — there is nothing to be late against.
+        const isPlanned = step.plannedStartIso != null;
         const lateMinutes =
-          isDone && step.plannedEndIso != null
+          isDone && isPlanned && step.plannedEndIso != null
             ? durationMinutes(step.actualStartIso!, step.actualEndIso!) -
-              durationMinutes(step.plannedStartIso!, step.plannedEndIso!)
+              durationMinutes(step.plannedStartIso!, step.plannedEndIso)
             : null;
         const isLate = lateMinutes != null && lateMinutes > 0;
+        const blockedNotice = blockedNoticeForStep(step);
+        // Only meaningful for a not-yet-started step — once isStarted, the
+        // ordering constraint was already satisfied when it first began.
+        const blockingPredecessor = isStarted ? undefined : earliestIncompletePredecessor(step);
 
         return (
           <View
             key={`${isHistorical ? 'hist' : 'cur'}-${step.stepId}`}
             onLayout={(e) => handleStepCardLayout(step.stepId, e.nativeEvent.layout.y)}
-            style={[modalStyles.stepWrap, (isLocked || isHistorical) && modalStyles.cardLocked]}
+            style={[modalStyles.stepWrap, isHistorical && modalStyles.cardLocked]}
           >
             <View style={modalStyles.headerRow}>
               <View style={modalStyles.headerLeft}>
@@ -428,7 +437,7 @@ export default function PileStepsModal({
                 </View>
               </View>
 
-              {(isStarted || isDone || isCurrent) && !isHistorical && !isLocked && (
+              {(isStarted || isDone || isCurrent) && !isHistorical && (
                 <View style={modalStyles.headerActions}>
                   <Button
                     label="Remarks"
@@ -459,18 +468,32 @@ export default function PileStepsModal({
               )}
             </View>
 
-            <View style={[modalStyles.planCard, (isLocked || isHistorical) && modalStyles.planCardLocked]}>
+            <View style={[modalStyles.planCard, isHistorical && modalStyles.planCardLocked]}>
               <Text style={modalStyles.planLabel}>
                 Plan
-                {step.plannedEndIso != null && ` · ${formatDuration(step.plannedStartIso!, step.plannedEndIso)}`}
               </Text>
+              {/* No plan row at all — the scheduler ran out of window before
+                  reaching this step, so it has no planned times and never
+                  will. The template duration is shown as a clearly non-binding
+                  reference (nothing validates against it), never as a plan. */}
+              {!isPlanned ? (
+                <View style={modalStyles.planTimeRow}>
+                  <Text style={modalStyles.planTimeText}>Not planned</Text>
+                   {step.templateMinutes != null && (
+                      <Text style={modalStyles.planReferenceText}>
+                        · Avg. {formatDurationMinutes(step.templateMinutes)}
+                      </Text>
+                    )}
+                </View>
+              ) : (
               <View style={modalStyles.planTimeRow}>
-                <Text style={modalStyles.planTimeText}>{formatTimeWithDay(step.plannedStartIso!)}</Text>
+                <Text style={modalStyles.planTimeText}>{formatTimeWithDay(step.plannedStartIso)}</Text>
                 <ArrowRight size={15} color={colors.textSecondary} />
                 <Text style={modalStyles.planTimeText}>
                   {step.plannedEndIso == null ? 'To be continued' : formatTimeWithDay(step.plannedEndIso)}
                 </Text>
               </View>
+              )}
               {step.planBreaks?.map((brk, i) => (
                 <Text key={i} style={modalStyles.planBreakText}>
                   Includes {brk.label} · {formatTime(brk.start)} – {formatTime(brk.end)}
@@ -478,7 +501,9 @@ export default function PileStepsModal({
               ))}
             </View>
 
-            {(isDone || (isCurrent && isStarted)) && (() => {
+            {/* isStarted, not "isCurrent && isStarted": any started step shows
+                its actuals now that any step can be started. */}
+            {(isDone || isStarted) && (() => {
               const expectedStart = expectedStartByStepId.get(step.stepId);
               const startDelayMinutes = expectedStart
                 ? durationMinutes(expectedStart.expectedStartIso, step.actualStartIso!)
@@ -524,7 +549,9 @@ export default function PileStepsModal({
                           <Text style={modalStyles.actualRowSubtitle}>
                             {expectedStart?.anchorPileCode
                               ? `${expectedStart.anchorPileCode} - ${expectedStart.anchorStepName} ended`
-                              : 'Planned start'}
+                              : isPlanned
+                                ? 'Planned start'
+                                : 'Not planned'}
                           </Text>
                         </View>
                       </View>
@@ -565,23 +592,11 @@ export default function PileStepsModal({
                         {!isHistorical && (
                           <View style={modalStyles.fieldActions}>
                             <EditTimeButton
+                              {...rules.forStep(step.stepId, 'start')}
                               minutes={step.actualStart!}
                               label="start time"
-                              minBoundIso={prevStep?.actualEndIso}
-                              minBoundConflict={
-                                prevStep
-                                  ? formatOccupiedNotice(group.pileCode, prevStep.stepName, prevStep.actualStartIso, prevStep.actualEndIso)
-                                  : undefined
-                              }
-                              maxBoundIso={step.actualEndIso}
-                              maxBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
-                              planWindowMinIso={planWindowMinIso}
-                              planWindowMaxIso={planWindowMaxIso}
-                              machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
-                              pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
                               onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
-                              anchorIso={step.startAnchorIso}
-                              blocked={!isDone ? currentStepBlockedNotice : undefined}
+                              blocked={!isDone ? blockedNotice : undefined}
                             />
                             <DeleteTimeButton
                               label="start time"
@@ -611,22 +626,10 @@ export default function PileStepsModal({
                           {!isHistorical && (
                             <View style={modalStyles.fieldActions}>
                               <EditTimeButton
+                                {...rules.forStep(step.stepId, 'finish')}
                                 minutes={step.actualEnd!}
                                 label="finish time"
-                                minBoundIso={step.actualStartIso}
-                                minBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
-                                maxBoundIso={nextStep?.actualStartIso}
-                                maxBoundConflict={
-                                  nextStep
-                                    ? formatOccupiedNotice(group.pileCode, nextStep.stepName, nextStep.actualStartIso, nextStep.actualEndIso)
-                                    : undefined
-                                }
-                                planWindowMinIso={planWindowMinIso}
-                                planWindowMaxIso={planWindowMaxIso}
-                                machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
-                                pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
                                 onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
-                                anchorIso={step.endAnchorIso}
                               />
                               <DeleteTimeButton
                                 label="finish time"
@@ -640,9 +643,23 @@ export default function PileStepsModal({
                     )}
                   </View>
 
-                  {isDone && step.plannedEndIso != null && (
+                  {/* Rendered for any finished step, planned or not — the
+                      actual duration is real either way. Only the two
+                      plan-relative columns degrade: an unplanned step has no
+                      planned span to average against and therefore no
+                      lateness, so no delay pill is shown for it. */}
+                  {isDone && (
                     <View style={modalStyles.statsRow}>
                       <View style={modalStyles.statsCol}>
+                        <Clock size={14} color={colors.textSecondary} />
+                        <Text style={modalStyles.statsColLabel}>Avg. duration</Text>
+                        <Text style={modalStyles.statsColValue}>
+                          {isPlanned && step.plannedEndIso != null
+                            ? formatDuration(step.plannedStartIso!, step.plannedEndIso)
+                            : 'Not planned'}
+                        </Text>
+                      </View>
+                      <View style={[modalStyles.statsCol, modalStyles.statsColRuled]}>
                         <Clock size={14} color={colors.textSecondary} />
                         <Text style={modalStyles.statsColLabel}>Actual duration</Text>
                         <Text style={modalStyles.statsColValue}>
@@ -650,28 +667,35 @@ export default function PileStepsModal({
                         </Text>
                       </View>
                       <View style={[modalStyles.statsCol, modalStyles.statsColRuled]}>
-                        <Hourglass size={14} color={isLate ? colors.danger : colors.success} />
+                        <Hourglass
+                          size={14}
+                          color={lateMinutes == null ? colors.textSecondary : isLate ? colors.danger : colors.success}
+                        />
                         <Text style={modalStyles.statsColLabel}>Activity delay</Text>
-                        <View
-                          style={[
-                            modalStyles.statusPill,
-                            { backgroundColor: isLate ? colors.dangerSoft : colors.successSoft },
-                          ]}
-                        >
-                          <Text
+                        {lateMinutes == null ? (
+                          <Text style={modalStyles.statsColValue}>—</Text>
+                        ) : (
+                          <View
                             style={[
-                              modalStyles.statusPillText,
-                              { color: isLate ? colors.danger : colors.success },
+                              modalStyles.statusPill,
+                              { backgroundColor: isLate ? colors.dangerSoft : colors.successSoft },
                             ]}
                           >
-                            {isLate ? `+${lateMinutes}m delay` : 'On time'}
-                          </Text>
-                        </View>
+                            <Text
+                              style={[
+                                modalStyles.statusPillText,
+                                { color: isLate ? colors.danger : colors.success },
+                              ]}
+                            >
+                              {formatSignedDuration(lateMinutes)}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                   )}
 
-                  {(isStarted || isDone) && !isLocked && (() => {
+                  {(isStarted || isDone) && (() => {
                     const applicableFields = getMeasurementFieldsForStep(step.stepName);
                     if (applicableFields.length === 0) return null;
                     const measurements = group.measurements;
@@ -751,48 +775,37 @@ export default function PileStepsModal({
               </View>
             )}
 
-            {isCurrent && !isStarted && (
+            {/* Any not-yet-completed step is fillable — not just the pile's
+                first unfinished one, so an unplanned step later in the
+                sequence isn't stuck waiting behind a step nobody is going to
+                fill. But it can only actually be STARTED once every earlier
+                step is done — a pile's steps are one physical sequence, so
+                BORING cannot begin before CASING is finished regardless of
+                whether either was planned. While blockingPredecessor is set,
+                the "Fill start time" control is hidden entirely rather than
+                shown disabled or tappable-with-a-toast: there is nothing to
+                resolve from THIS card, so a live control would just invite a
+                wasted tap. Once a step IS allowed to start, the time bounds
+                from its rules (latest earlier actual end / earliest later
+                actual start) constrain which moment it lands on. */}
+            {!isHistorical && !isStarted && !blockingPredecessor && (
               <StepTimeControl
+                {...rules.forStep(step.stepId, 'start')}
                 mode="start"
-                defaultMinutes={prevStep?.actualEnd ?? step.plannedStart}
-                onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
-                machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forStart}
-                pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forStart}
-                minBoundIso={prevStep?.actualEndIso}
-                minBoundConflict={
-                  prevStep
-                    ? formatOccupiedNotice(group.pileCode, prevStep.stepName, prevStep.actualStartIso, prevStep.actualEndIso)
-                    : undefined
+                onConfirm={(mins, explicitDate) =>
+                  handleSetActualTime(step, 'actualStart', mins, explicitDate)
                 }
-                planWindowMinIso={planWindowMinIso}
-                planWindowMaxIso={planWindowMaxIso}
-                anchorIso={step.startAnchorIso}
-                blocked={currentStepBlockedNotice}
+                blocked={blockedNotice}
               />
             )}
 
-            {isCurrent && isStarted && !isDone && (
+            {!isHistorical && isStarted && !isDone && (
               <StepTimeControl
+                {...rules.forStep(step.stepId, 'finish')}
                 mode="finish"
-                defaultMinutes={
-                  step.plannedEnd != null && step.plannedEnd > step.actualStart!
-                    ? step.plannedEnd
-                    : nowMinutes()
-                }
                 onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
-                machineConflictCheck={machineConflictChecksByStepId.get(step.stepId)?.forFinish}
-                pileConflictCheck={pileConflictChecksByStepId.get(step.stepId)?.forFinish}
-                minBoundIso={step.actualStartIso}
-                minBoundConflict={formatOccupiedNotice(group.pileCode, step.stepName, step.actualStartIso, step.actualEndIso)}
-                planWindowMinIso={planWindowMinIso}
-                planWindowMaxIso={planWindowMaxIso}
-                anchorIso={step.endAnchorIso}
-                blocked={currentStepBlockedNotice}
+                blocked={blockedNotice}
               />
-            )}
-
-            {isLocked && (
-              <Text style={modalStyles.lockedText}>Waiting on previous step</Text>
             )}
           </View>
         );
@@ -942,6 +955,12 @@ const modalStyles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textSecondary,
   },
+  planReferenceText: {
+    fontSize: 13,
+    fontWeight: '400',
+    fontStyle: 'italic',
+    color: colors.textSecondary,
+  },
   planBreakText: {
     fontSize: 12,
     fontWeight: '400',
@@ -1022,12 +1041,6 @@ const modalStyles = StyleSheet.create({
     color: colors.accent,
     fontWeight: '700',
   },
-  lockedText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.sm,
-    fontStyle: 'italic',
-  },
   actualSection: {
     backgroundColor: colors.accentSoft,
     borderRadius: radius.lg,
@@ -1054,10 +1067,13 @@ const modalStyles = StyleSheet.create({
     color: colors.accentBlue,
   },
   actualCard: {
-    backgroundColor: colors.white,
+    backgroundColor: colors.transparent,
     borderRadius: radius.md,
-    padding: spacing.sm,
+    paddingVertical: spacing.sm,
     gap: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
   },
   actualRow: {
     gap: spacing.xs,

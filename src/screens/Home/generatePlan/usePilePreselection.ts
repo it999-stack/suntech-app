@@ -4,29 +4,28 @@
 // from a prior day) and assigns them to whichever rig/crane they were
 // already on, without clobbering the user's own manual picks. Also keeps
 // selectedStepIds in sync with any steps a carry-over pile requires
-// (locked, can't be removed — see planPreselectService).
+// (locked, can't be removed). The actual preselection/merge logic lives in
+// planPreselectService.ts's applyResumePreselection — this hook only
+// decides *when* to (re)run it and applies the result via the applySeed
+// callback usePlanDraft provides.
 
 import { useEffect, useRef } from 'react';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
 import type { Step } from '@components/plan/generate/ProgressHeader';
 import type { ResumeWorkInfo } from '@/services/resumeWorkService';
-import {
-  buildResumePreselection,
-  buildResumeWorkByPileId,
-  getLockedStepIds,
-  mergeLockedSteps,
-} from '@/services/planPreselectService';
+import { getLockedStepIds, mergeLockedSteps } from '@/services/planPreselectService';
 import { useAppConfig } from '@state/AppConfigContext';
 
 export function usePilePreselection(args: {
   step: Step;
   draft: PlanDraft;
-  setDraft: (updater: (prev: PlanDraft) => PlanDraft) => void;
   pendingWorkItems: ResumeWorkInfo[];
   steps: PilingStep[];
+  applySeed: (args: { pendingWorkItems: ResumeWorkInfo[]; maxAutoPreselectPiles: number }) => void;
+  setSteps: (nextStepIds: string[]) => void;
 }): void {
-  const { step, draft, setDraft, pendingWorkItems, steps } = args;
+  const { step, draft, pendingWorkItems, steps, applySeed, setSteps } = args;
   const { config } = useAppConfig();
 
   const preselectKeyRef = useRef('');
@@ -47,44 +46,8 @@ export function usePilePreselection(args: {
     if (preselectKeyRef.current === preselectKey) return;
     preselectKeyRef.current = preselectKey;
 
-    const preselection = buildResumePreselection({
-      pendingItems: pendingWorkItems,
-      activeRigIds: draft.activeRigIds,
-      activeCraneIds: draft.activeCraneIds,
-      maxPiles: config.maxAutoPreselectPiles,
-    });
-    // Uncapped — every pending pile gets tracked, not just the auto-preselected subset,
-    // so a pile added later (manually, past the auto-preselect cap) is still flagged by
-    // the review Planned Piles step. See buildResumeWorkByPileId's own docstring.
-    const allResumeWorkByPileId = buildResumeWorkByPileId(pendingWorkItems);
-
-    setDraft((prev) => {
-      const manualIds = prev.selectedPileIds.filter(
-        (id) => !preselection.selectedPileIds.includes(id),
-      );
-      // Crane is optional — a rig-only assignment still counts as "confirmed"
-      // and must not be dropped just because it has no crane.
-      const manualAssignments = Object.fromEntries(
-        manualIds
-          .filter((id) => prev.assignments[id]?.rig)
-          .map((id) => [id, prev.assignments[id]]),
-      );
-
-      // A pile the user already confirmed keeps that confirmation instead of being
-      // reset back to unconfirmed every time this effect re-runs (e.g. active
-      // rigs/cranes changed).
-      const confirmedOverrides = Object.fromEntries(
-        Object.entries(prev.resumeWorkByPileId).filter(([, r]) => r.remainingTimeConfirmed),
-      );
-
-      return {
-        ...prev,
-        selectedPileIds: [...preselection.selectedPileIds, ...manualIds],
-        assignments: { ...manualAssignments, ...preselection.assignments },
-        resumeWorkByPileId: { ...allResumeWorkByPileId, ...confirmedOverrides },
-      };
-    });
-  }, [step, pendingWorkItems, draft.activeRigIds, draft.activeCraneIds, config.maxAutoPreselectPiles]);
+    applySeed({ pendingWorkItems, maxAutoPreselectPiles: config.maxAutoPreselectPiles });
+  }, [step, pendingWorkItems, draft.activeRigIds, draft.activeCraneIds, config.maxAutoPreselectPiles, applySeed]);
 
   useEffect(() => {
     if (step !== 'steps') return;
@@ -95,9 +58,6 @@ export function usePilePreselection(args: {
     const missing = [...locked].filter((id) => !draft.selectedStepIds.includes(id));
     if (missing.length === 0) return;
 
-    setDraft((prev) => ({
-      ...prev,
-      selectedStepIds: mergeLockedSteps(prev.selectedStepIds, missing, steps),
-    }));
-  }, [step, draft.selectedPileIds, draft.resumeWorkByPileId, draft.selectedStepIds, steps]);
+    setSteps(mergeLockedSteps(draft.selectedStepIds, missing, steps));
+  }, [step, draft.selectedPileIds, draft.resumeWorkByPileId, draft.selectedStepIds, steps, setSteps]);
 }

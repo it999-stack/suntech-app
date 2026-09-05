@@ -54,32 +54,67 @@ export function resolveWindows(
   ].sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
+/**
+ * Returns the effective buffer alongside the times, because Phase 1 can zero
+ * it — callers must persist what was actually used, not what was requested, or
+ * the stored bufferMinutes will disagree with the schedule (a step's work
+ * start is rendered as plannedStart + bufferMinutes).
+ */
 export function skipNonWorkingWindows(
   cursor: Date,
   bufferMinutes: number,
   durationMinutes: number,
   windows: EffectiveWindow[],
   isSplittable: boolean = true,
-): { start: Date; end: Date } {
+): { start: Date; end: Date; bufferMinutes: number } {
   windows.sort((a, b) => a.start.getTime() - b.start.getTime());
 
   // Phase 1: never START a step inside any window (FIXED or
   // AFTER_CURRENT_STEP) — independent of isSplittable. This is about where
   // execution begins, not whether it can be paused once running.
+  //
+  // "Start" means where the real WORK begins (cursor + buffer), not merely
+  // where the buffer does. Two distinct cases, and the buffer is treated
+  // differently in each:
+  //
+  //   (a) the buffer itself begins inside a window — the machine wasn't free
+  //       before the break at all, so setup genuinely still has to happen
+  //       afterwards. Push past the window and KEEP the buffer. (Every plan's
+  //       first step hits this via the morning shift-change window.)
+  //
+  //   (b) the buffer straddles the window's start — setup began, then the
+  //       break interrupted it and the machine sat idle through the whole
+  //       window. Push past the window and DROP the buffer: the idle wait
+  //       absorbed the setup, and re-charging it would push real work even
+  //       later for no reason.
+  //
+  // Without (b) a step whose buffer starts just before a break would begin its
+  // actual work inside the break — e.g. concreting queued at 12:55 with a
+  // 10-minute buffer would "start" at 13:05, mid-lunch.
   let current = new Date(cursor);
+  let buffer = bufferMinutes;
   let moved = true;
   while (moved) {
     moved = false;
     for (const w of windows) {
+      const workStart = addMinutes(current, buffer);
       if (current >= w.start && current < w.end) {
+        // (a)
         current = new Date(w.end);
+        moved = true;
+        break;
+      }
+      if (current < w.start && w.start <= workStart && workStart < w.end) {
+        // (b)
+        current = new Date(w.end);
+        buffer = 0;
         moved = true;
         break;
       }
     }
   }
 
-  const totalMinutes = bufferMinutes + durationMinutes;
+  const totalMinutes = buffer + durationMinutes;
 
   // Steps that can never be paused mid-way (e.g. concreting) run straight
   // through everything once started. FIXED windows simply aren't applied to
@@ -98,7 +133,7 @@ export function skipNonWorkingWindows(
       }
     }
     windows.sort((a, b) => a.start.getTime() - b.start.getTime());
-    return { start: current, end: stepEnd };
+    return { start: current, end: stepEnd, bufferMinutes: buffer };
   }
 
   // Splittable steps: one unified walk. FIXED windows always block. An
@@ -155,5 +190,5 @@ export function skipNonWorkingWindows(
   }
   windows.sort((a, b) => a.start.getTime() - b.start.getTime());
 
-  return { start: current, end: cursor2 };
+  return { start: current, end: cursor2, bufferMinutes: buffer };
 }

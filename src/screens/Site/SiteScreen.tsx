@@ -1,10 +1,10 @@
 // src/screens/Site/SiteScreen.tsx
 //
 // Container screen for the Site bottom tab. Renders the swipeable top-tab
-// strip (Machines / Personnel / Shifts / Steps) below the
-// status bar / notch — SafeAreaView handles that spacing.
+// strip (Machines / Personnel / Shifts / Steps). The status-bar/notch spacing
+// and the backdrop come from App.tsx's AppShell — this screen adds neither.
 
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View } from 'react-native';
 import { colors } from '@theme/theme';
 
 import TopTabs from '@components/shared/TopTabs';
@@ -15,7 +15,7 @@ import StepsScreen from '@/screens/Site/Tabs/StepsScreen';
 
 export default function SiteScreen() {
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.white }} edges={['top']}>
+    <View style={{ flex: 1, backgroundColor: colors.white }}>
       <TopTabs
         tabs={[
           { name: 'Machines', title: 'Machines', component: MachinesScreen },
@@ -24,6 +24,6 @@ export default function SiteScreen() {
           { name: 'Steps', title: 'Steps', component: StepsScreen },
         ]}
       />
-    </SafeAreaView>
+    </View>
   );
 }

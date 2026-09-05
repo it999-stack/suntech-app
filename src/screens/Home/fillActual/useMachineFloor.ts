@@ -28,6 +28,13 @@ export function useMachineFloor(args: { pileGroups: PileGroup[] }): {
   // earliest-seq_no pile that still has an unfinished step assigned to it —
   // pileGroups is already seq_no order, so the first match per machine is
   // that machine's front-of-queue pile.
+  //
+  // This scans the pile's whole APPLICABLE step list now, not just its plan
+  // rows, and every row carries a resolved assignedMachineId (see
+  // usePileGroups' resolveUnplannedMachineId). A machine whose only remaining
+  // work is a step the plan never covered therefore stops looking idle: it
+  // gets a front-of-queue pile and a current step, so its Breakdown/Start Idle
+  // buttons stay usable and MachinePilesPage's hasActiveStep is right.
   const frontPileIdByMachineId = useMemo(() => {
     const machineIds = new Set<string>();
     pileGroups.forEach((g) =>

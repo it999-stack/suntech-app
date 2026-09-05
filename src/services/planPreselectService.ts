@@ -1,6 +1,6 @@
 // Auto-preselect logic for carry-over piles with pending steps from a prior plan.
 
-import type { PileAssignment, ResumeWork } from '@/types/plan';
+import type { PileAssignment, PlanDraft, ResumeWork } from '@/types/plan';
 import type { ResumeWorkInfo } from './resumeWorkService';
 
 export type ResumePreselection = {
@@ -33,6 +33,8 @@ function toResumeWork(item: ResumeWorkInfo): ResumeWork {
     nextStep: item.nextStep,
     checklistId: item.checklistId,
     checklistDate: item.checklistDate,
+    pastPlanStartTime: item.pastPlanStartTime,
+    pastPlanEndTime: item.pastPlanEndTime,
   };
 }
 
@@ -100,6 +102,52 @@ export function buildResumePreselection({
   }
 
   return { resumeWorkByPileId, selectedPileIds, assignments };
+}
+
+/**
+ * Composes buildResumePreselection/buildResumeWorkByPileId above with the
+ * "don't clobber the user's own manual picks" merge that used to live inline
+ * in usePilePreselection's setDraft callback: a pile the user already
+ * selected/assigned manually (i.e. not part of this recompute's
+ * auto-preselection) keeps its assignment, and a pile whose remaining-time
+ * confirmation the user already answered keeps that confirmation instead of
+ * being reset back to unconfirmed every time this recomputes (e.g. active
+ * rigs/cranes changed).
+ */
+export function applyResumePreselection(
+  draft: PlanDraft,
+  args: { pendingWorkItems: ResumeWorkInfo[]; maxAutoPreselectPiles: number },
+): Partial<PlanDraft> {
+  const { pendingWorkItems, maxAutoPreselectPiles } = args;
+
+  const preselection = buildResumePreselection({
+    pendingItems: pendingWorkItems,
+    activeRigIds: draft.activeRigIds,
+    activeCraneIds: draft.activeCraneIds,
+    maxPiles: maxAutoPreselectPiles,
+  });
+  // Uncapped — every pending pile gets tracked, not just the auto-preselected subset,
+  // so a pile added later (manually, past the auto-preselect cap) is still flagged by
+  // the review Planned Piles step. See buildResumeWorkByPileId's own docstring.
+  const allResumeWorkByPileId = buildResumeWorkByPileId(pendingWorkItems);
+
+  const manualIds = draft.selectedPileIds.filter((id) => !preselection.selectedPileIds.includes(id));
+  // Crane is optional — a rig-only assignment still counts as "confirmed"
+  // and must not be dropped just because it has no crane.
+  const manualAssignments = Object.fromEntries(
+    manualIds
+      .filter((id) => draft.assignments[id]?.rig)
+      .map((id) => [id, draft.assignments[id]]),
+  );
+  const confirmedOverrides = Object.fromEntries(
+    Object.entries(draft.resumeWorkByPileId).filter(([, r]) => r.remainingTimeConfirmed),
+  );
+
+  return {
+    selectedPileIds: [...preselection.selectedPileIds, ...manualIds],
+    assignments: { ...manualAssignments, ...preselection.assignments },
+    resumeWorkByPileId: { ...allResumeWorkByPileId, ...confirmedOverrides },
+  };
 }
 
 export function getLockedStepIds(

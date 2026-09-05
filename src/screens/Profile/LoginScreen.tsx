@@ -10,8 +10,6 @@ import {
   Pressable,
   ScrollView,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react-native';
 
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
@@ -32,8 +30,8 @@ export default function LoginScreen() {
   };
 
   return (
-    <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-      <SafeAreaView style={styles.flex}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <KeyboardAwareScreen>
           <ScrollView
             contentContainerStyle={styles.scrollContent}
@@ -113,8 +111,8 @@ export default function LoginScreen() {
             </View>
           </ScrollView>
         </KeyboardAwareScreen>
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 

@@ -4,8 +4,9 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, FlatList, StyleSheet, ViewStyle, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, runOnJS } from 'react-native-reanimated';
-import { Check, MoreVertical } from 'lucide-react-native';
+import { MoreVertical } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
+import Checkbox from '@components/shared/Checkbox';
 
 export interface IndexTableColumn<T> {
   key: string;
@@ -39,7 +40,6 @@ interface IndexTableProps<T extends { id: string }> {
   onSwipePrevPage?: () => void;
 }
 
-const CHECKBOX_SIZE = 18;
 const MENU_WIDTH = 32;
 const SWIPE_DISTANCE_THRESHOLD = 50;
 const SWIPE_VELOCITY_THRESHOLD = 500;
@@ -110,9 +110,7 @@ export default function IndexTable<T extends { id: string }>({
             ListHeaderComponent={
               <Pressable style={styles.headerRow} onPress={selectable ? onToggleAll : undefined} disabled={!selectable}>
                 {selectable && (
-                  <View style={[styles.checkbox, allSelected && styles.checkboxChecked]}>
-                    {allSelected && <Check size={12} color={colors.white} />}
-                  </View>
+                  <Checkbox checked={!!allSelected} />
                 )}
                 {columns.map((col) => (
                   <Text key={col.key} style={[styles.headerLabel, col.width ? { width: col.width } : { flex: 1 }]}>
@@ -134,9 +132,7 @@ export default function IndexTable<T extends { id: string }>({
                     disabled={!selectable || disabled}
                   >
                     {selectable && (
-                      <View style={[styles.checkbox, selected && styles.checkboxChecked]}>
-                        {selected && <Check size={12} color={colors.white} />}
-                      </View>
+                      <Checkbox checked={selected} />
                     )}
                     {columns.map((col) => (
                       <View key={col.key} style={col.width ? { width: col.width } : { flex: 1 }}>
@@ -202,12 +198,6 @@ const styles = StyleSheet.create({
   rowSelected: { backgroundColor: colors.accentSoft },
   rowDisabled: { opacity: 0.5 },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md, paddingHorizontal: spacing.sm },
-
-  checkbox: {
-    width: CHECKBOX_SIZE, height: CHECKBOX_SIZE, borderRadius: 5, borderWidth: 1.5,
-    borderColor: 'rgba(28,28,46,0.3)', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.white,
-  },
-  checkboxChecked: { backgroundColor: colors.accent, borderColor: colors.accent },
 
   menuTrigger: { width: MENU_WIDTH, alignItems: 'center', justifyContent: 'center' },
   menu: {

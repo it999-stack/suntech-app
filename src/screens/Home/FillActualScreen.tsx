@@ -9,8 +9,6 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { HomeStackParamList } from '@app-types/navigation';
 import { ChevronLeft } from 'lucide-react-native';
@@ -45,14 +43,6 @@ type FillActualsRouteProp = RouteProp<HomeStackParamList, 'FillActuals'>;
 export default function FillActualsScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<FillActualsRouteProp>();
-  // useSafeAreaInsets (reactive to inset updates) instead of SafeAreaView —
-  // a freshly-pushed native-stack screen can briefly report a stale/zero top
-  // inset before the native side finishes measuring; SafeAreaView's own
-  // internal layout didn't reliably re-apply once the real value arrived,
-  // leaving the header rendered flush under the status bar until something
-  // else forced a re-render. Reading the hook directly re-renders as soon as
-  // the context updates.
-  const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const siteId = user?.siteId ?? '';
   const deviceWorkingDate = useWorkingDate();
@@ -96,6 +86,8 @@ export default function FillActualsScreen() {
     pileMap,
     personnelMap,
     contractors,
+    allSteps,
+    durationTemplates,
     lookupsLoading,
     reloadMachines,
     machineStatusById,
@@ -124,6 +116,8 @@ export default function FillActualsScreen() {
     windowsByMachineId,
     completedStepsByPileId,
     measurementsByPileId: pileMeasurementsByPileId,
+    allSteps,
+    durationTemplates,
   });
 
   const { machineFloorIndex, frontPileIdByMachineId, currentStepByMachineId } = useMachineFloor({ pileGroups });
@@ -171,8 +165,6 @@ export default function FillActualsScreen() {
   const { handleSetActualTime, handleClearActualTime, handleSaveRemarks, handleSaveMeasurements } =
     useActualTimeActions({
       openGroup,
-      planSteps,
-      actualSteps,
       checklist,
       setActualTime,
       clearActualTime,
@@ -211,11 +203,8 @@ export default function FillActualsScreen() {
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <LinearGradient
-      colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-      style={styles.flex}
-    >
-      <View style={[styles.flex, { paddingTop: insets.top }]}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
             <Pressable onPress={() => navigation.goBack()} hitSlop={12}>
@@ -350,12 +339,15 @@ export default function FillActualsScreen() {
         />
       )}
 
-      {addPileModalOpen && activeMachine && (
+      {/* `checklist` is guarded, not asserted: a background sync can purge it
+          mid-session (e.g. the day's plan deleted on another device) while
+          this modal is open, and checklist!.id would then crash. */}
+      {addPileModalOpen && activeMachine && checklist && (
         <AddPileModal
           visible
           onClose={() => setAddPileModalOpen(false)}
           siteId={siteId}
-          checklistId={checklist!.id}
+          checklistId={checklist.id}
           draftRows={draftRows ?? []}
           excludePileIds={new Set((draftRows ?? []).map((r) => r.pileId))}
           lockedMachine={{
@@ -368,7 +360,7 @@ export default function FillActualsScreen() {
           onConfirm={handleAddPileConfirm}
         />
       )}
-    </LinearGradient>
+    </View>
   );
 }
 

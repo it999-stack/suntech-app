@@ -288,6 +288,21 @@ export function resolveActualTimeAnchor(
   );
 }
 
+/**
+ * The Date a time picker should open on: the anchor's calendar day (see
+ * resolveActualTimeAnchor) carrying the given time-of-day. Falls back to
+ * today when there's no anchor.
+ *
+ * Shared so the picker's opening day can't drift from the day the entry is
+ * ultimately attributed to — the bug that used to show device-today instead
+ * of the checklist's date.
+ */
+export function seedPickerDate(anchorIso: string | undefined, minutes: number): Date {
+  const d = anchorIso ? new Date(anchorIso) : new Date();
+  d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+  return d;
+}
+
 // ─── 5. ISO serialization (writes) ────────────────────────────────────────────
 
 /**

@@ -18,11 +18,18 @@
 // "how many minutes" duration picker.
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, Keyboard } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Keyboard } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { CheckCircle2, Clock, Calendar, Hourglass, ClipboardCheck } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import Button from '@components/shared/Button';
+import Radio from '@components/shared/Radio';
+import { validateCandidateTime } from '@utils/timeValidation';
+import {
+  buildPlanFinishRules,
+  buildResumeCloseOutRules,
+  seedResumeCloseOutTime,
+} from '@utils/actualTimeRules';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { formatTime, formatTimeWithDay, formatDuration, toLocalIsoString } from '@utils/formatTime';
 import { notify } from '@utils/notify';
@@ -57,35 +64,22 @@ interface ResumeTimeConfirmModalProps {
   /** Saves an edit made in editingCompleted mode. Not awaited by anything but
    * this modal's own handleConfirmFull, same pattern as onConfirmFull. */
   onConfirmEditedFull?: (pastEndIso: string, remarks: string) => Promise<void>;
+  /** End of TODAY's plan window (planStartTime + 24h) — the upper bound on the
+   * finish time picked below. Distinct from resumeWork.pastPlanEndTime, which
+   * bounds the *previous* day's close-out. */
+  todayPlanEndIso?: string;
   onClose: () => void;
 }
 
 type ResumeStatus = 'partial' | 'full' | null;
 
 const REMARKS_MAX_LENGTH = 300;
-// Keeps the "Completed" card's height bounded and roughly in balance with the
-// "In progress" card next to it, regardless of how many prior steps a pile has
-// — the rest collapse into a "+N more completed" line instead of pushing the
-// whole modal taller.
-const COMPLETED_STEPS_PREVIEW_LIMIT = 3;
-
-/** The step's canonical template duration (the same avg. minutes that seeds "Plan finish
- * time" below), added onto the day work actually started — a much better first guess for
- * "when did this actually stop/finish on the previous day" than the wall-clock moment the supervisor
- * happens to open this modal. Falls back to the historical checklist's date when there's no
- * logged start yet (this modal only opens for steps with a real actualStart in practice, via
- * pileNeedsResumeConfirm's wasStarted gate — see useResumeConfirmQueue.ts). */
-function seedPastTime(
-  pastActualStart: string | null | undefined,
-  checklistDate: string | undefined,
-  templateMinutes: number,
-): Date {
-  const anchorSource = pastActualStart ?? (checklistDate ? `${checklistDate}T00:00:00` : null);
-  if (!anchorSource) return new Date();
-  const anchor = new Date(anchorSource);
-  if (Number.isNaN(anchor.getTime())) return new Date();
-  return new Date(anchor.getTime() + Math.max(0, templateMinutes) * 60000);
-}
+// Caps how tall the completed-steps list can grow before it scrolls within
+// itself, so a pile with ten prior steps doesn't push the question and its
+// answer buttons off-screen. Every step stays reachable — bounded, not
+// truncated. ~3.4 rows at the row height below, so a partly-visible row is
+// always peeking when there's more to scroll to.
+const COMPLETED_STEPS_MAX_HEIGHT = 236;
 
 export default function ResumeTimeConfirmModal({
   visible,
@@ -96,6 +90,7 @@ export default function ResumeTimeConfirmModal({
   onConfirmFull,
   editingCompleted = false,
   onConfirmEditedFull,
+  todayPlanEndIso,
   onClose,
 }: ResumeTimeConfirmModalProps) {
   const seedFinish = () =>
@@ -108,6 +103,14 @@ export default function ResumeTimeConfirmModal({
     ? resumeWork.lastConfirmedFull?.pastActualStart ?? null
     : resumeWork.pastActualStart;
   const activeStepName = editingCompleted ? resumeWork.lastConfirmedFull?.stepName : resumeWork.stepName;
+  // Same split, for the same reason: the plan window that bounds this entry is
+  // the one belonging to the checklist the edited step came from.
+  const activePlanWindowMin = editingCompleted
+    ? resumeWork.lastConfirmedFull?.pastPlanStartTime
+    : resumeWork.pastPlanStartTime;
+  const activePlanWindowMax = editingCompleted
+    ? resumeWork.lastConfirmedFull?.pastPlanEndTime
+    : resumeWork.pastPlanEndTime;
 
   const [status, setStatus] = useState<ResumeStatus>(
     editingCompleted ? 'full' : (resumeWork.confirmedStatus ?? null),
@@ -117,10 +120,38 @@ export default function ResumeTimeConfirmModal({
       return resumeWork.lastConfirmedFull ? new Date(resumeWork.lastConfirmedFull.pastEndIso) : new Date();
     }
     if (resumeWork.confirmedPastEndIso) return new Date(resumeWork.confirmedPastEndIso);
-    return seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes);
+    return seedResumeCloseOutTime({
+            pastActualStartIso: resumeWork.pastActualStart,
+            checklistDate: resumeWork.checklistDate,
+            templateMinutes: resumeWork.remainingMinutes,
+          });
   });
   const [finishDate, setFinishDate] = useState<Date>(seedFinish);
   const [pickerTarget, setPickerTarget] = useState<'past' | 'finish' | null>(null);
+  /**
+   * Forces a re-render after the date picker's native window is torn down.
+   * Nobody reads the value — the render itself is the point.
+   *
+   * NativeTimerSelectMenu uses react-native-date-picker's `modal`, which opens
+   * its OWN native window on top of the single shared one ModalHost owns. That
+   * is exactly the stacked-native-window pattern ModalHost.tsx was built to
+   * eliminate, and the picker escapes it by rendering its own <Modal>. On
+   * Android, tearing that window down can leave the host window's backdrop
+   * painted but its contents stale — the sheet disappears and only the dim
+   * overlay remains.
+   *
+   * An ACCEPTED pick recovers by accident: setFinishDate/setPastDate re-renders
+   * this component, AppModal re-pushes a fresh content element, and ModalHost
+   * repaints. A REJECTED pick changes no state whatsoever, so nothing repaints
+   * and the sheet stays gone — which is why this only ever showed up alongside
+   * a notify.error. Bumping this in the confirm handler gives the rejected path
+   * the same re-render the accepted one gets for free.
+   *
+   * It must fire from onConfirm, not onClose: onClose runs immediately, while
+   * the native dialog is still animating away, so its repaint gets clobbered.
+   * onConfirm is deferred 300ms by the picker, landing after teardown.
+   */
+  const [, bumpHostRepaint] = useState(0);
   const [remarks, setRemarks] = useState(
     editingCompleted ? (resumeWork.lastConfirmedFull?.remarks ?? '') : (resumeWork.confirmedRemarks ?? ''),
   );
@@ -170,7 +201,11 @@ export default function ResumeTimeConfirmModal({
     setPastDate(
       resumeWork.confirmedPastEndIso
         ? new Date(resumeWork.confirmedPastEndIso)
-        : seedPastTime(resumeWork.pastActualStart, resumeWork.checklistDate, resumeWork.remainingMinutes),
+        : seedResumeCloseOutTime({
+            pastActualStartIso: resumeWork.pastActualStart,
+            checklistDate: resumeWork.checklistDate,
+            templateMinutes: resumeWork.remainingMinutes,
+          }),
     );
     setFinishDate(seedFinish());
     setRemarks(resumeWork.confirmedRemarks ?? '');
@@ -188,18 +223,72 @@ export default function ResumeTimeConfirmModal({
   ]);
 
   const completedSteps = resumeWork.completedSteps ?? [];
-  const visibleCompletedSteps = completedSteps.slice(0, COMPLETED_STEPS_PREVIEW_LIMIT);
-  const extraCompletedCount = Math.max(0, completedSteps.length - COMPLETED_STEPS_PREVIEW_LIMIT);
-  const pastActualStartDate = activePastActualStart ? new Date(activePastActualStart) : null;
-  const pastTimeValid = !pastActualStartDate || pastDate.getTime() >= pastActualStartDate.getTime();
+  /**
+   * Routes the previous-day stop/finish time through the same validator every
+   * other actual-time entry uses, bounded by the historical checklist's own
+   * plan window. Still a narrower rule set than Log Actuals gets — see
+   * buildResumeCloseOutRules — because the plan wizard has no machine floor
+   * index for that day, so overlap can't be checked.
+   *
+   * Returns false without storing the value, so the row keeps a valid time
+   * rather than showing a rejected one.
+   */
+  function acceptPastDate(date: Date): boolean {
+    const conflict = validateCandidateTime({
+      candidateDate: date,
+      ...buildResumeCloseOutRules({
+        pastActualStartIso: activePastActualStart,
+        planWindowMinIso: activePlanWindowMin,
+        planWindowMaxIso: activePlanWindowMax,
+        formatBound: formatTimeWithDay,
+        // Resolved here, not at mount — the modal can sit open for a while.
+        now: new Date(),
+      }),
+    });
+    if (conflict) {
+      notify.error(conflict.message, { title: conflict.title });
+      return false;
+    }
+    setPastDate(date);
+    return true;
+  }
 
-  function handleFinishPicked(date: Date) {
-    let picked = new Date(effectiveStart);
-    picked.setHours(date.getHours(), date.getMinutes(), 0, 0);
-    if (picked.getTime() < effectiveStart.getTime()) {
-      picked = new Date(picked.getTime() + 24 * 60 * 60 * 1000);
+  /**
+   * Today's plan finish time. Returns false without storing, so a rejected
+   * pick leaves the previous valid finish time standing — same contract as
+   * acceptPastDate above.
+   *
+   * The picker runs in `datetime` mode, so `date` carries a real calendar day
+   * and it is used as-is. This function used to rebuild the timestamp from
+   * effectiveStart and copy across only hours/minutes, which silently
+   * discarded whatever day the user had scrolled to: changing only the date
+   * produced a value identical to the current one, so nothing changed and no
+   * rule could fire — the entry just appeared to be ignored.
+   *
+   * Nothing rolls the day forward automatically either. A finish earlier than
+   * the plan start used to gain 24h on its own, turning a mis-scrolled 7:20 AM
+   * against a 9:00 AM start into "22h 20m remaining" unflagged; an overnight
+   * finish is now something the supervisor picks explicitly, and the plan
+   * window is what says whether it's allowed.
+   */
+  function handleFinishPicked(date: Date): boolean {
+    const picked = new Date(date);
+    picked.setSeconds(0, 0);
+
+    const conflict = validateCandidateTime({
+      candidateDate: picked,
+      ...buildPlanFinishRules({
+        planStartIso: toLocalIsoString(effectiveStart),
+        todayPlanEndIso,
+        formatBound: formatTime,
+      }),
+    });
+    if (conflict) {
+      notify.error(conflict.message, { title: conflict.title });
+      return false;
     }
     setFinishDate(picked);
+    return true;
   }
 
   const remainingMinutes = Math.max(
@@ -230,29 +319,36 @@ export default function ResumeTimeConfirmModal({
         <View style={styles.stepsSection}>
           <Text style={styles.stepsSectionLabel}>Previous day&apos;s steps</Text>
           <View style={styles.stepsListCard}>
-            {visibleCompletedSteps.map((c) => (
-              <View key={c.stepId} style={styles.timelineRow}>
-                <View style={[styles.timelineIconWrap, { backgroundColor: colors.successSoft }]}>
-                  <CheckCircle2 size={16} color={colors.success} />
+            {/* Only the completed steps scroll. The in-progress row below is
+                the subject of the question underneath it, so it stays pinned
+                and visible however long this list gets. nestedScrollEnabled is
+                required for this to scroll at all inside AppModal's own
+                ScrollView on Android; iOS handles the nesting natively. */}
+            <ScrollView
+              style={{ maxHeight: COMPLETED_STEPS_MAX_HEIGHT }}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              bounces={false}
+            >
+              {completedSteps.map((c) => (
+                <View key={c.stepId} style={styles.timelineRow}>
+                  <View style={[styles.timelineIconWrap, { backgroundColor: colors.successSoft }]}>
+                    <CheckCircle2 size={16} color={colors.success} />
+                  </View>
+                  <View style={styles.timelineInfo}>
+                    <Text style={styles.timelineStepName} numberOfLines={1}>{c.stepName}</Text>
+                    <Text style={[styles.timelineStatusText, { color: colors.success }]}>Completed</Text>
+                    {c.actualStart && c.actualEnd ? (
+                      <Text style={styles.timelineTimes}>
+                        {formatTime(c.actualStart)} → {formatTime(c.actualEnd)}
+                      </Text>
+                    ) : (
+                      <Text style={styles.timelineTimes}>No finish time logged</Text>
+                    )}
+                  </View>
                 </View>
-                <View style={styles.timelineInfo}>
-                  <Text style={styles.timelineStepName} numberOfLines={1}>{c.stepName}</Text>
-                  <Text style={[styles.timelineStatusText, { color: colors.success }]}>Completed</Text>
-                  {c.actualStart && c.actualEnd ? (
-                    <Text style={styles.timelineTimes}>
-                      {formatTime(c.actualStart)} → {formatTime(c.actualEnd)}
-                    </Text>
-                  ) : (
-                    <Text style={styles.timelineTimes}>No finish time logged</Text>
-                  )}
-                </View>
-              </View>
-            ))}
-            {extraCompletedCount > 0 && (
-              <View style={styles.timelineRow}>
-                <Text style={styles.moreCompletedText}>+{extraCompletedCount} more completed</Text>
-              </View>
-            )}
+              ))}
+            </ScrollView>
 
             <View style={[styles.timelineRow, styles.timelineRowLast]}>
               <View style={[styles.timelineIconWrap, { backgroundColor: colors.warningSoft }]}>
@@ -291,13 +387,7 @@ export default function ResumeTimeConfirmModal({
             <Text style={styles.choiceBtnText}>Partially completed</Text>
             <Text style={styles.choiceBtnHint}>Still needs more time today</Text>
           </View>
-          {status === 'partial' ? (
-            <View style={[styles.radioOuter, { borderColor: colors.warning }]}>
-              <View style={[styles.radioDot, { backgroundColor: colors.warning }]} />
-            </View>
-          ) : (
-            <View style={styles.radioOuter} />
-          )}
+          <Radio checked={status === 'partial'} color={colors.warning} />
         </Pressable>
         <Pressable
           style={({ pressed }) => [
@@ -314,13 +404,7 @@ export default function ResumeTimeConfirmModal({
             <Text style={styles.choiceBtnText}>Fully completed</Text>
             <Text style={styles.choiceBtnHint}>Just never got logged</Text>
           </View>
-          {status === 'full' ? (
-            <View style={[styles.radioOuter, { borderColor: colors.success }]}>
-              <View style={[styles.radioDot, { backgroundColor: colors.success }]} />
-            </View>
-          ) : (
-            <View style={styles.radioOuter} />
-          )}
+          <Radio checked={status === 'full'} color={colors.success} />
         </Pressable>
         </>
         )}
@@ -365,10 +449,6 @@ export default function ResumeTimeConfirmModal({
               </Pressable>
             </View>
 
-            {!pastTimeValid && (
-              <Text style={styles.errorHint}>Must be after this step&apos;s start time.</Text>
-            )}
-
             {activePastActualStart && (
               <View style={styles.workedChip}>
                 <Clock size={14} color={colors.textSecondary} />
@@ -395,7 +475,12 @@ export default function ResumeTimeConfirmModal({
                   </View>
                   <View style={styles.timelineInfo}>
                     <Text style={styles.compactPillLabel}>Plan start</Text>
-                    <Text style={styles.compactPillValue}>{formatTime(toLocalIsoString(effectiveStart))}</Text>
+                    {/* Dated, same as the previous-day fields above — without
+                        it a finish that legitimately sits on another calendar
+                        day is indistinguishable from one that doesn't. */}
+                    <Text style={styles.compactPillValue}>
+                      {formatTimeWithDay(toLocalIsoString(effectiveStart))}
+                    </Text>
                   </View>
                 </View>
 
@@ -409,7 +494,7 @@ export default function ResumeTimeConfirmModal({
                   <View style={styles.timelineInfo}>
                     <Text style={styles.compactPillLabel}>Plan finish time</Text>
                     <Text style={[styles.compactPillValue, styles.compactPillValueActive]}>
-                      {formatTime(toLocalIsoString(finishDate))}
+                      {formatTimeWithDay(toLocalIsoString(finishDate))}
                     </Text>
                   </View>
                   <Feather name="edit-3" size={12} color={colors.accent} />
@@ -445,7 +530,7 @@ export default function ResumeTimeConfirmModal({
             <Button
               label="Confirm & Assign"
               icon={ClipboardCheck}
-              disabled={remainingMinutes <= 0 || !pastTimeValid}
+              disabled={remainingMinutes <= 0}
               loading={saving}
               onPress={() => {
                 Keyboard.dismiss();
@@ -479,7 +564,6 @@ export default function ResumeTimeConfirmModal({
             <Button
               label={editingCompleted ? 'Save Changes' : 'Confirm Completed'}
               icon={CheckCircle2}
-              disabled={!pastTimeValid}
               loading={saving}
               onPress={() => {
                 Keyboard.dismiss();
@@ -496,10 +580,13 @@ export default function ResumeTimeConfirmModal({
         onClose={() => setPickerTarget(null)}
         initialDate={pickerTarget === 'finish' ? finishDate : pastDate}
         onConfirm={(date) => {
+          // Unconditional, and before the early returns below — a rejected
+          // pick is exactly the case that would otherwise never re-render.
+          bumpHostRepaint((n) => n + 1);
           if (pickerTarget === 'finish') {
-            handleFinishPicked(date);
-          } else {
-            setPastDate(date);
+            if (!handleFinishPicked(date)) return;
+          } else if (!acceptPastDate(date)) {
+            return;
           }
           setPickerTarget(null);
         }}
@@ -570,7 +657,6 @@ const styles = StyleSheet.create({
   timelineStepName: { ...typography.caption, fontWeight: '700', color: colors.textPrimary },
   timelineStatusText: { ...typography.caption, fontWeight: '700', marginTop: 1 },
   timelineTimes: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
-  moreCompletedText: { ...typography.caption, color: colors.textSecondary, fontWeight: '700', flex: 1 },
 
   question: {
     ...typography.body,
@@ -615,16 +701,6 @@ const styles = StyleSheet.create({
   choiceTextWrap: { flex: 1 },
   choiceBtnText: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
   choiceBtnHint: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  radioOuter: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radioDot: { width: 12, height: 12, borderRadius: 6 },
 
   sectionCardBlue: {
     backgroundColor: 'rgba(102,181,218,0.10)',
@@ -648,9 +724,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
 
-  // Label/value text styles reused inside the timelineRow-styled rows above
-  // (Previous day's work details / Today's plan) — same as the compact-pill
-  // wording before this section switched from side-by-side boxes to rows.
   compactPillLabel: { ...typography.caption, color: colors.textSecondary },
   compactPillValue: { ...typography.body, fontWeight: '700', color: colors.textSecondary },
   compactPillValueActive: { color: colors.textPrimary },

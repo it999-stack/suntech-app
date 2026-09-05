@@ -18,6 +18,7 @@ import EmptyState from '@/components/shared/EmptyState';
 import TileGroup, { type TileGroupOption } from '@components/shared/TileGroup';
 import { colors, spacing, typography } from '@/theme/theme';
 import type { PlanDraft } from '@/types/plan';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 
 export type LocationOption = {
   id: string;
@@ -43,26 +44,16 @@ function pickLocationIcon(locationId: string) {
 
 interface LocationSelectStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'setLocations'>;
   locations: LocationOption[];
 }
 
-export default function LocationSelectStep({ draft, onUpdate, locations }: LocationSelectStepProps) {
+export default function LocationSelectStep({ draft, actions, locations }: LocationSelectStepProps) {
   const navigation = useNavigation<any>();
   const selectedSet = new Set(draft.locationIds);
 
-  function applyLocationIds(nextIds: string[]): void {
-    onUpdate({
-      locationIds: nextIds,
-      selectedPileIds: [],
-      assignments: {},
-      resumeWorkByPileId: {},
-      stepTrackOverrides: {},
-    });
-  }
-
   function toggleLocation(locationId: string): void {
-    applyLocationIds(
+    actions.setLocations(
       selectedSet.has(locationId)
         ? draft.locationIds.filter((id) => id !== locationId)
         : [...draft.locationIds, locationId],

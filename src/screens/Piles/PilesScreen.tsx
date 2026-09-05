@@ -2,8 +2,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import PileStepsModal, { type CompletedStepRow } from '@components/piles/PileStepsModal';
 import { colors, spacing } from '@theme/theme';
@@ -21,7 +19,7 @@ import { useAuthStore } from '@store/authStore';
 import Pager from '@components/shared/Pager';
 import { useAppConfig } from '@state/AppConfigContext';
 
-import ScreenHeader from './components/ScreenHeader';
+import FilterButton from './components/FilterButton';
 import SearchInput from '@components/shared/SearchInput';
 import StatsGrid, { type StatFilter } from './components/StatsGrid';
 import FilterBar, { type FilterChipData } from './components/FilterBar';
@@ -202,11 +200,6 @@ export default function PilesScreen() {
     setAppliedFilters(DEFAULT_FILTERS);
   }
 
-  // StatsGrid tiles act as a quick single-status filter, radio-button style —
-  // Total clears it, tapping a status selects it (independent of the Filters
-  // sheet's own multi-select statuses, though they share state). Tapping the
-  // already-active tile is a no-op — it stays selected rather than toggling
-  // back to Total.
   const activeStatFilter: StatFilter = appliedFilters.statuses.length === 1 ? appliedFilters.statuses[0] : 'ALL';
   function selectStatFilter(filter: StatFilter): void {
     if (filter === 'ALL') {
@@ -243,27 +236,28 @@ export default function PilesScreen() {
   // ── Loading ─────────────────────────────────────────────────────────────
   if (initialLoading) {
     return (
-      <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-        <SafeAreaView style={[styles.flex, styles.center]} edges={['top']}>
+      <View style={styles.flex}>
+        <View style={[styles.flex, styles.center]}>
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.emptyText}>Loading piles…</Text>
-        </SafeAreaView>
-      </LinearGradient>
+        </View>
+      </View>
     );
   }
 
   const totalPages = Math.max(1, Math.ceil(total / config.pilesPageSize));
 
   return (
-    <LinearGradient
-      colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-      style={styles.flex}
-    >
-      <SafeAreaView style={styles.flex} edges={['top']}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         {/* Sticky header */}
         <View style={styles.headerArea}>
-          <ScreenHeader title="Piles" onFilterPress={openFiltersSheet} filterActive={activeFilterCount > 0} />
-          <SearchInput value={search} onChangeText={setSearch} />
+          <View style={styles.searchRow}>
+            <View style={styles.searchFlex}>
+              <SearchInput value={search} onChangeText={setSearch} />
+            </View>
+            <FilterButton onPress={openFiltersSheet} active={activeFilterCount > 0} />
+          </View>
           <StatsGrid stats={stats} activeFilter={activeStatFilter} onSelectFilter={selectStatFilter} />
           <FilterBar
             chips={filterChips}
@@ -300,8 +294,8 @@ export default function PilesScreen() {
           steps={selectedPileSteps}
           loading={selectedPileStepsLoading}
         />
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 
@@ -314,6 +308,14 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     gap: spacing.md,
   },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  // SearchInput sizes to its own content, so it needs an explicit flex parent
+  // to take the width the filter button doesn't.
+  searchFlex: { flex: 1 },
 
   listSection: { flex: 1, minHeight: 0 },
 

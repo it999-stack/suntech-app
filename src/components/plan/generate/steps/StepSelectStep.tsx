@@ -14,22 +14,24 @@ import { Minus, Plus, Lock } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
 import { getLockedStepIds } from '@/services/planPreselectService';
+import { collectPlanDimensions, formatDimensionLabel } from '@/services/pileApplicableSteps';
 import { TRACK_META } from '@/utils/helpers';
 import { formatDurationLong } from '@/utils/formatTime';
 import type { PlanDraft } from '@/types/plan';
 import type { PilingStep } from '@/db/schema';
 import type { PileWithDimension } from '@repositories/pilesRepository';
 import type { PlanTemplateRow } from '@/services/pilingPlannerService';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 
 interface StepSelectStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'setSteps'>;
   steps: PilingStep[];
   planPiles: PileWithDimension[];
   templateRows: PlanTemplateRow[];
 }
 
-export default function StepSelectStep({ draft, onUpdate, steps, planPiles, templateRows }: StepSelectStepProps) {
+export default function StepSelectStep({ draft, actions, steps, planPiles, templateRows }: StepSelectStepProps) {
   const selectedSet = useMemo(
     () => new Set(draft.selectedStepIds),
     [draft.selectedStepIds],
@@ -44,6 +46,13 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
     () => new Map(planPiles.map((p) => [p.dimensionId, { dia: p.dia, depth: p.depth }])),
     [planPiles],
   );
+
+  // Every distinct Ø/depth among this plan's piles — the coverage each
+  // in-scope step must have to be schedulable at all. Checked per DIMENSION,
+  // not "does this step have a template anywhere": a step configured for Ø600
+  // but not Ø900 used to look fine here and then get scheduled on a 60-minute
+  // guess (that default is gone — see planScheduler.ts).
+  const planDimensions = useMemo(() => collectPlanDimensions(planPiles), [planPiles]);
 
   const templatesByStepId = useMemo(() => {
     const map = new Map<string, PlanTemplateRow[]>();
@@ -64,6 +73,12 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
       .sort((a, b) => a.dia - b.dia || a.depth - b.depth);
   }
 
+  /** The plan dimensions this step has no duration template for. */
+  function missingDimensionsForStep(stepId: string) {
+    const covered = new Set((templatesByStepId.get(stepId) ?? []).map((t) => t.dimensionId));
+    return planDimensions.filter((dim) => !covered.has(dim.dimensionId));
+  }
+
   function toggleStep(stepId: string) {
     if (lockedStepIds.has(stepId) && selectedSet.has(stepId)) return;
 
@@ -76,7 +91,7 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
     const nextOrder = steps
       .filter((step) => nextIds.has(step.id))
       .map((step) => step.id);
-    onUpdate({ selectedStepIds: nextOrder });
+    actions.setSteps(nextOrder);
   }
 
   return (
@@ -97,6 +112,9 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
           const meta = TRACK_META[step.track as keyof typeof TRACK_META] ?? TRACK_META.RIG;
           const Icon = meta.icon;
           const relevant = relevantTemplatesForStep(step.id);
+          // Only warned about while the step is IN SCOPE — deselecting it is
+          // the fix, and it's available right here on this card.
+          const missingDimensions = selected ? missingDimensionsForStep(step.id) : [];
 
           return (
             <Pressable
@@ -134,6 +152,23 @@ export default function StepSelectStep({ draft, onUpdate, steps, planPiles, temp
                 </View>
 
                 {locked && <Text style={styles.lockedNote}>Required for carry-over</Text>}
+
+                {missingDimensions.length > 0 && (
+                  <View style={styles.missingBox}>
+                    <Text style={styles.missingTitle}>
+                      {missingDimensions.length === planDimensions.length
+                        ? 'No duration for this plan’s pile sizes'
+                        : 'Missing duration for some pile sizes'}
+                    </Text>
+                    <Text style={styles.missingText}>
+                      {missingDimensions.map(formatDimensionLabel).join(', ')}
+                    </Text>
+                    <Text style={styles.missingText}>
+                      This step can&apos;t be scheduled for those piles. Remove it from today&apos;s plan, or ask
+                      Head Office to add the duration.
+                    </Text>
+                  </View>
+                )}
 
                 <View style={styles.templateList}>
                   {relevant.length === 0 ? (
@@ -242,6 +277,22 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 4,
     marginLeft: 40,
+  },
+  missingBox: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerSoft,
+    gap: 2,
+  },
+  missingTitle: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.danger,
+  },
+  missingText: {
+    ...typography.caption,
+    color: colors.danger,
   },
   templateList: {
     marginTop: spacing.sm,

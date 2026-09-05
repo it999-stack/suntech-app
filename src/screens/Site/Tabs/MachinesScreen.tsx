@@ -12,8 +12,6 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronRight } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
@@ -100,11 +98,8 @@ export default function MachinesScreen() {
   );
 
   return (
-    <LinearGradient
-      colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-      style={styles.flex}
-    >
-      <SafeAreaView style={styles.flex} edges={[]}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <Text style={styles.pageTitle}>Machines</Text>
           <MachineStatsGrid stats={stats} activeFilter={statFilter} onSelectFilter={setStatFilter} />
@@ -151,8 +146,8 @@ export default function MachinesScreen() {
             onReported={handleReported}
           />
         )}
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 

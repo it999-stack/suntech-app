@@ -28,7 +28,8 @@ import {
   purgeChecklistsByIds,
   getPileIdsForChecklistIds,
 } from '@repositories/checklistRepository';
-import { getDirtyChecklistIds } from '@repositories/syncQueueRepository';
+import { getDirtyChecklistIds, dequeueChecklistSync } from '@repositories/syncQueueRepository';
+import { deletePileMeasurementsByPileIds } from '@repositories/pileMeasurementsRepository';
 
 import type {
   NewPilingLocation,
@@ -196,9 +197,17 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
     await hydrateChecklistFromServer(checklist);
   }
   await purgeChecklistPilesByIds((data.deleted_checklist_pile_ids as string[]) ?? []);
-  const deletedChecklistIds = ((data.deleted_checklist_ids as string[]) ?? []).filter(
-    (id) => !dirtyIds.has(id),
-  );
+
+  // Deliberately NOT dirty-filtered, unlike the hydrate skip above. A
+  // server-side delete outranks an unsynced local edit: the checklist those
+  // edits target no longer exists, and the push that ran moments ago in this
+  // same cycle already reported them as dropped (see the server's
+  // dropped_checklists). Filtering here instead would pin the local copy in
+  // place permanently — the queue row keeps it dirty, and dirty keeps it from
+  // ever being purged. Dequeue first so no later trigger can rebuild a push
+  // from rows that are about to disappear.
+  const deletedChecklistIds = (data.deleted_checklist_ids as string[]) ?? [];
+  await dequeueChecklistSync(deletedChecklistIds);
   await purgeChecklistsByIds(deletedChecklistIds);
 
   // Same guard as the checklist skip above, one hop further: pile
@@ -214,9 +223,17 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
   const pileMeasurementRows = ((data.pile_measurements as any[]) ?? []).filter(
     (m) => !dirtyPileIds.has(m.pile_id),
   );
-  // No deleted-ids list — pile measurements are never independently
-  // hard-deleted (see the server contract / syncPileMeasurements.ts).
   await applyPileMeasurementsPull(pileMeasurementRows);
+
+  // Measurements soft-deleted server-side when a day's plan was deleted. Keyed
+  // by PILE id, not measurement id — the app mints its own local measurement
+  // ids (see saveMeasurementsBatch), so server ids would match nothing.
+  //
+  // Applied after the upsert above so a delete in the same batch wins over a
+  // stale row in `pile_measurements`, and unfiltered by dirtyPileIds for the
+  // same reason as the checklist purge: the plan that owned these values is
+  // gone, and its queued edits were already dropped by the push.
+  await deletePileMeasurementsByPileIds((data.deleted_measurement_pile_ids as string[]) ?? []);
 
   return { serverTime: data.server_time as string, checklistsApplied: checklists.length };
 }

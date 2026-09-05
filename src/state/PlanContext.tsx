@@ -27,6 +27,7 @@ import {
   getChecklistByDate,
   getChecklistPiles,
   hydrateChecklistFromServer,
+  purgeChecklistsByIds,
 } from '@repositories/checklistRepository';
 import {
   getPlanStepsForChecklist,
@@ -39,6 +40,7 @@ import {
 import { insertMachineEvent } from '@repositories/machineEventsRepository';
 import { setMachineStatusLocal } from '@repositories/machinesRepository';
 import {
+  deletePileMeasurementsByPileIds,
   getPileMeasurementsByPileIds,
   upsertPileMeasurements,
   type PileMeasurementPatch,
@@ -57,9 +59,9 @@ import type {
 import type { ResumeWork, ChecklistPersonnelAssignment, PileMeasurementFields } from '@/types/plan';
 import { buildChecklistPersonnelPayload } from '@/utils/personnelRoles';
 import { generateId } from '@/utils/helpers';
-import { enqueueChecklistSync } from '@repositories/syncQueueRepository';
+import { enqueueChecklistSync, dequeueChecklistSync } from '@repositories/syncQueueRepository';
 import { triggerDebounced } from '@sync/SyncManager';
-import { onConflicts } from '@sync/delta/deltaPush';
+import { onConflicts, onChecklistsDropped } from '@sync/delta/deltaPush';
 import { apiClient } from '@services/apiClient';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -188,6 +190,9 @@ type PlanContextValue = {
   pileMeasurementsByPileId: Map<string, PilPileMeasurement>;
   isLoading: boolean;
   isGenerating: boolean;
+  /** Deliberately separate from isGenerating — Delete and Edit are adjacent
+   * buttons and must not share a spinner. */
+  isDeleting: boolean;
   error: string | null;
   /** Set when a genuine sync conflict touched a row in the currently loaded checklist. */
   conflictNotice: string | null;
@@ -197,6 +202,15 @@ type PlanContextValue = {
   loadChecklist: (siteId: string, date: string) => Promise<void>;
   /** Create the checklist + piles, then run the local planner. */
   generatePlan: (siteId: string, input: GeneratePlanInput) => Promise<void>;
+  /**
+   * Delete a day's plan: server first, then purge the local cache and reload
+   * (which clears all loaded state and returns planStatus to 'none').
+   *
+   * Online-only, like generatePlan. Note the server restricts this to the
+   * working day or later, and that logged progress does NOT carry over to a
+   * regenerated plan — the confirm dialog is where the user is told both.
+   */
+  deletePlan: (siteId: string, checklistId: string, date: string) => Promise<void>;
   editPlanMidDay: (
     siteId: string,
     checklistId: string,
@@ -216,12 +230,20 @@ type PlanContextValue = {
    * gate on the actual-time entry that triggered it (see
    * MeasurementFieldsModal.tsx). */
   setPileMeasurement: (pileId: string, patch: Partial<PileMeasurementFields>) => Promise<void>;
-  /** Record an actual start or end time for a step. */
+  /**
+   * Record an actual start or end time for a step.
+   *
+   * `assignedMachineId` is which machine actually performed it — required for
+   * a step with no plan row (nothing else records the machine then), and
+   * harmlessly re-stated for a planned one. Omit (undefined) to leave any
+   * previously recorded machine untouched; null clears it.
+   */
   setActualTime: (
     checklistPileId: string,
     stepId: string,
     field: 'actualStart' | 'actualEnd',
     isoTimestamp: string,
+    assignedMachineId?: string | null,
   ) => Promise<void>;
   /** Clear a previously logged actual start/end time. Clearing the start
    * time also clears the end time — a step can't be "finished" without
@@ -264,6 +286,9 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
   const [actualSteps, setActualSteps] = useState<ActualStepWithMeta[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  // Separate from isGenerating: Delete and Edit sit next to each other on
+  // HomeScreen, and they must not share a spinner.
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
 
@@ -349,6 +374,21 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     });
   }, [actualSteps, checklistPiles]);
 
+  // A plan deleted on another device takes this device's queued entries for
+  // that day with it: the server drops them (rather than erroring, so this
+  // device's queue can clear) and the pull that follows purges the local copy.
+  // Without this the supervisor would just watch their entries disappear.
+  useEffect(() => {
+    return onChecklistsDropped((dropped) => {
+      if (!checklist) return;
+      if (dropped.some((d) => d.id === checklist.id)) {
+        setConflictNotice(
+          "This day's plan was deleted on another device. Entries you hadn't synced were discarded.",
+        );
+      }
+    });
+  }, [checklist]);
+
   const dismissConflictNotice = useCallback(() => setConflictNotice(null), []);
 
   // ── Generate plan ────────────────────────────────────────────────────────
@@ -404,6 +444,49 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [loadChecklist],
+  );
+
+  // ── Delete plan ──────────────────────────────────────────────────────────
+
+  const deletePlan = useCallback(
+    async (siteId: string, checklistId: string, date: string) => {
+      setIsDeleting(true);
+      setError(null);
+      try {
+        // Server first, and online-only by design — same stance as
+        // generatePlan(). The server owns the plan; if this call fails,
+        // nothing local has changed and the user can simply retry.
+        await apiClient.delete(`/piling/checklists/${checklistId}`);
+
+        // Capture the physical pile ids BEFORE the purge below wipes
+        // checklistPiles — measurements are keyed by pileId, not checklistId,
+        // so there'd be no way to find them afterwards.
+        const pileIds = checklistPiles.map((cp) => cp.pileId);
+
+        // Dequeue BEFORE purging: a debounced sync firing between the two
+        // would otherwise build a push out of half-deleted local rows.
+        await dequeueChecklistSync([checklistId]);
+        await deletePileMeasurementsByPileIds(pileIds);
+        await purgeChecklistsByIds([checklistId]);
+
+        // Clears every piece of loaded state via loadChecklist's own
+        // nothing-found branch, and drops planStatus back to 'none'.
+        await loadChecklist(siteId, date);
+      } catch (err) {
+        const message =
+          (err as any)?.response?.data?.detail ||
+          ((err as any)?.request && !(err as any)?.response
+            ? 'You need to be online to delete a plan.'
+            : err instanceof Error
+              ? err.message
+              : 'Failed to delete plan');
+        setError(message);
+        throw err;
+      } finally {
+        setIsDeleting(false);
+      }
+    },
+    [checklistPiles, loadChecklist],
   );
 
   // ── Mid-day plan edit (reorder / add / remove piles on a live checklist) ──
@@ -505,6 +588,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       stepId: string,
       field: 'actualStart' | 'actualEnd',
       isoTimestamp: string,
+      assignedMachineId?: string | null,
     ) => {
       setError(null);
       try {
@@ -519,6 +603,9 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           actualStart: field === 'actualStart' ? isoTimestamp : (existing?.actualStart ?? null),
           actualEnd: field === 'actualEnd' ? isoTimestamp : (existing?.actualEnd ?? null),
           remarks: existing?.remarks ?? null,
+          // Falls back to whatever was already recorded rather than blanking
+          // it, so a caller that can't resolve a machine never erases one.
+          assignedMachineId: assignedMachineId ?? existing?.assignedMachineId ?? null,
         });
 
         if (checklist) {
@@ -702,11 +789,13 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       pileMeasurementsByPileId,
       isLoading,
       isGenerating,
+      isDeleting,
       error,
       conflictNotice,
       dismissConflictNotice,
       loadChecklist,
       generatePlan,
+      deletePlan,
       editPlanMidDay,
       previewEditPlanMidDay,
       setActualTime,
@@ -724,11 +813,13 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       pileMeasurementsByPileId,
       isLoading,
       isGenerating,
+      isDeleting,
       error,
       conflictNotice,
       dismissConflictNotice,
       loadChecklist,
       generatePlan,
+      deletePlan,
       editPlanMidDay,
       previewEditPlanMidDay,
       setActualTime,

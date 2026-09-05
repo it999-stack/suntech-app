@@ -3,8 +3,6 @@
 // non-working windows shown inline — mirrors StepsScreen's card design.
 
 import { View, Text, StyleSheet, FlatList } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Clock } from 'lucide-react-native';
 
 import { colors, spacing, radius, typography } from '@theme/theme';
@@ -74,11 +72,8 @@ export default function ShiftsScreen() {
   ) / 10;
 
   return (
-    <LinearGradient
-      colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-      style={styles.flex}
-    >
-      <SafeAreaView style={styles.flex} edges={[]}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <Text style={styles.pageTitle}>Shifts</Text>
           <Text style={styles.pageSubtitle}>
@@ -96,8 +91,8 @@ export default function ShiftsScreen() {
             <Text style={styles.emptyText}>No shifts configured. Contact your administrator.</Text>
           }
         />
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 

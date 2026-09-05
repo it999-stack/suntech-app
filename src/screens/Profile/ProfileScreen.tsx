@@ -2,8 +2,6 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Building2,
   RefreshCw,
@@ -161,8 +159,8 @@ export default function ProfileScreen() {
     : formatSyncTime(lastSyncedAt);
 
   return (
-    <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-      <SafeAreaView style={styles.flex} edges={['top']}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <Text style={styles.pageTitle}>Profile</Text>
 
@@ -251,7 +249,7 @@ export default function ProfileScreen() {
           </GlassCard>
 
         </ScrollView>
-      </SafeAreaView>
+      </View>
 
       <CoordinatorCallModal
         visible={supportPickerVisible}
@@ -269,7 +267,7 @@ export default function ProfileScreen() {
         onConfirm={handleConfirmLogout}
         onCancel={() => setLogoutConfirmOpen(false)}
       />
-    </LinearGradient>
+    </View>
   );
 }
 

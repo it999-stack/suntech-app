@@ -421,11 +421,20 @@ export const pileActualSteps = sqliteTable('pil_actual_steps', {
   actualStart: text('actual_start'),
   actualEnd: text('actual_end'),
   remarks: text('remarks'),
+  /**
+   * Which machine actually performed this step. Normally the same as the
+   * matching plan row's assigned_machine_id, but this row can exist WITHOUT a
+   * plan row: a step the scheduler never planned (it ran out of window) that
+   * the crew performed anyway once the machine came free. In that case this is
+   * the only record of which machine did the work — resolved from the step's
+   * track against the pile's own rig/crane, see usePileGroups'
+   * resolveUnplannedMachineId. Null on legacy rows written before this column
+   * existed, and for a COMPRESSOR-track step (no compressor column on
+   * pil_checklist_piles to resolve one from).
+   */
+  assignedMachineId: text('assigned_machine_id'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
-  // The server's own `updated_at`, echoed back verbatim — see the matching
-  // field/comment on pilingChecklistPiles above. Never derive this from
-  // Date.now(); only hydrateChecklistFromServer may set it.
   serverUpdatedAt: text('server_updated_at'),
 });
 

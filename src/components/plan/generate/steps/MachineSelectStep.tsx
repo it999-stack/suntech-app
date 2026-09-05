@@ -5,32 +5,22 @@ import GlassCard from '@components/shared/GlassCard';
 import TilePicker, { type TileSection } from '@components/shared/TilePicker';
 import type { TileGroupOption } from '@components/shared/TileGroup';
 import { spacing } from '@/theme/theme';
-import { removeMachineFromDraft, type PlanDraft } from '@/types/plan';
+import type { PlanDraft } from '@/types/plan';
 import { TRACK_META, STATUS_META, isMachinePlannable, type MachineStatus } from '@/utils/helpers';
 import type { SimpleMachine } from '@screens/Home/generatePlan/useGeneratePlanData';
+import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 
 interface MachineSelectStepProps {
   draft: PlanDraft;
-  onUpdate: (patch: Partial<PlanDraft>) => void;
+  actions: Pick<PlanDraftActions, 'toggleMachine'>;
   rigs: SimpleMachine[];
   cranes: SimpleMachine[];
 }
 
-export default function MachineSelectStep({ draft, onUpdate, rigs, cranes }: MachineSelectStepProps) {
-  function toggleMachine(id: string, type: 'RIG' | 'CRANE') {
-    const isRig = type === 'RIG';
-    const activeIds = isRig ? draft.activeRigIds : draft.activeCraneIds;
-    const key = isRig ? 'activeRigIds' : 'activeCraneIds';
-    if (activeIds.includes(id)) {
-      onUpdate(removeMachineFromDraft(draft, id, type));
-    } else {
-      onUpdate({ [key]: [...activeIds, id] });
-    }
-  }
-
+export default function MachineSelectStep({ draft, actions, rigs, cranes }: MachineSelectStepProps) {
   function handleToggle(id: string) {
     const isRig = rigs.some((r) => r.id === id);
-    toggleMachine(id, isRig ? 'RIG' : 'CRANE');
+    actions.toggleMachine(id, isRig ? 'RIG' : 'CRANE');
   }
 
   function toOption(m: SimpleMachine, type: 'RIG' | 'CRANE'): TileGroupOption {

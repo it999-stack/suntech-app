@@ -5,7 +5,7 @@ import { View, StyleSheet } from 'react-native';
 import { Play, Flag } from 'lucide-react-native';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import Button from '@components/shared/Button';
-import { resolveOvernightDate, toLocalIsoString, startOfDay, endOfDay } from '@utils/formatTime';
+import { resolveOvernightDate, toLocalIsoString, startOfDay, endOfDay, seedPickerDate } from '@utils/formatTime';
 import { validateCandidateTime, type ConflictNotice } from '@utils/timeValidation';
 import { notify } from '@utils/notify';
 import { spacing } from '@theme/theme';
@@ -14,8 +14,14 @@ type Mode = 'start' | 'finish';
 
 interface Props {
   mode: Mode;
-  /** Sensible default minutes to seed the picker with (planned start/end). */
-  defaultMinutes: number;
+  /**
+   * What the picker opens on, as minutes-since-midnight. A thunk, not a
+   * value: the finish seed falls back to "now" once a step has overrun its
+   * plan, and this modal can sit open for minutes — so it's resolved when the
+   * picker actually opens rather than at whenever the last render happened.
+   * See buildActualTimeRules.
+   */
+  getDefaultMinutes: () => number;
   /**
    * `explicitDate` is set only when the user tapped the picker's header
    * calendar and picked a day other than the seeded default — the caller
@@ -54,8 +60,17 @@ interface Props {
    * src/utils/timeValidation.ts. */
   minBoundConflict?: ConflictNotice;
   /**
+   * Latest real timestamp this time may land on (inclusive) — the mirror of
+   * minBoundIso. In fill mode this is normally undefined (a step being
+   * started has no recorded end yet), but it's declared so the shared rule
+   * bag from buildActualTimeRules can be spread wholesale into both this and
+   * EditTimeButton without a bound silently vanishing.
+   */
+  maxBoundIso?: string;
+  maxBoundConflict?: ConflictNotice;
+  /**
    * Earliest/latest real timestamp allowed by the checklist's own plan
-   * window (plan_start_time .. plan_end_time + 1h grace) — an independent
+   * window (plan_start_time .. plan_end_time) — an independent
    * outer bound from minBoundIso above (step adjacency). The picker itself
    * only loosely bounds by whole calendar day (see startOfDay/endOfDay
    * below) so it never auto-snaps mid-scroll; the exact cutoff is enforced
@@ -79,12 +94,14 @@ interface Props {
 
 export default function StepTimeControl({
   mode,
-  defaultMinutes,
+  getDefaultMinutes,
   onConfirm,
   machineConflictCheck,
   pileConflictCheck,
   minBoundIso,
   minBoundConflict,
+  maxBoundIso,
+  maxBoundConflict,
   planWindowMinIso,
   planWindowMaxIso,
   anchorIso,
@@ -92,7 +109,7 @@ export default function StepTimeControl({
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [hasOpenedPicker, setHasOpenedPicker] = useState(false);
-  const [draftMinutes, setDraftMinutes] = useState(defaultMinutes);
+  const [draftMinutes, setDraftMinutes] = useState(getDefaultMinutes);
   const [saving, setSaving] = useState(false);
 
   async function confirm(minutes: number, explicitDate?: Date) {
@@ -102,6 +119,8 @@ export default function StepTimeControl({
       candidateDate,
       minBoundIso,
       minBoundConflict,
+      maxBoundIso,
+      maxBoundConflict,
       planWindowMinIso,
       planWindowMaxIso,
       machineConflictCheck,
@@ -137,7 +156,8 @@ export default function StepTimeControl({
                 notify.error(blocked.message, { title: blocked.title });
                 return;
               }
-              setDraftMinutes(defaultMinutes);
+              // Resolved here, not at render — see getDefaultMinutes.
+              setDraftMinutes(getDefaultMinutes());
               setHasOpenedPicker(true);
               setPickerOpen(true);
             }}
@@ -156,11 +176,10 @@ export default function StepTimeControl({
             const m = date.getHours() * 60 + date.getMinutes();
             confirm(m, dateWasExplicit ? date : undefined);
           }}
-          initialDate={(() => {
-            const d = anchorIso ? new Date(anchorIso) : new Date();
-            d.setHours(Math.floor(defaultMinutes / 60), defaultMinutes % 60, 0, 0);
-            return d;
-          })()}
+          // draftMinutes, not getDefaultMinutes() — the picker must open on
+          // the value captured when it opened, or re-rendering while it's up
+          // would move the wheel under the user.
+          initialDate={seedPickerDate(anchorIso, draftMinutes)}
           minimumDate={planWindowMinIso ? startOfDay(new Date(planWindowMinIso)) : undefined}
           maximumDate={planWindowMaxIso ? endOfDay(new Date(planWindowMaxIso)) : undefined}
         />

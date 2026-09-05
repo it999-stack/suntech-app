@@ -5,6 +5,14 @@
 module.exports = {
   preset: 'jest-expo',
   moduleNameMapper: {
+    // Resolve to lucide's CJS build (what its own package `main` points at)
+    // rather than the ESM `.mjs` one Metro picks. jest-expo's transform only
+    // matches /\.[jt]sx?$/, so a .mjs file is never transpiled and dies on
+    // "Unexpected token 'export'" — taking down any test whose imports reach
+    // it transitively, e.g. pure date math importing utils/helpers for
+    // TRACK_META. transformIgnorePatterns does NOT fix this: the file isn't
+    // being ignored, there's simply no transformer registered for .mjs.
+    '^lucide-react-native$': '<rootDir>/node_modules/lucide-react-native/dist/cjs/lucide-react-native.js',
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@components/(.*)$': '<rootDir>/src/components/$1',
     '^@screens/(.*)$': '<rootDir>/src/screens/$1',

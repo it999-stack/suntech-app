@@ -35,7 +35,7 @@ export type {
 
 export { resolveWindows } from './planner/planWindows';
 
-export { fetchPlanReferenceData, resolveEffectiveDayStart } from './planner/planReferenceData';
+export { fetchPlanReferenceData, resolveEffectiveDayStart, fetchRawWindows } from './planner/planReferenceData';
 
 export { generatePlanPreview, type GeneratePlanPreviewOptions } from './planner/planBuilder';
 

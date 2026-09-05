@@ -5,8 +5,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { RefreshCw } from 'lucide-react-native';
 import Button from '@components/shared/Button';
@@ -242,18 +240,18 @@ export default function PlanDetailScreen() {
 
   if (loading) {
     return (
-      <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-        <SafeAreaView style={[styles.flex, styles.center]}>
+      <View style={styles.flex}>
+        <View style={[styles.flex, styles.center]}>
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>Loading plan details…</Text>
-        </SafeAreaView>
-      </LinearGradient>
+        </View>
+      </View>
     );
   }
 
   return (
-    <LinearGradient colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]} style={styles.flex}>
-      <SafeAreaView style={styles.flex} edges={['top']}>
+    <View style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.headerArea}>
           <View style={styles.headerTopRow}>
             <Text style={styles.pageTitle}>Plan Detail</Text>
@@ -303,8 +301,8 @@ export default function PlanDetailScreen() {
           {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
           <PilesCard piles={detailPiles} planSteps={planSteps} actualSteps={actualSteps} />
         </ScrollView>
-      </SafeAreaView>
-    </LinearGradient>
+      </View>
+    </View>
   );
 }
 

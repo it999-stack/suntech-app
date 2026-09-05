@@ -170,6 +170,11 @@ export type ExpectedStepStart = {
  * machine's first real work of the day, or every other assigned step
  * finished after this one started) falls back to this step's own planned
  * start instead.
+ *
+ * Returns null when there is neither: an UNPLANNED step (no plan row, hence no
+ * planned start — see ActualEntry.plannedStart) whose machine has no earlier
+ * completion to chain off simply has no expected start, and callers must render
+ * that as absent rather than being handed a fabricated one.
  */
 export function computeExpectedStepStart(
   index: MachineFloorIndex,
@@ -177,9 +182,9 @@ export function computeExpectedStepStart(
   excludeChecklistPileId: string,
   excludeStepId: string,
   atOrBeforeIso: string,
-  plannedStartIso: string,
+  plannedStartIso: string | null | undefined,
   bufferMinutes: number,
-): ExpectedStepStart {
+): ExpectedStepStart | null {
   const intervals = machineId ? index.get(machineId) : undefined;
   const atOrBefore = new Date(atOrBeforeIso).getTime();
 
@@ -195,6 +200,7 @@ export function computeExpectedStepStart(
   }
 
   const anchorIso = anchor?.end ?? plannedStartIso;
+  if (!anchorIso) return null;
   return {
     expectedStartIso: toLocalIsoString(addMinutes(new Date(anchorIso), bufferMinutes || 0)),
     anchorPileCode: anchor?.pileCode,

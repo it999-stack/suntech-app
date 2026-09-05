@@ -23,22 +23,19 @@ export interface ConflictNotice {
 
 export interface CandidateTimeBounds {
   candidateDate: Date;
-  /** Earliest real timestamp this time may land on (inclusive). */
   minBoundIso?: string;
-  /** What's occupying minBoundIso, for the notice — e.g. the previous step's
-   * own recorded interval. Omit to fall back to a bare "Invalid time" for
-   * this bound. */
   minBoundConflict?: ConflictNotice;
-  /** Latest real timestamp this time may land on (inclusive). */
+  /** Reject a candidate that EQUALS minBoundIso as well as one below it.
+   * Defaults false, so every existing caller keeps its ">= is fine" semantics
+   * (an actual step may legitimately start the instant the previous one ends).
+   * Set where a zero-length span is meaningless — e.g. a plan finish time
+   * landing exactly on the plan start. */
+  minBoundExclusive?: boolean;
   maxBoundIso?: string;
   maxBoundConflict?: ConflictNotice;
   planWindowMinIso?: string;
   planWindowMaxIso?: string;
-  /** Cross-pile overlap check — returns a notice naming what's occupying the
-   * machine, or null. See src/utils/machineFloor.ts. */
   machineConflictCheck?: (candidate: Date) => ConflictNotice | null;
-  /** Within-pile overlap check — returns a notice naming the conflicting
-   * step, or null. See src/utils/machineFloor.ts. */
   pileConflictCheck?: (candidate: Date) => ConflictNotice | null;
 }
 
@@ -56,6 +53,7 @@ export function validateCandidateTime({
   candidateDate,
   minBoundIso,
   minBoundConflict,
+  minBoundExclusive = false,
   maxBoundIso,
   maxBoundConflict,
   planWindowMinIso,
@@ -63,8 +61,11 @@ export function validateCandidateTime({
   machineConflictCheck,
   pileConflictCheck,
 }: CandidateTimeBounds): ConflictNotice | null {
-  if (minBoundIso && candidateDate.getTime() < new Date(minBoundIso).getTime()) {
-    return minBoundConflict ?? INVALID_TIME;
+  if (minBoundIso) {
+    const delta = candidateDate.getTime() - new Date(minBoundIso).getTime();
+    if (minBoundExclusive ? delta <= 0 : delta < 0) {
+      return minBoundConflict ?? INVALID_TIME;
+    }
   }
   if (maxBoundIso && candidateDate.getTime() > new Date(maxBoundIso).getTime()) {
     return maxBoundConflict ?? INVALID_TIME;
@@ -78,14 +79,18 @@ export function validateCandidateTime({
   return machineConflictCheck?.(candidateDate) ?? pileConflictCheck?.(candidateDate) ?? null;
 }
 
-/** Builds the shared "Machine occupied" notice from a step's real recorded
- * interval — "<pileCode> · <stepName>" on its own line (the same " · "
- * separator the rest of the app already uses for a compact pile/machine
- * summary, e.g. "Rig R-1 · Crane C-1"), then the time range on a second line
- * so it reads as two distinct facts instead of one run-on line. `endIso`
- * omitted (e.g. a still-running step, or a self-referential bound on a step
- * that hasn't finished yet) shows just the single start time instead of a
- * range. */
+export const IN_THE_FUTURE: ConflictNotice = {
+  title: 'Invalid time',
+  message: 'This time is in the future.',
+};
+
+export function formatOpenSessionNotice(what: string, sinceIso: string): ConflictNotice {
+  return {
+    title: 'Invalid time',
+    message: `${what} at ${formatTime(sinceIso)}.\nPick a time after that.`,
+  };
+}
+
 export function formatOccupiedNotice(
   pileCode: string,
   stepName: string,

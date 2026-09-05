@@ -13,6 +13,15 @@ export type ChecklistPileProgress = {
   plannedEnd: string | null;   // ISO timestamp
   actualStart: string | null;  // ISO timestamp, null until work begins
   actualEnd: string | null;    // ISO timestamp, only set once status is COMPLETED
+  /**
+   * How many of the pile's steps the plan covered, and how many more were
+   * actually worked without ever being planned (the scheduler ran out of the
+   * 24h window; the crew got to them anyway — see usePileGroups). Both
+   * default to treating the plan as complete coverage when omitted, which is
+   * what every caller predating unplanned work implies.
+   */
+  plannedStepCount?: number;
+  unplannedStepCount?: number;
 };
 
 export type ChecklistProgress = {
@@ -56,7 +65,24 @@ export function computeChecklistProgress(
     const effectivePlannedEnd = p.plannedEnd ?? (p.plannedStart ? windowEndIso : null);
     const plannedDurationMinutes =
       p.plannedStart && effectivePlannedEnd ? minutesBetween(p.plannedStart, effectivePlannedEnd) : 0;
-    totalPlanned += plannedDurationMinutes;
+
+    // A pile whose actual work includes steps the plan never covered has a
+    // planned span that measures only PART of the work it really contains.
+    // Weighting it by that span alone let its elapsed time saturate its whole
+    // weight the moment it ran past the plan — reading as 100% done while
+    // several unplanned steps were still outstanding. Scaling the span by the
+    // extra steps keeps the pile's weight roughly proportional to the work it
+    // actually holds. An approximation by construction: a never-planned step
+    // has no planned duration at all, so a per-step average of the planned
+    // ones is the only estimate available.
+    const plannedStepCount = p.plannedStepCount ?? 0;
+    const unplannedStepCount = p.unplannedStepCount ?? 0;
+    const stepScale =
+      plannedStepCount > 0 && unplannedStepCount > 0
+        ? (plannedStepCount + unplannedStepCount) / plannedStepCount
+        : 1;
+    const weightMinutes = plannedDurationMinutes * stepScale;
+    totalPlanned += weightMinutes;
 
     if (!p.actualStart) return; // not started — contributes 0 elapsed
 
@@ -65,13 +91,20 @@ export function computeChecklistProgress(
       ? minutesBetween(p.actualStart, p.actualEnd!)
       : minutesBetween(p.actualStart, now.toISOString());
 
-    weightedElapsed += plannedDurationMinutes > 0 ? Math.min(elapsed, plannedDurationMinutes) : elapsed;
+    weightedElapsed += weightMinutes > 0 ? Math.min(elapsed, weightMinutes) : elapsed;
 
     if (isDone) {
       completedCount += 1;
       completedActual += elapsed;
+      // Variance stays actual-vs-PLANNED (the unscaled span): a pile that
+      // performed unplanned work genuinely took longer than it was planned to,
+      // and that is exactly what this figure is meant to report.
       completedPlanned += plannedDurationMinutes;
-    } else if (plannedDurationMinutes > 0 && elapsed > plannedDurationMinutes) {
+    } else if (unplannedStepCount === 0 && plannedDurationMinutes > 0 && elapsed > plannedDurationMinutes) {
+      // Only piles whose plan covered all their work can be "overrunning".
+      // An unplanned step's minutes were never planned, so there is nothing
+      // for them to be late against — flagging the day overdue for them
+      // would make every partially-planned pile look overdue by definition.
       anyOverrunning = true;
     }
   });

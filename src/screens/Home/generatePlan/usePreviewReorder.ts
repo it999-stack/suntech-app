@@ -12,7 +12,7 @@ import type { EligiblePile, SimpleMachine } from './useGeneratePlanData';
 
 export function usePreviewReorder(args: {
   draft: PlanDraft;
-  updateDraft: (patch: Partial<PlanDraft>) => void;
+  reorderPiles: (newOrder: string[]) => void;
   selectedPlanPiles: EligiblePile[];
   activeRigs: SimpleMachine[];
   activeCranes: SimpleMachine[];
@@ -32,7 +32,7 @@ export function usePreviewReorder(args: {
   pilesForMachine: (m: MachineInfo) => { id: string; label: string }[];
   handleReorderMachine: (newSubsetOrder: string[]) => void;
 } {
-  const { draft, updateDraft, selectedPlanPiles, activeRigs, activeCranes } = args;
+  const { draft, reorderPiles, selectedPlanPiles, activeRigs, activeCranes } = args;
 
   // Build preview piles (already-assigned piles with machine labels)
   const builtPreviewPiles: PreviewPile[] = useMemo(() => {
@@ -67,7 +67,7 @@ export function usePreviewReorder(args: {
   }, [draft.selectedPileIds, draft.assignments, selectedPlanPiles, activeRigs, activeCranes]);
 
   function handleReorderPiles(newOrder: string[]) {
-    updateDraft({ selectedPileIds: newOrder });
+    reorderPiles(newOrder);
   }
 
   const [editingMachineId, setEditingMachineId] = useState<string | undefined>();

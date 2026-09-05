@@ -9,7 +9,16 @@ import { getMachinesBySite } from '@repositories/machinesRepository';
 import { getPilesBySite } from '@repositories/pilesRepository';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getContractorsBySite } from '@repositories/contractorsRepository';
-import type { PilingMachine, PilingPile, PilingSitePersonnel, PilContractor } from '@db/schema';
+import { getSteps } from '@repositories/stepsRepository';
+import { getAllDurationTemplates } from '@repositories/durationTemplatesRepository';
+import type {
+  PilingMachine,
+  PilingPile,
+  PilingSitePersonnel,
+  PilingStep,
+  PilingStepDurationTemplate,
+  PilContractor,
+} from '@db/schema';
 
 export function useLookups(args: { siteId: string }): {
   machines: PilingMachine[];
@@ -20,6 +29,13 @@ export function useLookups(args: { siteId: string }): {
    * Contractor" / "Name of Cage Contractor" fields on the one-time pile
    * measurements (see MeasurementFieldsModal.tsx). */
   contractors: PilContractor[];
+  /** Full step catalog (sequence_order ascending) + every duration template
+   * for the site. Together these define each pile's APPLICABLE step set, which
+   * is what usePileGroups roots its step list on rather than the plan rows —
+   * see services/pileApplicableSteps.ts. Both are site-static, so they're
+   * loaded once here with the other lookups. */
+  allSteps: PilingStep[];
+  durationTemplates: PilingStepDurationTemplate[];
   lookupsLoading: boolean;
   reloadMachines: () => Promise<void>;
   machineStatusById: Map<string, string>;
@@ -31,23 +47,29 @@ export function useLookups(args: { siteId: string }): {
   const [pileMap, setPileMap] = useState<Map<string, PilingPile>>(new Map());
   const [personnelMap, setPersonnelMap] = useState<Map<string, PilingSitePersonnel>>(new Map());
   const [contractors, setContractors] = useState<PilContractor[]>([]);
+  const [allSteps, setAllSteps] = useState<PilingStep[]>([]);
+  const [durationTemplates, setDurationTemplates] = useState<PilingStepDurationTemplate[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(true);
 
   useEffect(() => {
     if (!siteId) return;
     setLookupsLoading(true);
     (async () => {
-      const [fetchedMachines, piles, personnel, fetchedContractors] = await Promise.all([
+      const [fetchedMachines, piles, personnel, fetchedContractors, steps, templates] = await Promise.all([
         getMachinesBySite(siteId),
         getPilesBySite(siteId),
         getPersonnelBySite(siteId),
         getContractorsBySite(siteId),
+        getSteps(),
+        getAllDurationTemplates(siteId),
       ]);
       setMachines(fetchedMachines);
       setMachineMap(new Map(fetchedMachines.map((m) => [m.id, m.machineNo])));
       setPileMap(new Map(piles.map((p) => [p.id, p])));
       setPersonnelMap(new Map(personnel.map((p) => [p.id, p])));
       setContractors(fetchedContractors);
+      setAllSteps(steps);
+      setDurationTemplates(templates);
       setLookupsLoading(false);
     })();
   }, [siteId]);
@@ -70,6 +92,8 @@ export function useLookups(args: { siteId: string }): {
     pileMap,
     personnelMap,
     contractors,
+    allSteps,
+    durationTemplates,
     lookupsLoading,
     reloadMachines,
     machineStatusById,

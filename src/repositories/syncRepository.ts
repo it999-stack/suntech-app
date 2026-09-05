@@ -171,6 +171,9 @@ export async function getChecklistsForSync(
         actual_start: as.actualStart ?? undefined,
         actual_end: as.actualEnd ?? undefined,
         remarks: as.remarks ?? undefined,
+        // The machine that actually did the work — the only record of it for a
+        // step with no plan row (see pileActualSteps.assignedMachineId).
+        assigned_machine_id: as.assignedMachineId ?? undefined,
         // Verbatim passthrough of the server's own last-known updated_at —
         // never the device's edit clock (as.updatedAt), which drifts against
         // the server's clock and causes false optimistic-concurrency conflicts.

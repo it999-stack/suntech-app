@@ -166,12 +166,22 @@ export interface StepInternalSplit {
  * job and is deliberately excluded here (`>`/`<`, not `>=`/`<=`) to avoid
  * double-counting it. Returns null when there's nothing to split — no
  * plannedEnd/assignedMachineId, or no window falls strictly inside.
+ *
+ * A non-splittable step (e.g. CONCRETING) never pauses, so it can never contain
+ * a break — the scheduler relocates any window in its way to trail it instead.
+ * That has to be checked explicitly, because callers working from persisted
+ * rows re-derive windows at their NOMINAL positions and so can't see that the
+ * relocation happened; without this guard, concreting scheduled straight
+ * through 12:55-14:35 would be labelled as pausing for a 13:00 lunch it
+ * actually pushed to 14:35. Wizard-preview rows are already correct (they carry
+ * the scheduler's own mutated windows) and leave isSplittable undefined.
  */
 export function splitStepByInternalWindows(
   step: PlanStepWithMeta,
   windowsByMachineId: Record<string, EffectivePlanWindow[]>,
 ): StepInternalSplit | null {
   if (!step.plannedStart || isContinuingStep(step) || !step.assignedMachineId) return null;
+  if (step.isSplittable === false) return null;
   const workStart = new Date(stepWorkStart(step)).getTime();
   const stepEnd = new Date(step.plannedEnd as string).getTime();
 

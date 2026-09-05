@@ -34,6 +34,10 @@ export default function MainTabNavigator() {
         screenOptions={{
             headerShown: false,
             animation: 'fade',
+            // Transparent so App.tsx's single backdrop gradient shows through —
+            // a tab scene defaults to an opaque background, which would paint
+            // over it.
+            sceneStyle: { backgroundColor: 'transparent' },
         }}
         >
         <Tab.Screen

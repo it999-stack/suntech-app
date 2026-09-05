@@ -1,6 +1,7 @@
 // src/screens/Home/GeneratePlanScreen.tsx
 // Multi-step wizard for generating (or editing) a daily pile plan.
-// Owns transient PlanDraft state; commits to SQLite only on the final "Generate" press.
+// Owns transient PlanDraft state (via usePlanDraft); commits to SQLite only
+// on the final "Generate" press.
 //
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -12,7 +13,6 @@ import {
   ActivityIndicator,
   BackHandler,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -37,21 +37,21 @@ import PreviewStep from '@components/plan/generate/steps/PreviewStep';
 
 import { pileNeedsResumeConfirm } from '@components/plan/generate/steps/resume-confirm/useResumeConfirmQueue';
 import { resolveEffectiveDayStart } from '@/services/pilingPlannerService';
-import { findResumeWorkForPiles, type ResumeWorkInfo } from '@/services/resumeWorkService';
-import { defaultPlanDraft, planEndTime, type PlanDraft } from '@/types/plan';
-import { getPrimaryShiftType, combineDateAndTime } from '@/utils/shiftHelpers';
+import { flushResumeCloseOuts } from '@/services/resumeWorkService';
+import {
+  buildTemplateKeySet,
+  describeMissingTemplateCoverage,
+  findMissingTemplateCoverage,
+} from '@/services/pileApplicableSteps';
+import { planEndTime } from '@/types/plan';
 import { toLocalDateStr } from '@/utils/formatTime';
 import { notify } from '@utils/notify';
 import { isShiftTeamComplete, findOrphanedTeamMachines, type OrphanedTeamMachine } from '@/utils/personnelRoles';
 import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
 
 import { useGeneratePlanData } from './generatePlan/useGeneratePlanData';
-import { useEditModeSeed } from './generatePlan/useEditModeSeed';
-import { useRoleDefaultsSeed } from './generatePlan/useRoleDefaultsSeed';
-import { useMachineStatusGuard } from './generatePlan/useMachineStatusGuard';
-import { usePilePreselection } from './generatePlan/usePilePreselection';
+import { usePlanDraft } from './generatePlan/usePlanDraft';
 import { usePlanPreview } from './generatePlan/usePlanPreview';
-import { usePreviewReorder } from './generatePlan/usePreviewReorder';
 import EditConfirmModal from './generatePlan/EditConfirmModal';
 
 export default function GeneratePlanScreen() {
@@ -95,43 +95,20 @@ export default function GeneratePlanScreen() {
     [personnel],
   );
 
-  const [draft, setDraft] = useState<PlanDraft>(() => defaultPlanDraft(targetDate));
-  function updateDraft(patch: Partial<PlanDraft>) {
-    setDraft((prev) => ({ ...prev, ...patch }));
-  }
-
   const [step, setStep] = useState<Step>('start');
   // Whether PileAssignStep currently has piles checkbox-selected — while true,
   // it shows BulkAssignBar instead of the shared NextStepFab below.
   const [pilesHasSelection, setPilesHasSelection] = useState(false);
 
-  // Seed planStartTime's time-of-day from the site's primary (earliest-start)
-  // shift once shift data loads, instead of the generic 8:00 AM default —
-  // skipped in edit mode, which seeds planStartTime from the existing checklist.
-  const planStartSeeded = useRef(false);
-  useEffect(() => {
-    if (dataLoading || planStartSeeded.current || isEditMode) return;
-    const siteShifts = shifts.filter((s) => s.siteId === siteId);
-    const primary = getPrimaryShiftType(siteShifts);
-    if (!primary) return;
-    planStartSeeded.current = true;
-    setDraft((prev) => ({ ...prev, planStartTime: combineDateAndTime(targetDate, primary.startTime) }));
-  }, [dataLoading, shifts, siteId, targetDate, isEditMode]);
-
-  const locationPiles = useMemo(() => {
-    if (!draft.locationIds.length) return [];
-    return piles.filter((p) => p.locationId && draft.locationIds.includes(p.locationId));
-  }, [piles, draft.locationIds]);
-
-  const selectedLocations = useMemo(
-    () => locations.filter((l) => draft.locationIds.includes(l.id)),
-    [locations, draft.locationIds],
-  );
-
-  const selectedPlanPiles = useMemo(
-    () => draft.selectedPileIds.flatMap((id) => piles.find((p) => p.id === id) ?? []),
-    [piles, draft.selectedPileIds],
-  );
+  const {
+    draft, actions, editSeeding,
+    selectedLocations, selectedPlanPiles, assignablePiles, pilesWithCompletion,
+    activeRigs, activeCranes,
+  } = usePlanDraft({
+    siteId, targetDate, isEditMode, step, setStep,
+    checklist, checklistPiles, checklistLoading,
+    resources: { piles, locations, steps, rigs, cranes, personnel, shifts, roleDefaults, dataLoading },
+  });
 
   // The rig/crane ids that will actually appear on the submitted piles[] —
   // same source handleGenerate uses to build pilesInput, so this can never
@@ -172,62 +149,6 @@ export default function GeneratePlanScreen() {
     return `${lines.join(' ')} Go back to Piles and assign it a pile, or remove it in Machines.`;
   }, [orphanedTeamMachines, rigs, cranes]);
 
-  const [pendingWorkItems, setPendingWorkItems] = useState<ResumeWorkInfo[]>([]);
-  const [completedPileIds, setCompletedPileIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (!locationPiles.length) {
-      setPendingWorkItems([]);
-      setCompletedPileIds(new Set());
-      return;
-    }
-    let cancelled = false;
-    findResumeWorkForPiles(siteId, locationPiles.map((pile) => pile.id), targetDate).then(
-      ({ pendingWorkItems, completedPileIds }) => {
-        if (!cancelled) {
-          setPendingWorkItems(pendingWorkItems);
-          setCompletedPileIds(new Set(completedPileIds));
-        }
-      },
-    );
-    return () => { cancelled = true; };
-  }, [locationPiles, siteId, targetDate]);
-
-  // Piles already fully completed on a prior day must not be re-offered here.
-  const assignablePiles = useMemo(
-    () => locationPiles.filter((p) => !completedPileIds.has(p.id)),
-    [locationPiles, completedPileIds],
-  );
-
-  // PileAssignStep shows every location pile (including prior-day-completed
-  // ones) for full area visibility — completed rows render faded/non-selectable
-  // there. Every other consumer keeps assignablePiles.
-  const pilesWithCompletion = useMemo(
-    () => locationPiles.map((p) => ({ ...p, completed: completedPileIds.has(p.id) })),
-    [locationPiles, completedPileIds],
-  );
-
-  const { editSeeding } = useEditModeSeed({
-    isEditMode, dataLoading, checklistLoading, checklist, checklistPiles, piles, steps,
-    setDraft, setStep,
-  });
-
-  // Default step selection: all selected on mount (after data loads)
-  useEffect(() => {
-    if (!dataLoading && steps.length && draft.selectedStepIds.length === 0) {
-      setDraft((prev) => ({
-        ...prev,
-        selectedStepIds: steps.map((s) => s.id),
-      }));
-    }
-  }, [dataLoading, steps, draft.selectedStepIds.length]);
-
-  useRoleDefaultsSeed({ dataLoading, isEditMode, rigs, cranes, roleDefaults, personnel: simplePersonnel, setDraft });
-
-  useMachineStatusGuard({ dataLoading, editSeeding, rigs, cranes, draft, setDraft });
-
-  usePilePreselection({ step, draft, setDraft, pendingWorkItems, steps });
-
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
   const teamStepRef = useRef<TeamAssignStepHandle>(null);
   const resumeStepRef = useRef<ResumeConfirmStepHandle>(null);
@@ -259,6 +180,16 @@ export default function GeneratePlanScreen() {
     // computed, instead of navigating first and showing a loading screen
     // there. See usePlanPreview's precomputePreview doc comment.
     if (step === 'steps') {
+      // Stay HERE when an in-scope step has no duration for one of the plan's
+      // pile sizes: this screen is where it can actually be fixed (deselect
+      // the step), and the plan the server would build is one it now rejects
+      // outright with a 400.
+      if (missingTemplates.length > 0) {
+        notify.error(describeMissingTemplateCoverage(missingTemplates), {
+          title: 'Missing step durations',
+        });
+        return;
+      }
       await precomputePreview();
       setStep('preview');
       return;
@@ -288,15 +219,36 @@ export default function GeneratePlanScreen() {
   );
 
   const {
-    pendingTrackOverrides, setPendingTrackOverrides,
-    previewSteps, previewWarningPileIds, previewWindowsByMachineId,
-    previewRecomputing, previewLoading, planReferenceData, precomputePreview,
-  } = usePlanPreview({ step, draft, updateDraft, piles, siteId, selectedPlanPiles, steps });
+    result: preview,
+    setPendingTrackOverrides,
+    setEditingMachineId,
+    handleReorderMachine,
+    precomputePreview,
+  } = usePlanPreview({ step, draft, actions, piles, siteId, selectedPlanPiles, steps, activeRigs, activeCranes });
 
   const effectiveDayStart = useMemo(
-    () => resolveEffectiveDayStart(draft.planStartTime, planReferenceData?.rawWindows ?? []),
-    [draft.planStartTime, planReferenceData],
+    () => resolveEffectiveDayStart(draft.planStartTime, preview.referenceData?.rawWindows ?? []),
+    [draft.planStartTime, preview.referenceData],
   );
+
+  // Every in-scope step with no duration template for one of this plan's pile
+  // sizes — the client-side mirror of the server's 400 on plan generation.
+  // Nothing defaults to 60 minutes any more (see planScheduler.ts), so this is
+  // a hard blocker: it holds the wizard on the Steps screen (goNext, where
+  // deselecting the step is the fix) and keeps Generate disabled.
+  const templateRows = preview.referenceData?.templateRows;
+  const selectedStepIds = draft.selectedStepIds;
+  const missingTemplates = useMemo(() => {
+    // Reference data hasn't loaded yet — report nothing rather than flagging
+    // every step as uncovered.
+    if (!templateRows) return [];
+    const selectedSet = new Set(selectedStepIds);
+    return findMissingTemplateCoverage({
+      piles: selectedPlanPiles,
+      steps: steps.filter((s) => selectedSet.has(s.id)),
+      templates: buildTemplateKeySet(templateRows),
+    });
+  }, [templateRows, selectedPlanPiles, steps, selectedStepIds]);
 
   const canContinue = useMemo(() => {
     switch (step) {
@@ -327,20 +279,22 @@ export default function GeneratePlanScreen() {
       case 'steps':
         return draft.selectedStepIds.length > 0;
       case 'preview':
-        // No uncommitted tile picks (debounce above hasn't auto-committed yet), no
-        // piles stuck on the default 60m duration — those need a Head Office fix
-        // first — and no Team-assigned machine left with zero piles (would be
-        // rejected by the server's exact-coverage check; see
-        // findOrphanedTeamMachines).
+        // No uncommitted tile picks (debounce above hasn't auto-committed yet),
+        // no step left unschedulable for want of a duration template — those
+        // need a Head Office fix (or deselecting on the Steps screen) first —
+        // no pile the scheduler had to skip for any other reason, and no
+        // Team-assigned machine left with zero piles (would be rejected by the
+        // server's exact-coverage check; see findOrphanedTeamMachines).
         return (
-          pendingTrackOverrides === draft.stepTrackOverrides &&
-          previewWarningPileIds.length === 0 &&
+          preview.pendingTrackOverrides === draft.stepTrackOverrides &&
+          missingTemplates.length === 0 &&
+          preview.warningPileIds.length === 0 &&
           orphanedTeamMachines.length === 0
         );
       default:
         return true;
     }
-  }, [step, draft, pendingTrackOverrides, previewWarningPileIds, orphanedTeamMachines]);
+  }, [step, draft, preview.pendingTrackOverrides, missingTemplates, preview.warningPileIds, orphanedTeamMachines]);
 
   async function handleGenerate() {
     if (!siteId) return;
@@ -372,29 +326,37 @@ export default function GeneratePlanScreen() {
 
     try {
       await generatePlan(siteId, input);
-      notify.success(isEditMode ? 'Plan updated successfully' : 'Plan generated successfully');
-      setConfirmModalVisible(false);
-      navigation.goBack();
     } catch {
       // error surfaced via planError from PlanContext; modal stays open (loading
       // resets via isGenerating) so the user can see the failure and retry/cancel.
+      // Crucially the staged close-outs stay staged — nothing has been written
+      // to the previous day, so a retry (or a walk-away) leaves it intact.
+      return;
     }
+
+    // The plan is committed server-side, so the previous-day close-outs the
+    // supervisor confirmed alongside it can finally be written. Deliberately
+    // after generation, not before: this is the whole point of staging them —
+    // an abandoned wizard must not leave a step marked finished with the
+    // remaining-time estimate that accompanied it thrown away.
+    let closeOutsFailed = false;
+    try {
+      await flushResumeCloseOuts(Object.values(draft.pendingCloseOuts));
+    } catch (err) {
+      console.error('flushResumeCloseOuts failed:', err);
+      closeOutsFailed = true;
+    }
+
+    if (closeOutsFailed) {
+      // The plan itself is fine — say so, but don't claim a clean run. The
+      // steps stay in progress, so the next generation will ask again.
+      notify.error("Plan saved, but the previous day's finish times could not be recorded.");
+    } else {
+      notify.success(isEditMode ? 'Plan updated successfully' : 'Plan generated successfully');
+    }
+    setConfirmModalVisible(false);
+    navigation.goBack();
   }
-
-  const activeRigs = useMemo(
-    () => rigs.filter((r) => draft.activeRigIds.includes(r.id)),
-    [rigs, draft.activeRigIds],
-  );
-
-  const activeCranes = useMemo(
-    () => cranes.filter((c) => draft.activeCraneIds.includes(c.id)),
-    [cranes, draft.activeCraneIds],
-  );
-
-  const {
-    builtPreviewPiles, setEditingMachineId, editingMachine, isMachineOverlayOpen,
-    pilesForMachine, handleReorderMachine,
-  } = usePreviewReorder({ draft, updateDraft, selectedPlanPiles, activeRigs, activeCranes });
 
   // Shaped/derived views of otherwise-stable data, memoized so PreviewStep (and the
   // memoized PilePreviewPage rows beneath it) see the same prop reference across
@@ -412,31 +374,37 @@ export default function GeneratePlanScreen() {
     () => shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })),
     [shifts],
   );
-  const previewWarningPileCodes = useMemo(
-    () => piles.filter((p) => previewWarningPileIds.includes(p.id)).map((p) => p.code),
-    [piles, previewWarningPileIds],
-  );
+  // What DurationWarningCard lists on the Preview step: one row per pile×step
+  // that cannot be scheduled for want of a duration template, plus a bare
+  // pile row for any pile the scheduler rejected for some other reason (no
+  // dimension set, no machine for a step's track) so it still has a visible
+  // explanation rather than only disabling Generate.
+  const unschedulableSteps = useMemo(() => {
+    const rows = missingTemplates.flatMap((m) =>
+      m.pileCodes.map((pileCode) => ({ pileCode, stepName: m.stepName })),
+    );
+    const explained = new Set(rows.map((r) => r.pileCode));
+    const otherPileCodes = piles
+      .filter((p) => preview.warningPileIds.includes(p.id) && !explained.has(p.code))
+      .map((p) => ({ pileCode: p.code }));
+    return [...rows, ...otherPileCodes];
+  }, [missingTemplates, piles, preview.warningPileIds]);
 
   if (dataLoading || editSeeding) {
     return (
-      <LinearGradient
-        colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-        style={styles.flex}
-      >
-        <SafeAreaView style={[styles.flex, styles.center]}>
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.loadingText}>Loading site data…</Text>
-        </SafeAreaView>
-      </LinearGradient>
+      <View style={[styles.flex, styles.center]}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.loadingText}>Loading site data…</Text>
+      </View>
     );
   }
 
   return (
-    <LinearGradient
-      colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
-      style={styles.flex}
-    >
-      <SafeAreaView style={styles.flex} edges={['top', 'bottom']}>
+    <View style={styles.flex}>
+      {/* Bottom only — the top inset and the backdrop are applied once in
+          App.tsx's AppShell. This screen still needs the bottom edge for its
+          footer FAB to clear the home indicator. */}
+      <SafeAreaView style={styles.flex} edges={['bottom']}>
         <ProgressHeader
           step={step}
           onClose={() => navigation.goBack()}
@@ -456,7 +424,7 @@ export default function GeneratePlanScreen() {
             {step === 'piles' ? (
               <PileAssignStep
                 draft={draft}
-                onUpdate={updateDraft}
+                actions={actions}
                 piles={pilesWithCompletion}
                 locations={selectedLocations.map((l) => ({ id: l.id, name: l.name }))}
                 activeRigs={activeRigs}
@@ -467,7 +435,7 @@ export default function GeneratePlanScreen() {
               <ResumeConfirmStep
                 ref={resumeStepRef}
                 draft={draft}
-                onUpdate={updateDraft}
+                actions={actions}
                 piles={assignablePiles}
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
@@ -488,19 +456,19 @@ export default function GeneratePlanScreen() {
             {step === 'location' && (
               <LocationSelectStep
                 draft={draft}
-                onUpdate={updateDraft}
+                actions={actions}
                 locations={locations.map((l) => ({ id: l.id, name: l.name, code: l.code }))}
               />
             )}
 
             {step === 'start' && (
-              <StartTimeStep draft={draft} onUpdate={updateDraft} personnel={simplePersonnel} />
+              <StartTimeStep draft={draft} actions={actions} personnel={simplePersonnel} />
             )}
 
             {step === 'machines' && (
               <MachineSelectStep
                 draft={draft}
-                onUpdate={updateDraft}
+                actions={actions}
                 rigs={rigs}
                 cranes={cranes}
               />
@@ -510,7 +478,7 @@ export default function GeneratePlanScreen() {
               <TeamAssignStep
                 ref={teamStepRef}
                 draft={draft}
-                onUpdate={updateDraft}
+                actions={actions}
                 shiftSlot={step === 'team' ? 1 : 2}
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
@@ -529,31 +497,31 @@ export default function GeneratePlanScreen() {
             {step === 'steps' && (
               <StepSelectStep
                 draft={draft}
-                onUpdate={updateDraft}
+                actions={actions}
                 steps={steps}
                 planPiles={selectedPlanPiles}
-                templateRows={planReferenceData?.templateRows ?? []}
+                templateRows={preview.referenceData?.templateRows ?? []}
               />
             )}
 
             {step === 'preview' && (
               <PreviewStep
                 draft={draft}
-                onUpdate={updateDraft}
-                pendingTrackOverrides={pendingTrackOverrides}
+                actions={actions}
+                pendingTrackOverrides={preview.pendingTrackOverrides}
                 onPendingTrackOverridesChange={setPendingTrackOverrides}
-                planSteps={previewSteps}
-                isLoading={previewRecomputing || (isGenerating && !isEditMode)}
+                planSteps={preview.steps}
+                isLoading={preview.isRecomputing || (isGenerating && !isEditMode)}
                 allSteps={steps}
-                windowsByMachineId={previewWindowsByMachineId}
-                piles={builtPreviewPiles}
+                windowsByMachineId={preview.windowsByMachineId}
+                piles={preview.previewPiles}
                 onEditMachine={setEditingMachineId}
                 onNavigateToStep={(s) => setStep(s)}
                 activeRigs={previewActiveRigs}
                 activeCranes={previewActiveCranes}
                 personnel={simplePersonnel}
                 shifts={previewShifts}
-                warningPileCodes={previewWarningPileCodes}
+                unschedulableSteps={unschedulableSteps}
                 siteId={siteId}
               />
             )}
@@ -574,8 +542,8 @@ export default function GeneratePlanScreen() {
         {step !== 'preview' && !(step === 'piles' && pilesHasSelection) && (
           <NextStepFab
             onPress={goNext}
-            disabled={(step === 'team' || step === 'teamNight' || step === 'resume') ? isGenerating : (!canContinue || isGenerating || (step === 'steps' && previewLoading))}
-            loading={step === 'steps' && previewLoading}
+            disabled={(step === 'team' || step === 'teamNight' || step === 'resume') ? isGenerating : (!canContinue || isGenerating || (step === 'steps' && preview.isLoading))}
+            loading={step === 'steps' && preview.isLoading}
           />
         )}
 
@@ -584,7 +552,7 @@ export default function GeneratePlanScreen() {
             <Button
               label={isEditMode ? 'Save Changes' : 'Generate Plan'}
               onPress={goNext}
-              disabled={!canContinue || isGenerating || previewRecomputing}
+              disabled={!canContinue || isGenerating || preview.isRecomputing}
             />
           </View>
         )}
@@ -598,18 +566,18 @@ export default function GeneratePlanScreen() {
           loading={isGenerating}
         />
 
-        {editingMachine ? (
+        {preview.machineOverlay.editingMachine ? (
           <ReorderPilesOverlay
-            visible={isMachineOverlayOpen}
+            visible={preview.machineOverlay.isOpen}
             onClose={() => setEditingMachineId(undefined)}
-            machine={editingMachine}
-            piles={pilesForMachine(editingMachine)}
+            machine={preview.machineOverlay.editingMachine}
+            piles={preview.machineOverlay.pilesForMachine(preview.machineOverlay.editingMachine)}
             onReorder={handleReorderMachine}
-            isUpdating={previewLoading}
+            isUpdating={preview.isLoading}
           />
         ) : null}
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 
