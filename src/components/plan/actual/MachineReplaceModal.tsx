@@ -18,6 +18,7 @@ import type { PilMachineEvent } from '@db/schema';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { toLocalIsoString } from '@utils/formatTime';
 import { TRACK_META, type MachineKind } from '@utils/helpers';
+import { notify } from '@utils/notify';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
 import NotesField from './machineEvents/NotesField';
 import Button from '@components/shared/Button';
@@ -34,6 +35,11 @@ interface Props {
   machines: MachineEventMachine[];
   /** Current assigned machine id per track, for this pile at this step's position. */
   currentMachineIdByTrack: Partial<Record<Track, string>>;
+  /** Which pile/step each machine is physically in the middle of right now
+   * (actualStart set, actualEnd not yet) across the WHOLE checklist — a
+   * candidate found here can't be picked as the replacement, since it's
+   * still committed elsewhere. See useMachineFloor.ts. */
+  inProgressStepByMachineId: Map<string, { checklistPileId: string; stepId: string; pileCode: string; stepName: string }>;
   history: PilMachineEvent[];
   onClose: () => void;
   onLogMachineEvent: (input: LogMachineEventInput) => Promise<void>;
@@ -46,6 +52,7 @@ export default function MachineReplaceModal({
   defaultTrack,
   machines,
   currentMachineIdByTrack,
+  inProgressStepByMachineId,
   onClose,
   onLogMachineEvent,
 }: Props) {
@@ -78,6 +85,20 @@ export default function MachineReplaceModal({
       options: eligibleMachines.filter((m) => m.type === 'COMPRESSOR').map(toOption),
     },
   ];
+
+  // Blocks picking a machine that's physically mid-step somewhere else right
+  // now, instead of letting the replacement fail invisibly / double-book it.
+  const handleSelectReplacement = (id: string) => {
+    const busy = inProgressStepByMachineId.get(id);
+    if (busy) {
+      const label = machines.find((m) => m.id === id)?.machineNo ?? 'This machine';
+      notify.error(`${label} is already in progress on ${busy.pileCode} — finish ${busy.stepName} first.`, {
+        title: 'Machine busy',
+      });
+      return;
+    }
+    setReplacementId(id);
+  };
 
   const isValid = !!currentMachineId && !!replacementId;
 
@@ -122,7 +143,7 @@ export default function MachineReplaceModal({
               label=""
               sections={replacementSections}
               valueId={replacementId}
-              onSelect={setReplacementId}
+              onSelect={handleSelectReplacement}
             />
           </View>
 

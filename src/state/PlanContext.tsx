@@ -741,6 +741,28 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
               currentStep.sequenceOrder,
               input.replacementId,
             );
+          } else {
+            // No pil_plan_steps row for this step — an unplanned ("Planned
+            // Later") step that ran ahead of the scheduler. There's no plan
+            // row to patch, so the replacement is written directly onto this
+            // step's own actual row instead (creating one if it hasn't
+            // started yet); usePileGroups.ts reads assignedMachineId off the
+            // actual row ahead of the live cp.rigId/craneId fallback, which
+            // is what makes this replacement actually take effect. Preserves
+            // whatever actualStart/actualEnd/remarks are already recorded —
+            // this only overrides which machine did it.
+            const existingActual = actualSteps.find(
+              (a) => a.checklistPileId === checklistPileId && a.stepId === stepId,
+            );
+            await upsertActualStep({
+              id: existingActual?.id ?? generateId(),
+              checklistPileId,
+              stepId,
+              actualStart: existingActual?.actualStart ?? null,
+              actualEnd: existingActual?.actualEnd ?? null,
+              remarks: existingActual?.remarks ?? null,
+              assignedMachineId: input.replacementId,
+            });
           }
         }
 
@@ -762,15 +784,19 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         if (checklist) {
           await enqueueChecklistSync(checklist.id);
           triggerDebounced('new-write');
-          const refreshedSteps = await getPlanStepsForChecklist(checklist.id);
+          const [refreshedSteps, refreshedActuals] = await Promise.all([
+            getPlanStepsForChecklist(checklist.id),
+            getActualStepsForChecklist(checklist.id),
+          ]);
           setPlanSteps(refreshedSteps);
+          setActualSteps(refreshedActuals);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to log machine event');
         throw err;
       }
     },
-    [checklistPiles, planSteps, checklist],
+    [checklistPiles, planSteps, actualSteps, checklist],
   );
 
   // ── Derived plan status ───────────────────────────────────────────────────

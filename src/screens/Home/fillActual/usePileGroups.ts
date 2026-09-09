@@ -38,6 +38,7 @@ import type { PlanStepWithMeta, ActualStepWithMeta } from '@repositories/planRep
 import type {
   PilingChecklistPile,
   PilingDailyChecklist,
+  PilingMachine,
   PilingPile,
   PilingStep,
   PilingStepDurationTemplate,
@@ -58,18 +59,27 @@ function isoToMinutes(iso: string | null | undefined): number | undefined {
   }
 }
 
-/** Distinct machines that have worked one track's steps on this pile, in
- * the order first assigned — the planned machine, plus any mid-day
- * replacement(s). Historical steps (carried over from a prior checklist)
- * carry no machine info, so they're skipped. */
-function machinesWorkedForTrack(
+/** Distinct machines of one REAL type (RIG or CRANE — the machine's own
+ * piling_machines.type, not the business track of whatever step it worked)
+ * that have touched this pile, in the order first assigned — the planned
+ * machine, plus any mid-day replacement(s). Historical steps (carried over
+ * from a prior checklist) carry no machine info, so they're skipped.
+ *
+ * Filtering by the machine's real type, not which business track it worked,
+ * is what keeps a rig covering a pile's crane-track work from showing up as
+ * a second, wrongly-colored "crane" badge alongside its own correct rig
+ * badge — see PileSequenceRow, which colors purely by which of these two
+ * lists (rigs vs cranes) a label came from. */
+function machinesOfType(
   steps: ActualEntry[],
-  track: ActualEntry['track'],
+  machineTypeById: Map<string, string>,
+  type: 'RIG' | 'CRANE',
 ): { id: string; no: string }[] {
   const seen = new Set<string>();
   const result: { id: string; no: string }[] = [];
   for (const s of steps) {
-    if (s.isHistorical || s.track !== track || !s.assignedMachineId || !s.assignedMachineNo) continue;
+    if (s.isHistorical || !s.assignedMachineId || !s.assignedMachineNo) continue;
+    if (machineTypeById.get(s.assignedMachineId) !== type) continue;
     if (seen.has(s.assignedMachineId)) continue;
     seen.add(s.assignedMachineId);
     result.push({ id: s.assignedMachineId, no: s.assignedMachineNo });
@@ -80,10 +90,14 @@ function machinesWorkedForTrack(
 /** The machine currently responsible for one track's work on this pile —
  * the earliest not-done step's assigned machine, or the last step's if the
  * whole track is done. Always the most recent replacement, if any. Mirrors
- * PileStepsModal.tsx's local getCurrentMachineIdByTrack. */
+ * PileStepsModal.tsx's local getCurrentMachineIdByTrack. Filters on
+ * businessTrack (the step's fixed nominal track), not the execution track —
+ * a CRANE step replaced onto a RIG still belongs in the CRANE bucket here,
+ * otherwise it drops out the moment a replacement happens and this falls
+ * back to the pile's stale original assignment. */
 function currentMachineForTrack(steps: ActualEntry[], track: ActualEntry['track']): string | undefined {
   const trackSteps = steps
-    .filter((s) => !s.isHistorical && s.track === track)
+    .filter((s) => !s.isHistorical && (s.businessTrack ?? s.track) === track)
     .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
   if (!trackSteps.length) return undefined;
   const notDone = trackSteps.find((s) => s.actualEnd === undefined);
@@ -127,6 +141,11 @@ export function usePileGroups(args: {
   planSteps: PlanStepWithMeta[];
   actualSteps: ActualStepWithMeta[];
   pileMap: Map<string, PilingPile>;
+  /** Site-wide machine list — used to look up each assigned machine's REAL
+   * type (RIG/CRANE), since neither a plan row's resolved execution track
+   * nor the checklist-pile's live rigId/craneId fallback can be trusted once
+   * a rig has been substituted onto crane-track work. See machineTypeById. */
+  machines: PilingMachine[];
   machineMap: Map<string, string>;
   machineStatusById: Map<string, string>;
   checklist: PilingDailyChecklist | null;
@@ -150,6 +169,7 @@ export function usePileGroups(args: {
     planSteps,
     actualSteps,
     pileMap,
+    machines,
     machineMap,
     machineStatusById,
     checklist,
@@ -159,6 +179,8 @@ export function usePileGroups(args: {
     allSteps,
     durationTemplates,
   } = args;
+
+  const machineTypeById = useMemo(() => new Map(machines.map((m) => [m.id, m.type])), [machines]);
 
   const pileGroups = useMemo((): PileGroup[] => {
     if (!checklistPiles.length) return [];
@@ -252,9 +274,24 @@ export function usePileGroups(args: {
         const unplannedMachine = resolveUnplannedMachineId(cp, businessTrack);
         // A plan row's own assignment wins — it survives mid-day machine
         // replacement, which the track-based resolution above cannot know
-        // about. The fallback also covers a legacy plan row with no machine.
-        const assignedMachineId = plan?.assignedMachineId ?? unplannedMachine.machineId;
+        // about. Next, the actual row's own assignment — for a step with NO
+        // plan row (unplanned/"Planned Later"), a mid-day REPLACED event has
+        // nowhere else to persist to, so it's written directly onto the
+        // actual row instead (see PlanContext.logMachineEvent); reading it
+        // here, ahead of the live cp.rigId/craneId fallback, is what makes
+        // that replacement actually stick, and also pins a completed step to
+        // the machine that really did it rather than letting it drift if
+        // cp.rigId/craneId changes later. The live fallback still applies to
+        // a step with no actual row yet (hasn't started).
+        const assignedMachineId = plan?.assignedMachineId ?? actual?.assignedMachineId ?? unplannedMachine.machineId;
         const assignedMachineNo = assignedMachineId ? machineMap.get(assignedMachineId) : undefined;
+        // The resolved machine's OWN real type is authoritative for "which
+        // machine type actually executes this step" — plan?.track and
+        // unplannedMachine.executionTrack are both stale the moment a
+        // REPLACED event moves the work onto a machine of the other type
+        // (e.g. a rig covering crane-track work), since neither is
+        // recomputed from assignedMachineId above.
+        const resolvedTrack = assignedMachineId ? (machineTypeById.get(assignedMachineId) as Track | undefined) : undefined;
 
         const anchorStep = {
           plannedStart: plan?.plannedStart,
@@ -268,11 +305,12 @@ export function usePileGroups(args: {
           pileId: cp.pileId,
           pileCode: pile?.pileIdCode ?? cp.pileId,
           stepName: def?.stepName ?? plan?.stepName ?? actual?.stepName ?? '',
-          // `track` is which machine type actually executes the step (the
-          // plan row's already-resolved execution track, or the resolution
-          // above for an unplanned one); `businessTrack` is the step
-          // definition's own fixed track.
-          track: (plan?.track ?? unplannedMachine.executionTrack) as Track,
+          // `track` is which machine type actually executes the step — the
+          // resolved machine's own real type, falling back to the plan
+          // row's/unplanned resolution's execution track only when the
+          // machine itself isn't in the site's machine list for some reason;
+          // `businessTrack` is the step definition's own fixed track.
+          track: resolvedTrack ?? ((plan?.track ?? unplannedMachine.executionTrack) as Track),
           businessTrack,
           sequenceOrder,
           // No plan row means no planned times, ever — undefined, not 0.
@@ -359,8 +397,8 @@ export function usePileGroups(args: {
           }
         : null;
 
-      const rigsWorked = machinesWorkedForTrack(steps, 'RIG');
-      const cranesWorked = machinesWorkedForTrack(steps, 'CRANE');
+      const rigsWorked = machinesOfType(steps, machineTypeById, 'RIG');
+      const cranesWorked = machinesOfType(steps, machineTypeById, 'CRANE');
 
       return {
         checklistPileId: cp.id,
@@ -380,7 +418,7 @@ export function usePileGroups(args: {
         measurements,
       };
     });
-  }, [checklistPiles, planSteps, actualSteps, pileMap, machineMap, machineStatusById, checklist?.planStartTime, windowsByMachineId, completedStepsByPileId, measurementsByPileId, allSteps, durationTemplates]);
+  }, [checklistPiles, planSteps, actualSteps, pileMap, machineMap, machineTypeById, machineStatusById, checklist?.planStartTime, windowsByMachineId, completedStepsByPileId, measurementsByPileId, allSteps, durationTemplates]);
 
   return { pileGroups };
 }

@@ -8,7 +8,7 @@ import React, { useMemo, useState } from 'react';
 import { colors } from '@theme/theme';
 import { TRACK_META } from '@utils/helpers';
 import type { SwipeableTabItem } from '@components/shared/SwipeableTabBar';
-import type { PilingChecklistPile } from '@db/schema';
+import type { PilingChecklistPile, PilingMachine } from '@db/schema';
 import type { PileGroup } from '@app-types/plan';
 
 export const EMPTY_PILE_GROUPS: PileGroup[] = [];
@@ -17,6 +17,7 @@ export type MachineBadge = { id: string; machineNo: string; type: 'RIG' | 'CRANE
 
 export function useMachinePages(args: {
   checklistPiles: PilingChecklistPile[];
+  machines: PilingMachine[];
   machineMap: Map<string, string>;
   pileGroups: PileGroup[];
   frontPileIdByMachineId: Map<string, string>;
@@ -28,40 +29,59 @@ export function useMachinePages(args: {
   selectedMachineId: string | undefined;
   setSelectedMachineId: (id: string | undefined) => void;
 } {
-  const { checklistPiles, machineMap, pileGroups, frontPileIdByMachineId } = args;
+  const { checklistPiles, machines, machineMap, pileGroups, frontPileIdByMachineId } = args;
+
+  // A machine's real type — NOT which bucket (rigId vs craneId) an id was
+  // collected from below. A rig covering a pile's crane-track work (its own
+  // rigId AND the businessTrack-resolved craneId both resolve to the same
+  // rig, see usePileGroups.ts's currentMachineForTrack) would otherwise get
+  // counted as one RIG badge AND one CRANE badge for the identical id.
+  const machineTypeById = useMemo(
+    () => new Map(machines.map((m) => [m.id, m.type as 'RIG' | 'CRANE' | 'COMPRESSOR'])),
+    [machines],
+  );
 
   // ── Machine badges shown at the top — every Rig/Crane used in today's plan,
   // unioned with whichever machine is currently responsible for each pile's
   // track (PileGroup.rigId/craneId) so a mid-day replacement onto a machine
-  // that wasn't originally planned for any pile still gets its own tab ─
+  // that wasn't originally planned for any pile still gets its own tab —
+  // deduplicated by machine id first (a rig covering crane-track work shows
+  // up under both slots), so each physical machine gets exactly one badge ─
   const activeMachines = useMemo((): MachineBadge[] => {
     const byMachineNo = (a: string, b: string) =>
       (machineMap.get(a) ?? a).localeCompare(machineMap.get(b) ?? b);
-    const rigIds = Array.from(
-      new Set([...checklistPiles.map((cp) => cp.rigId), ...pileGroups.map((g) => g.rigId)]),
-    ).sort(byMachineNo);
-    const craneIds = Array.from(
-      new Set([
-        ...checklistPiles.map((cp) => cp.craneId).filter((id): id is string => !!id),
-        ...pileGroups.map((g) => g.craneId).filter((id): id is string => !!id),
-      ]),
-    ).sort(byMachineNo);
+    const allIds = new Set<string>([
+      ...checklistPiles.map((cp) => cp.rigId),
+      ...checklistPiles.map((cp) => cp.craneId).filter((id): id is string => !!id),
+      ...pileGroups.map((g) => g.rigId),
+      ...pileGroups.map((g) => g.craneId).filter((id): id is string => !!id),
+    ]);
+    const rigIds: string[] = [];
+    const craneIds: string[] = [];
+    for (const id of allIds) {
+      if (machineTypeById.get(id) === 'CRANE') craneIds.push(id);
+      else rigIds.push(id);
+    }
+    rigIds.sort(byMachineNo);
+    craneIds.sort(byMachineNo);
     return [
       ...rigIds.map((id) => ({ id, machineNo: machineMap.get(id) ?? id, type: 'RIG' as const })),
       ...craneIds.map((id) => ({ id, machineNo: machineMap.get(id) ?? id, type: 'CRANE' as const })),
     ];
-  }, [checklistPiles, pileGroups, machineMap]);
+  }, [checklistPiles, pileGroups, machineMap, machineTypeById]);
 
   // ── Piles bucketed by machine — every pile has a rig, and a crane if one was
   // assigned, so it naturally appears (unchanged) on its rig's page and (if
-  // any) its crane's page ─
+  // any) its crane's page. Guarded against g.rigId === g.craneId (a rig
+  // covering its own pile's crane-track work) double-adding the same pile
+  // group into that one machine's bucket. ─
   const pileGroupsByMachineId = useMemo(() => {
     const map = new Map<string, PileGroup[]>();
     for (const g of pileGroups) {
       const rigList = map.get(g.rigId);
       if (rigList) rigList.push(g);
       else map.set(g.rigId, [g]);
-      if (g.craneId) {
+      if (g.craneId && g.craneId !== g.rigId) {
         const craneList = map.get(g.craneId);
         if (craneList) craneList.push(g);
         else map.set(g.craneId, [g]);

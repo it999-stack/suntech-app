@@ -14,6 +14,7 @@ export function useMachineFloor(args: { pileGroups: PileGroup[] }): {
   machineFloorIndex: MachineFloorIndex;
   frontPileIdByMachineId: Map<string, string>;
   currentStepByMachineId: Map<string, { checklistPileId: string; stepId: string }>;
+  inProgressStepByMachineId: Map<string, { checklistPileId: string; stepId: string; pileCode: string; stepName: string }>;
 } {
   const { pileGroups } = args;
 
@@ -53,10 +54,6 @@ export function useMachineFloor(args: { pileGroups: PileGroup[] }): {
     return map;
   }, [pileGroups]);
 
-  // ── The step a machine's Breakdown/Start Idle card buttons log against —
-  // the unfinished step assigned to it on its own front-of-queue pile (same
-  // pile frontPileIdByMachineId already resolved). Absent when the machine
-  // has nothing in progress, in which case those buttons render disabled.
   const currentStepByMachineId = useMemo(() => {
     const map = new Map<string, { checklistPileId: string; stepId: string }>();
     frontPileIdByMachineId.forEach((checklistPileId, machineId) => {
@@ -67,5 +64,21 @@ export function useMachineFloor(args: { pileGroups: PileGroup[] }): {
     return map;
   }, [frontPileIdByMachineId, pileGroups]);
 
-  return { machineFloorIndex, frontPileIdByMachineId, currentStepByMachineId };
+  const inProgressStepByMachineId = useMemo(() => {
+    const map = new Map<string, { checklistPileId: string; stepId: string; pileCode: string; stepName: string }>();
+    for (const group of pileGroups) {
+      for (const step of group.steps) {
+        if (step.isHistorical || !step.assignedMachineId || !step.actualStartIso || step.actualEndIso) continue;
+        map.set(step.assignedMachineId, {
+          checklistPileId: group.checklistPileId,
+          stepId: step.stepId,
+          pileCode: group.pileCode,
+          stepName: step.stepName,
+        });
+      }
+    }
+    return map;
+  }, [pileGroups]);
+
+  return { machineFloorIndex, frontPileIdByMachineId, currentStepByMachineId, inProgressStepByMachineId };
 }

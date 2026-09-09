@@ -111,6 +111,7 @@ export default function FillActualsScreen() {
     planSteps,
     actualSteps,
     pileMap,
+    machines,
     machineMap,
     machineStatusById,
     checklist,
@@ -121,7 +122,8 @@ export default function FillActualsScreen() {
     durationTemplates,
   });
 
-  const { machineFloorIndex, frontPileIdByMachineId, currentStepByMachineId } = useMachineFloor({ pileGroups });
+  const { machineFloorIndex, frontPileIdByMachineId, currentStepByMachineId, inProgressStepByMachineId } =
+    useMachineFloor({ pileGroups });
 
   const {
     activeMachines,
@@ -129,7 +131,7 @@ export default function FillActualsScreen() {
     machineBadgeItems,
     selectedMachineId,
     setSelectedMachineId,
-  } = useMachinePages({ checklistPiles, machineMap, pileGroups, frontPileIdByMachineId });
+  } = useMachinePages({ checklistPiles, machines, machineMap, pileGroups, frontPileIdByMachineId });
 
   const { setOpenCpId, openGroup } = usePileModal({ pileGroups });
 
@@ -292,6 +294,7 @@ export default function FillActualsScreen() {
           group={openGroup}
           machines={machines}
           machineFloorIndex={machineFloorIndex}
+          inProgressStepByMachineId={inProgressStepByMachineId}
           contractors={contractors}
           checklist={checklist}
           onClose={() => setOpenCpId(null)}

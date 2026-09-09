@@ -77,6 +77,11 @@ interface Props {
   group: PileGroup;
   machines: PilingMachine[];
   machineFloorIndex: MachineFloorIndex;
+  /** Which pile/step each machine is physically in the middle of right now
+   * (actualStart set, actualEnd not yet) across the WHOLE checklist — used
+   * to block picking a machine still committed elsewhere as a REPLACED
+   * event's replacement. See useMachineFloor.ts. */
+  inProgressStepByMachineId: Map<string, { checklistPileId: string; stepId: string; pileCode: string; stepName: string }>;
   contractors: PilContractor[];
   checklist: Pick<PilingDailyChecklist, 'planStartTime' | 'planEndTime'> | null;
   onClose: () => void;
@@ -98,6 +103,7 @@ export default function PileStepsModal({
   group,
   machines,
   machineFloorIndex,
+  inProgressStepByMachineId,
   contractors,
   checklist,
   onClose,
@@ -882,6 +888,7 @@ export default function PileStepsModal({
           defaultTrack={machineEventFor.track}
           machines={machines}
           currentMachineIdByTrack={currentMachineIdByTrack}
+          inProgressStepByMachineId={inProgressStepByMachineId}
           history={history}
           onClose={() => setMachineEventFor(null)}
           onLogMachineEvent={(input) => onLogMachineEvent(machineEventFor.stepId, input)}
