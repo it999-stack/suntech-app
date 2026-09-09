@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import NextStepFab from '@components/plan/generate/NextStepFab';
-import ReorderPilesOverlay from '@components/plan/generate/preview/ReorderPilesOverlay';
+import ReorderPilesModal from '@components/plan/generate/preview/ReorderPilesModal';
 import Button from '@components/shared/Button';
 
 import { colors, spacing, radius, typography, shadow } from '@/theme/theme';
@@ -553,7 +553,7 @@ export default function GeneratePlanScreen() {
         />
 
         {preview.machineOverlay.editingMachine ? (
-          <ReorderPilesOverlay
+          <ReorderPilesModal
             visible={preview.machineOverlay.isOpen}
             onClose={() => setEditingMachineId(undefined)}
             machine={preview.machineOverlay.editingMachine}

@@ -100,10 +100,15 @@ export default function MachineDownModal({
   const machineLabel = currentMachine?.machineNo ?? 'this machine';
 
   return (
-    <AppModal visible={visible} onClose={onClose} title={pileCode} subtitle={stepName} position="center">
+    <AppModal
+      visible={visible}
+      onClose={onClose}
+      title={pileCode}
+      subtitle={stepName}
+      position="bottom"
+      showCloseButton={false}
+    >
       <View style={styles.page}>
-        <View style={styles.divider} />
-
         <View style={styles.iconCircle}>
           {screen === 'BREAKDOWN' ? (
             <AlertTriangle size={26} color={colors.danger} />
@@ -167,12 +172,6 @@ export default function MachineDownModal({
 const styles = StyleSheet.create({
   page: {
     alignItems: 'center',
-  },
-  divider: {
-    alignSelf: 'stretch',
-    height: 1,
-    backgroundColor: colors.border,
-    marginBottom: spacing.lg,
   },
   iconCircle: {
     width: 64,

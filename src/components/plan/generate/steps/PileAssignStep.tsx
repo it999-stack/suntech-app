@@ -157,7 +157,7 @@ export default function PileAssignStep({
     // draft.selectedPileIds is the plan's actual pile sequence — the same
     // array the Preview step's machine timeline schedules from (see
     // planScheduler's "first in original order wins" tie-break) and that
-    // ReorderPilesOverlay edits directly. Sorting by each pile's position in
+    // ReorderPilesModal edits directly. Sorting by each pile's position in
     // it (instead of by code) means what's numbered here matches what will
     // actually run first on that rig.
     const sequenceIndex = new Map(draft.selectedPileIds.map((id, idx) => [id, idx]));

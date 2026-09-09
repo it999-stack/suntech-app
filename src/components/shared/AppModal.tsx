@@ -1,6 +1,6 @@
 // src/components/shared/AppModal.tsx
 
-import React, { forwardRef, useEffect, useRef } from 'react';
+import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -56,6 +56,11 @@ interface Props {
    * swipe-down-to-dismiss to be the only way to close. Defaults to true; the
    * drag gesture itself is unaffected either way. */
   showCloseButton?: boolean;
+  /** Blocks every dismissal path — backdrop tap, swipe-down, the X button,
+   * and the Android hardware back button — while true. For a save/submit in
+   * flight that shouldn't be interrupted; the caller is still responsible
+   * for disabling its own action button separately. Defaults to false. */
+  closeDisabled?: boolean;
   /** Custom content for the header's trailing slot (next to the title, where
    * the close button normally sits) — e.g. a small status pill. Renders
    * alongside the close button when both are present; most callers pairing
@@ -82,10 +87,16 @@ export default forwardRef<ScrollView, Props>(function AppModal(
     scrollable = true,
     avoidKeyboard = true,
     showCloseButton = true,
+    closeDisabled = false,
     headerRight,
   },
   scrollRef,
 ) {
+  // Single guarded path every dismissal trigger goes through, so
+  // closeDisabled can't be bypassed by any one of them.
+  const requestClose = () => {
+    if (!closeDisabled) onClose();
+  };
   const isTop = position === 'top';
   const isCenter = position === 'center';
   const hiddenValue = isTop ? -SCREEN_HEIGHT : SCREEN_HEIGHT;
@@ -93,16 +104,34 @@ export default forwardRef<ScrollView, Props>(function AppModal(
   const translateY = useSharedValue(hiddenValue);
   const centerProgress = useSharedValue(0);
 
+  const [isClosing, setIsClosing] = useState(false);
+  const wasVisible = useRef(visible);
+
   useEffect(() => {
-    if (isCenter) {
-      centerProgress.value = withTiming(visible ? 1 : 0, { duration: 220 });
-    } else {
-      translateY.value = withTiming(visible ? 0 : hiddenValue, { duration: 260 });
+    if (visible) {
+      setIsClosing(false);
+      if (isCenter) {
+        centerProgress.value = withTiming(1, { duration: 220 });
+      } else {
+        translateY.value = withTiming(0, { duration: 260 });
+      }
+    } else if (wasVisible.current) {
+      setIsClosing(true);
+      if (isCenter) {
+        centerProgress.value = withTiming(0, { duration: 220 }, (finished) => {
+          if (finished) runOnJS(setIsClosing)(false);
+        });
+      } else {
+        translateY.value = withTiming(hiddenValue, { duration: 260 }, (finished) => {
+          if (finished) runOnJS(setIsClosing)(false);
+        });
+      }
     }
+    wasVisible.current = visible;
   }, [visible, hiddenValue, isCenter, centerProgress, translateY]);
 
   const dragGesture = Gesture.Pan()
-    .enabled(!isTop && !isCenter)
+    .enabled(!isTop && !isCenter && !closeDisabled)
     .onUpdate((e) => {
       if (e.translationY > 0) {
         translateY.value = e.translationY;
@@ -112,7 +141,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
       const shouldDismiss = e.translationY > DISMISS_DISTANCE || e.velocityY > DISMISS_VELOCITY;
       if (shouldDismiss) {
         translateY.value = withTiming(hiddenValue, { duration: 220 }, (finished) => {
-          if (finished) runOnJS(onClose)();
+          if (finished) runOnJS(requestClose)();
         });
       } else {
         translateY.value = withSpring(0, { damping: 18, stiffness: 220 });
@@ -135,7 +164,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       enabled={avoidKeyboard}
     >
-      <Pressable style={styles.backdrop} onPress={onClose} />
+      <Pressable style={styles.backdrop} onPress={requestClose} />
 
       <View
         style={isCenter ? styles.centerWrap : styles.flexContainer}
@@ -160,7 +189,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
                   </View>
                   {headerRight}
                   {showCloseButton && (
-                    <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
+                    <Pressable onPress={requestClose} hitSlop={12} style={styles.closeBtn}>
                       <X size={18} color={colors.textSecondary} />
                     </Pressable>
                   )}
@@ -192,13 +221,19 @@ export default forwardRef<ScrollView, Props>(function AppModal(
   if (!idRef.current) idRef.current = `app-modal-${++modalIdCounter}`;
   const { push, remove } = useModalHost();
 
-  // Re-registers on every render while visible so the host always holds
-  // current content/closures (not a stale snapshot from first open) —
-  // removes itself the moment visible turns false. No dependency array is
-  // intentional here: content is a fresh element every render.
+  // Re-registers on every render while visible (or still closing) so the
+  // host always holds current content/closures (not a stale snapshot from
+  // first open) — only removes itself once the close tween above has
+  // actually finished (isClosing back to false), not the instant `visible`
+  // turns false, so the close animation gets to play instead of the content
+  // (and the shared native <Modal> itself, once this was the last entry)
+  // vanishing mid-tween. No dependency array is intentional here: content is
+  // a fresh element every render.
   useEffect(() => {
-    if (visible) {
-      push(idRef.current!, content, onClose);
+    if (visible || isClosing) {
+      // requestClose so the Android hardware back button respects
+      // closeDisabled too, not just the in-sheet dismissal paths.
+      push(idRef.current!, content, requestClose);
     } else {
       remove(idRef.current!);
     }

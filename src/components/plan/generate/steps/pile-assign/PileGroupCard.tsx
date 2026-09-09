@@ -4,7 +4,7 @@
 // track-tinted header (icon + machine label + a right-aligned count/status
 // label) and numbered pile rows below. Shared by PileAssignStep's "Assigned
 // Piles" modal, ResumeConfirmStep's planned-piles list, and
-// ReorderPilesOverlay's sequence rows, so every "piles under one machine"
+// ReorderPilesModal's sequence rows, so every "piles under one machine"
 // list presents the same layout instead of each keeping its own copy.
 
 import React from 'react';

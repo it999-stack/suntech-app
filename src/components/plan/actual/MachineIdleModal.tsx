@@ -88,10 +88,15 @@ export default function MachineIdleModal({
   });
 
   return (
-    <AppModal visible={visible} onClose={onClose} title={pileCode} subtitle={stepName} position="center">
+    <AppModal
+      visible={visible}
+      onClose={onClose}
+      title={pileCode}
+      subtitle={stepName}
+      position="bottom"
+      showCloseButton={false}
+    >
       <View style={styles.page}>
-        <View style={styles.divider} />
-
         <View style={styles.iconCircle}>
           {eventType === 'IDLE_START' ? (
             <Coffee size={26} color={colors.warning} />
@@ -156,12 +161,6 @@ const styles = StyleSheet.create({
   page: {
     alignItems: 'center',
     paddingBottom: spacing.sm,
-  },
-  divider: {
-    alignSelf: 'stretch',
-    height: 1,
-    backgroundColor: colors.border,
-    marginBottom: spacing.lg,
   },
   iconCircle: {
     width: 64,

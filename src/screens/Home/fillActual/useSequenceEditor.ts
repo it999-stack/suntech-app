@@ -2,11 +2,11 @@
 //
 // Per-machine pile sequence editing (reorder / add / remove). Everything
 // here mutates a local draft only — nothing is sent to the server until the
-// ReorderPilesOverlay's Save is tapped (handleReorderConfirm), which is the
+// ReorderPilesModal's Save is tapped (handleReorderConfirm), which is the
 // only action that actually persists.
 
 import { useMemo, useState } from 'react';
-import type { ReorderPile } from '@components/plan/generate/preview/ReorderPilesOverlay';
+import type { ReorderPile } from '@components/plan/generate/preview/ReorderPilesModal';
 import type { EditPlanPileInput, EditPlanPreview, EditPlanSummary } from '@state/PlanContext';
 import type { PilingChecklistPile, PilingDailyChecklist, PilingMachine, PilingPile } from '@db/schema';
 import type { PileGroup } from '@app-types/plan';
@@ -102,11 +102,10 @@ export function useSequenceEditor(args: {
     if (!activeMachine || !draftRows) return [];
     return draftRows
       .map((r) => ({ r, current: currentMachineIds(r) }))
-      // LIVE membership — never the draft's own (possibly stale) rigId/craneId.
       .filter(({ current }) => (activeMachine.type === 'RIG' ? current.rigId : current.craneId) === activeMachine.id)
       .map(({ r, current }) => ({
         id: r.pileId,
-        label: `Pile ${pileMap.get(r.pileId)?.pileIdCode ?? r.pileId}`,
+        label: `${pileMap.get(r.pileId)?.pileIdCode ?? r.pileId}`,
         locked: !!pileProgressByPileId.get(r.pileId)?.hasProgress,
         otherMachineLabel: activeMachine.type === 'RIG'
           ? (current.craneId ? machineNoById.get(current.craneId) : undefined)
@@ -189,7 +188,19 @@ export function useSequenceEditor(args: {
   }
 
   function handleAddPileConfirm(input: EditPlanPileInput) {
-    setDraftRows((prev) => [...(prev ?? []), input]);
+    // Guards against a double-tap on "Add to plan" (or any other double-fire
+    // of onConfirm) appending the same pile twice — draftRows is keyed by
+    // pileId everywhere else (FlatList included), so two rows with the same
+    // id crash the list with a duplicate-key error. Re-adding an already
+    // present pile just updates its row instead of duplicating it.
+    setDraftRows((prev) => {
+      const existing = prev ?? [];
+      const alreadyIndex = existing.findIndex((r) => r.pileId === input.pileId);
+      if (alreadyIndex === -1) return [...existing, input];
+      const next = [...existing];
+      next[alreadyIndex] = input;
+      return next;
+    });
     setSequenceRemountKey((k) => k + 1);
     setAddPileModalOpen(false);
   }

@@ -174,8 +174,15 @@ export interface PilesPageParams {
   search?: string;
   /** Restrict to one location. Undefined/'all' = no location filter. */
   locationId?: string;
-  /** Pile ids to exclude from results (e.g. piles already in today's plan). */
-  excludeIds?: string[];
+  /** Pile CODES to exclude from results (e.g. piles already in today's plan).
+   * Matched by pileIdCode, not id — pil_piles has no uniqueness constraint on
+   * (site_id, pile_id_code) yet (see idx_pil_piles_site_code in
+   * src/db/client.ts, which is a plain, non-unique index), so a sync can
+   * leave two different local rows sharing the same code. Excluding by id
+   * alone would only hide the specific row a checklist happens to reference,
+   * letting a duplicate row with a different id for the SAME pile slip
+   * through the picker. */
+  excludeCodes?: string[];
   /** 1-based page number. */
   page: number;
   pageSize: number;
@@ -196,7 +203,7 @@ export async function getPilesBySiteWithDimensionsPage({
   siteId,
   search,
   locationId,
-  excludeIds = [],
+  excludeCodes = [],
   page,
   pageSize,
 }: PilesPageParams): Promise<PilesPageResult> {
@@ -206,7 +213,7 @@ export async function getPilesBySiteWithDimensionsPage({
   const conditions = [eq(pilingPiles.siteId, siteId)];
   if (q) conditions.push(like(pilingPiles.pileIdCode, `%${q}%`));
   if (locationId && locationId !== 'all') conditions.push(eq(pilingPiles.locationId, locationId));
-  if (excludeIds.length > 0) conditions.push(notInArray(pilingPiles.id, excludeIds));
+  if (excludeCodes.length > 0) conditions.push(notInArray(pilingPiles.pileIdCode, excludeCodes));
   const where = and(...conditions);
 
   const [items, countRows] = await Promise.all([
@@ -241,12 +248,12 @@ export interface LocationPileCount {
  */
 export async function getPileCountsByLocationForSite(
   siteId: string,
-  excludeIds: string[] = [],
+  excludeCodes: string[] = [],
 ): Promise<LocationPileCount[]> {
   const database = await initDb();
 
   const conditions = [eq(pilingPiles.siteId, siteId)];
-  if (excludeIds.length > 0) conditions.push(notInArray(pilingPiles.id, excludeIds));
+  if (excludeCodes.length > 0) conditions.push(notInArray(pilingPiles.pileIdCode, excludeCodes));
 
   return database
     .select({ locationId: pilingPiles.locationId, count: sql<number>`count(*)` })

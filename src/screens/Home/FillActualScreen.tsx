@@ -21,9 +21,10 @@ import PileStepsModal from '@components/plan/actual/PileStepsModal';
 import MachineDownModal from '@components/plan/actual/MachineDownModal';
 import MachineIdleModal from '@components/plan/actual/MachineIdleModal';
 import SwipeableTabBar from '@components/shared/SwipeableTabBar';
-import ReorderPilesOverlay from '@components/plan/generate/preview/ReorderPilesOverlay';
+import ReorderPilesModal from '@components/plan/generate/preview/ReorderPilesModal';
 import AddPileModal from '@components/plan/actual/AddPileModal';
 import EmptyState from '@components/shared/EmptyState';
+import { useModalBackGuard } from '@components/shared/ModalHost';
 import { useLookups } from './fillActual/useLookups';
 import { useShiftInchargeLookup } from './fillActual/useShiftInchargeLookup';
 import { useMachineEvents } from './fillActual/useMachineEvents';
@@ -47,6 +48,12 @@ export default function FillActualsScreen() {
   const siteId = user?.siteId ?? '';
   const deviceWorkingDate = useWorkingDate();
   const workingDate = route.params?.date ?? deviceWorkingDate;
+
+  // ReorderPilesModal/AddPileModal live on this screen — without this, the
+  // Android hardware back button can pop this screen out from under an open
+  // modal instead of just closing it (native-stack's own back handling can
+  // bypass ModalHost's BackHandler listener entirely; see useModalBackGuard).
+  useModalBackGuard();
 
   const {
     checklist,
@@ -193,6 +200,11 @@ export default function FillActualsScreen() {
     reloadMachineEvents,
   });
 
+  // AddPileModal's lockedMachine — looked up here (not force-unwrapped inline
+  // in the JSX) so a transient miss (e.g. `machines` still loading) can gate
+  // the modal's mount instead of crashing on `.id` of an undefined machine.
+  const lockedMachineRecord = activeMachine ? machines.find((m) => m.id === activeMachine.id) : undefined;
+
   const machineEventPileCode =
     machineEventFor &&
     (pileGroups.find((g) => g.checklistPileId === machineEventFor.checklistPileId)?.pileCode ??
@@ -322,10 +334,10 @@ export default function FillActualsScreen() {
         />
       )}
 
-      {sequenceModalOpen && activeMachine && (
-        <ReorderPilesOverlay
+      {activeMachine && (
+        <ReorderPilesModal
           key={sequenceRemountKey}
-          visible
+          visible={sequenceModalOpen}
           onClose={closeSequenceModal}
           machine={activeMachine}
           piles={sequencePiles}
@@ -340,19 +352,37 @@ export default function FillActualsScreen() {
 
       {/* `checklist` is guarded, not asserted: a background sync can purge it
           mid-session (e.g. the day's plan deleted on another device) while
-          this modal is open, and checklist!.id would then crash. */}
-      {addPileModalOpen && activeMachine && checklist && (
+          this modal is open, and checklist!.id would then crash. Same for
+          lockedMachineRecord — machines.find() can transiently miss (e.g.
+          machines still loading) now that this stays mounted continuously
+          instead of only while addPileModalOpen was true, so it's part of
+          the mount gate too, not force-unwrapped. */}
+      {/* Stays mounted whenever the underlying data is available — visible
+          toggles instead of the JSX conditionally unmounting it, same as
+          ReorderPilesModal above, so AppModal's own close animation (now
+          that AddPileModal is built on it) actually gets to play. */}
+      {activeMachine && checklist && lockedMachineRecord && (
         <AddPileModal
-          visible
+          visible={addPileModalOpen}
           onClose={() => setAddPileModalOpen(false)}
           siteId={siteId}
           checklistId={checklist.id}
           targetDate={workingDate}
-          draftRows={draftRows ?? []}
-          excludePileIds={new Set((draftRows ?? []).map((r) => r.pileId))}
+          // Codes, not ids — pil_piles has no uniqueness constraint on
+          // (site_id, pile_id_code) yet, so a sync can leave two different
+          // local rows sharing the same code. Matching by pileId alone would
+          // only exclude whichever row today's plan happens to reference,
+          // letting a duplicate row for the same pile still show as pickable.
+          excludePileCodes={
+            new Set(
+              (draftRows ?? [])
+                .map((r) => pileMap.get(r.pileId)?.pileIdCode)
+                .filter((code): code is string => !!code),
+            )
+          }
           lockedMachine={{
             kind: activeMachine.type === 'RIG' ? 'rig' : 'crane',
-            machine: machines.find((m) => m.id === activeMachine.id)!,
+            machine: lockedMachineRecord,
           }}
           rigs={rigs}
           cranes={cranes}

@@ -2,7 +2,7 @@
 //
 // Shows which machine a MachinePilesPage belongs to, its live status
 // (including a highlighted "Idle since" timer box while idle), the entry
-// point into ReorderPilesOverlay, and quick actions to log a breakdown or
+// point into ReorderPilesModal, and quick actions to log a breakdown or
 // toggle an idle session without leaving the Log Actuals screen.
 
 import React from 'react';

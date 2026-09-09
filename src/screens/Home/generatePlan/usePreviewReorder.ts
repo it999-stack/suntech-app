@@ -1,7 +1,7 @@
 // src/screens/Home/generatePlan/usePreviewReorder.ts
 //
 // Builds the Preview step's per-pile machine-label rows, and the per-machine
-// reorder overlay (ReorderPilesOverlay) wiring — which machine is being
+// reorder modal (ReorderPilesModal) wiring — which machine is being
 // reordered, its piles, and committing a new order back into the draft.
 
 import { useMemo, useRef, useState } from 'react';

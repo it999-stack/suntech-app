@@ -15,9 +15,10 @@
 // closes/breaks both" bug). With a single shared window, there's nothing
 // for the native window stack to get confused about.
 
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
-import { Modal, StyleSheet, View } from 'react-native';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, Modal, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useNavigation } from '@react-navigation/native';
 
 type StackEntry = {
   id: string;
@@ -28,6 +29,13 @@ type StackEntry = {
 interface ModalHostContextValue {
   push: (id: string, node: React.ReactNode, onRequestClose: () => void) => void;
   remove: (id: string) => void;
+  /** True whenever at least one AppModal instance is registered — for
+   * useModalBackGuard below, and anything else that needs to know "is some
+   * modal covering the screen right now" without its own stack subscription. */
+  isAnyModalOpen: boolean;
+  /** Closes the top-most (most recently opened) modal, same as a backdrop
+   * tap on it would. No-op if nothing is open. */
+  requestTopClose: () => void;
 }
 
 const ModalHostContext = createContext<ModalHostContextValue | null>(null);
@@ -39,6 +47,36 @@ export function useModalHost(): ModalHostContextValue {
   const ctx = useContext(ModalHostContext);
   if (!ctx) throw new Error('useModalHost must be used within ModalHostProvider');
   return ctx;
+}
+
+/**
+ * Call once from a screen that can have an AppModal-based dialog open over
+ * it, to stop the Android hardware back button from popping the SCREEN
+ * instead of just closing the top modal.
+ *
+ * Why this exists alongside ModalHost's own BackHandler listener: that
+ * listener only helps if the press actually reaches JS's BackHandler
+ * emitter. With @react-navigation's native-stack (backed by
+ * react-native-screens), the hardware back button can be handled at a level
+ * that never dispatches through BackHandler at all when a separate native
+ * <Modal> window (this app's shared ModalHost) is on top — the press goes
+ * straight to popping the screen underneath, which unmounts everything
+ * mid-transition and leaves a stray dark backdrop behind. `beforeRemove`
+ * fires downstream of THAT decision, for any trigger (hardware back, swipe
+ * gesture, or a header back button) — so it's the one place that reliably
+ * catches this regardless of which native path the press took.
+ */
+export function useModalBackGuard(): void {
+  const navigation = useNavigation();
+  const { isAnyModalOpen, requestTopClose } = useModalHost();
+
+  useEffect(() => {
+    return navigation.addListener('beforeRemove', (e) => {
+      if (!isAnyModalOpen) return;
+      e.preventDefault();
+      requestTopClose();
+    });
+  }, [navigation, isAnyModalOpen, requestTopClose]);
 }
 
 export function ModalHostProvider({ children }: { children: React.ReactNode }) {
@@ -61,15 +99,26 @@ export function ModalHostProvider({ children }: { children: React.ReactNode }) {
     setStack((prev) => (prev.some((e) => e.id === id) ? prev.filter((e) => e.id !== id) : prev));
   }, []);
 
-  const value = useMemo(() => ({ push, remove }), [push, remove]);
-
-  // Android hardware back button — routed to only the top-most (most
-  // recently opened) entry, unlike today's per-instance onRequestClose
-  // wiring where every nested Modal independently races for the same
-  // back-press.
   const topEntry = stack[stack.length - 1];
   const handleRequestClose = useRef(() => {});
   handleRequestClose.current = () => topEntry?.onRequestClose();
+
+  const isAnyModalOpen = stack.length > 0;
+  const requestTopClose = useCallback(() => handleRequestClose.current(), []);
+
+  const value = useMemo(
+    () => ({ push, remove, isAnyModalOpen, requestTopClose }),
+    [push, remove, isAnyModalOpen, requestTopClose],
+  );
+
+  useEffect(() => {
+    if (!isAnyModalOpen) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleRequestClose.current();
+      return true;
+    });
+    return () => sub.remove();
+  }, [isAnyModalOpen]);
 
   return (
     <ModalHostContext.Provider value={value}>
