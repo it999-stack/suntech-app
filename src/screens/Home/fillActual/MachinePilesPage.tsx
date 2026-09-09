@@ -5,7 +5,7 @@
 // would re-render on any unrelated change (e.g. another pile's step being logged).
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { colors, spacing, typography } from '@theme/theme';
 import PileSequenceRow from '@components/plan/actual/PileSequenceRow';
 import MachineInfoCard from './MachineInfoCard';
@@ -45,6 +45,9 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
 
   return (
     <View style={styles.machinePage}>
+      {/* Fixed — outside the scrollable area below, so it stays put while
+          the pile list (whose length varies wildly per machine) scrolls
+          on its own instead of the whole page growing/shrinking to fit it. */}
       <MachineInfoCard
         machine={machine}
         status={status}
@@ -57,7 +60,7 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
       />
 
       {groups.length > 0 && (
-        <>
+        <ScrollView style={styles.sequenceScroll} showsVerticalScrollIndicator={false}>
           <Text style={styles.sectionHeader}>Pile Sequence</Text>
           <View style={styles.sequenceList}>
             {groups.map((group, i) => (
@@ -74,7 +77,7 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
               />
             ))}
           </View>
-        </>
+        </ScrollView>
       )}
     </View>
   );
@@ -84,8 +87,12 @@ export default MachinePilesPage;
 
 const styles = StyleSheet.create({
   machinePage: {
+    flex: 1,
     gap: spacing.md,
     marginTop: spacing.md,
+  },
+  sequenceScroll: {
+    flex: 1,
   },
   sectionHeader: {
     ...typography.caption,
@@ -97,5 +104,6 @@ const styles = StyleSheet.create({
   },
   sequenceList: {
     gap: 0,
+    paddingBottom: spacing.xxxl,
   },
 });

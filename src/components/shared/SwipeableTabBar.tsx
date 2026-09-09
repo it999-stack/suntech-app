@@ -1,30 +1,29 @@
 // src/components/shared/SwipeableTabBar.tsx
-//
-// Generic pill-select bar + swipeable paged content. Tapping a pill or
-// swiping the content changes the active item — both stay in sync through
-// the same controlled `value`/`onChange`. Domain-agnostic: callers supply
-// `items` and a `renderPage` function.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, type LayoutChangeEvent, type ViewStyle } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+  StyleSheet,
+  type LayoutChangeEvent,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
+  type ViewStyle,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import PagerView from 'react-native-pager-view';
 import { colors, spacing, radius } from '@theme/theme';
 import Divider from '@components/shared/Divider';
 
 const MAX_VISIBLE_DOTS = 5;
 
-/**
- * iOS-style paginator: shows up to MAX_VISIBLE_DOTS dots, always centered on
- * the active index. Dots fade out toward the edges of the visible window,
- * signalling "more items exist this way" without a literal progress bar.
- */
 function PaginationDots({ total, activeIndex }: { total: number; activeIndex: number }) {
   if (total <= 1) return null;
 
   const windowSize = Math.min(total, MAX_VISIBLE_DOTS);
   const half = Math.floor(windowSize / 2);
-  // Clamp window so it centers on activeIndex but never runs off either end.
   const start = Math.min(Math.max(activeIndex - half, 0), Math.max(total - windowSize, 0));
   const visible = Array.from({ length: windowSize }, (_, i) => start + i);
 
@@ -32,7 +31,6 @@ function PaginationDots({ total, activeIndex }: { total: number; activeIndex: nu
     <View style={styles.dotsRow}>
       {visible.map((itemIndex) => {
         const distance = Math.abs(itemIndex - activeIndex);
-        // 0 -> full size/opacity, further away -> smaller + fainter
         const scale = distance === 0 ? 1 : distance === 1 ? 0.75 : 0.55;
         const opacity = distance === 0 ? 1 : distance === 1 ? 0.55 : 0.25;
         return (
@@ -57,7 +55,6 @@ function PaginationDots({ total, activeIndex }: { total: number; activeIndex: nu
 export interface SwipeableTabItem<T extends string = string> {
   value: T;
   label: string;
-  /** Accent color for this pill/page; defaults to colors.accent. */
   color?: string;
   renderIcon?: (color: string, active: boolean) => React.ReactNode;
 }
@@ -92,9 +89,17 @@ export interface SwipeableTabBarProps<T extends string = string> {
    * breathing room above it before the content below). Omitted by default;
    * existing callers are unaffected. */
   dividerStyle?: ViewStyle;
+  /**
+   * Sizes the pager to fill whatever flex space its parent gives it, instead
+   * of the default "auto-size to content" behavior — for a caller that
+   * itself sits in a bounded-height flex column (not inside another
+   * ScrollView) and wants each page's OWN content to scroll internally
+   * (e.g. a fixed header card + a scrollable list below it) rather than the
+   * whole page growing/shrinking to fit. Opt-in; other callers unaffected.
+   */
+  fillHeight?: boolean;
 }
 
-const FALLBACK_PAGE_HEIGHT = 120;
 const FADE_WIDTH = 28;
 
 export default function SwipeableTabBar<T extends string = string>({
@@ -107,21 +112,30 @@ export default function SwipeableTabBar<T extends string = string>({
   trailingAccessory,
   pillVariant = 'default',
   dividerStyle,
+  fillHeight = false,
 }: SwipeableTabBarProps<T>) {
-  const pagerRef = useRef<PagerView>(null);
-  const [pageHeights, setPageHeights] = useState<Record<number, number>>({});
+  const pagerScrollRef = useRef<ScrollView>(null);
+  const [pagerWidth, setPagerWidth] = useState(0);
 
   const activeIndex = Math.max(0, items.findIndex((item) => item.value === value));
 
   const handlePillPress = (index: number) => {
     onChange(items[index].value);
-    pagerRef.current?.setPage(index);
+    if (pagerWidth) pagerScrollRef.current?.scrollTo({ x: index * pagerWidth, animated: true });
   };
 
-  // Keeps the active pill in view whenever the selection changes — including
-  // via a page swipe, which moves the pager but (unlike a pill tap) never
-  // touches this ScrollView on its own, so the pill row would otherwise sit
-  // frozen while the page underneath moves on.
+  useEffect(() => {
+    if (!pagerWidth) return;
+    pagerScrollRef.current?.scrollTo({ x: activeIndex * pagerWidth, animated: false });
+  }, [pagerWidth]);
+
+  const handlePagerScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!pagerWidth) return;
+    const index = Math.round(e.nativeEvent.contentOffset.x / pagerWidth);
+    const item = items[index];
+    if (item && item.value !== value) onChange(item.value);
+  };
+
   const pillScrollRef = useRef<ScrollView>(null);
   const pillLayouts = useRef<Record<number, { x: number; width: number }>>({});
   const [rowWidth, setRowWidth] = useState(0);
@@ -138,15 +152,12 @@ export default function SwipeableTabBar<T extends string = string>({
     if (!layout || !rowWidth) return;
     const targetX = layout.x + layout.width / 2 - rowWidth / 2;
     pillScrollRef.current?.scrollTo({ x: Math.max(0, targetX), animated: true });
-    // layoutTick re-runs this once a pill's real position is measured (it isn't
-    // known yet on the very first render), not just when activeIndex changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIndex, rowWidth, layoutTick]);
 
   if (items.length === 0) return null;
 
   return (
-    <View>
+    <View style={fillHeight && styles.fillFlex}>
       <View style={styles.topRow}>
         <View
           style={[styles.pillRowWrap, styles.pillRowFlex]}
@@ -158,7 +169,6 @@ export default function SwipeableTabBar<T extends string = string>({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={[
               styles.pillRow,
-              // extra trailing space so the last pill can sit half-cut at the edge
               scrollHint !== 'none' && { paddingRight: spacing.lg },
             ]}
           >
@@ -215,28 +225,38 @@ export default function SwipeableTabBar<T extends string = string>({
         </>
       )}
 
-      <PagerView
-        ref={pagerRef}
-        style={{ height: pageHeights[activeIndex] ?? FALLBACK_PAGE_HEIGHT }}
-        initialPage={activeIndex}
-        onPageSelected={(e) => onChange(items[e.nativeEvent.position].value)}
-      >
-        {items.map((item, index) => (
-          <View key={item.value}>
-            <View onLayout={(e) => {
-              const height = e.nativeEvent.layout.height;
-              setPageHeights((prev) => (prev[index] === height ? prev : { ...prev, [index]: height }));
-            }}>
-              {renderPage(item, index)}
+      <View style={fillHeight && styles.fillFlex} onLayout={(e) => setPagerWidth(e.nativeEvent.layout.width)}>
+        {pagerWidth > 0 ? (
+          <ScrollView
+            ref={pagerScrollRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={handlePagerScrollEnd}
+            onScrollEndDrag={handlePagerScrollEnd}
+            style={fillHeight && styles.fillFlex}
+          >
+            {items.map((item, index) => (
+              <View key={item.value} style={[{ width: pagerWidth }, fillHeight && styles.fillFlex]}>
+                {renderPage(item, index)}
+              </View>
+            ))}
+          </ScrollView>
+        ) : (
+          fillHeight && (
+            <View style={styles.fillLoadingWrap}>
+              <ActivityIndicator size="large" color={colors.accent} />
             </View>
-          </View>
-        ))}
-      </PagerView>
+          )
+        )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  fillFlex: { flex: 1 },
+  fillLoadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   topRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -278,17 +298,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     top: 0,
-    bottom: spacing.sm, // matches pillRow's paddingBottom so it doesn't overlap the row below
+    bottom: spacing.sm,
     width: FADE_WIDTH,
   },
 
-  // 'dots' variant — centered, edge-fading paginator (max 5 dots)
   dotsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
-    marginTop: -spacing.xs, // pull up under pillRow's own bottom padding
+    marginTop: -spacing.xs,
     marginBottom: spacing.sm,
   },
   dot: {

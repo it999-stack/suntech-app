@@ -98,7 +98,7 @@ function StepTimelineRow({
         )}
       </View>
       {isPlanned && (
-        <Text style={styles.stepDuration}>
+        <Text style={styles.stepDuration} numberOfLines={1}>
           {formatDurationMinutes(step.durationMinutes ?? 0)}
         </Text>
       )}
@@ -116,6 +116,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(28,28,46,0.06)',
+    position: 'relative',
   },
   stepRowLast: { borderBottomWidth: 0 },
   stepRowUnplanned: { opacity: 0.4 },
@@ -133,10 +134,8 @@ const styles = StyleSheet.create({
     fontSize: 9,
     letterSpacing: 0.5,
   },
-  // COMPRESSOR has no machine-tile UI yet (no compressor assignment exists in the
-  // wizard) — falls back to the old plain badge, this hue distinct from rig/crane.
   trackCompressor: { color: '#B45309' },
-  stepInfo: { flex: 1 },
+  stepInfo: { flex: 1, paddingRight: 52 },
   stepName: {
     ...typography.caption,
     fontWeight: '600',
@@ -158,9 +157,6 @@ const styles = StyleSheet.create({
     color: colors.success,
     fontWeight: '700',
   },
-  // Muted, same weight as the regular stepTimes text — on its own line below
-  // the "Completed" label so a long (date-inclusive) range wraps cleanly
-  // instead of fighting the checkmark icon for vertical alignment.
   completedTimes: {
     ...typography.caption,
     color: colors.textSecondary,
@@ -172,5 +168,8 @@ const styles = StyleSheet.create({
     color: colors.accent,
     minWidth: 44,
     textAlign: 'right',
+    position: 'absolute',
+    top: spacing.sm,
+    right: 0,
   },
 });

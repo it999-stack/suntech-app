@@ -111,8 +111,6 @@ export function TimelineStopLog({
   return (
     <View>
       {stops.map((stop, idx) => {
-        // A "new pile" starts at an active stop whose pile (title) differs
-        // from the last active stop's — including the very first one.
         const isNewPile = stop.kind === 'active' && stop.title !== lastActivePileTitle;
         if (stop.kind === 'active') lastActivePileTitle = stop.title;
         return (

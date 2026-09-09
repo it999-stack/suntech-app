@@ -6,7 +6,6 @@ import {
   Text,
   StyleSheet,
   Pressable,
-  ScrollView,
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -206,14 +205,6 @@ export default function FillActualsScreen() {
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
-    // A real (opaque) copy of the app's shared backdrop gradient, not the
-    // transparent contentStyle HomeStackNavigator normally relies on — this
-    // screen gets pushed on top of HomeScreen, which stays mounted
-    // underneath (native-stack never unmounts a blurred screen), and a
-    // transparent root here let HomeScreen's own real content bleed through
-    // during the slide-in transition (and through any layout gap at rest).
-    // Same colors as AppShell's gradient, so it's visually indistinguishable
-    // from the shared canvas — just genuinely opaque now.
     <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
       <View style={styles.flex}>
         <View style={styles.headerArea}>
@@ -230,63 +221,59 @@ export default function FillActualsScreen() {
           <View style={styles.loadingWrap}>
             <ActivityIndicator size="large" color={colors.accent} />
           </View>
-        ) : (
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {!checklist && (
-              <EmptyState
-                icon="calendar"
-                title="No plan generated"
-                message="No plan has been created for today yet."
-              />
-            )}
-
-            {checklist && pileGroups.length === 0 && (
-              <EmptyState
-                icon="layers"
-                title="No piles in plan"
-                message="Today's plan doesn't include any piles yet."
-              />
-            )}
-
-            {activeMachines.length > 0 && (
-              <SwipeableTabBar
-                items={machineBadgeItems}
-                value={selectedMachineId ?? activeMachines[0].id}
-                onChange={setSelectedMachineId}
-                scrollHint="dots"
-                pillVariant="piles"
-                dividerStyle={{ marginTop: spacing.md }}
-                renderPage={(item) => {
-                  const page = machinePagesById.get(item.value) ?? {
-                    groups: EMPTY_PILE_GROUPS,
-                    frontPileId: undefined,
-                  };
-                  const machine = activeMachines.find((m) => m.id === item.value);
-                  if (!machine) return null;
-                  return (
-                    <MachinePilesPage
-                      machine={machine}
-                      status={machineStatusById.get(machine.id)}
-                      railColor={TRACK_META[machine.type].color}
-                      groups={page.groups}
-                      frontPileId={page.frontPileId}
-                      openIdle={idleSessionByMachineId.get(item.value)}
-                      hasActiveStep={currentStepByMachineId.has(machine.id)}
-                      onOpenPile={setOpenCpId}
-                      onBreakdown={() => handleOpenMachineEvent(machine.id, machine.type, 'BREAKDOWN')}
-                      onStartIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_START')}
-                      onEndIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_END')}
-                      onEditSequence={openSequenceModal}
-                    />
-                  );
-                }}
-              />
-            )}
-          </ScrollView>
-        )}
+        ) : !checklist ? (
+          <View style={styles.emptyWrap}>
+            <EmptyState
+              icon="calendar"
+              title="No plan generated"
+              message="No plan has been created for today yet."
+            />
+          </View>
+        ) : pileGroups.length === 0 ? (
+          <View style={styles.emptyWrap}>
+            <EmptyState
+              icon="layers"
+              title="No piles in plan"
+              message="Today's plan doesn't include any piles yet."
+            />
+          </View>
+        ) : activeMachines.length > 0 ? (
+          <View style={styles.pagerArea}>
+            <SwipeableTabBar
+              items={machineBadgeItems}
+              value={selectedMachineId ?? activeMachines[0].id}
+              onChange={setSelectedMachineId}
+              scrollHint="dots"
+              pillVariant="piles"
+              dividerStyle={{ marginTop: spacing.md }}
+              fillHeight
+              renderPage={(item) => {
+                const page = machinePagesById.get(item.value) ?? {
+                  groups: EMPTY_PILE_GROUPS,
+                  frontPileId: undefined,
+                };
+                const machine = activeMachines.find((m) => m.id === item.value);
+                if (!machine) return null;
+                return (
+                  <MachinePilesPage
+                    machine={machine}
+                    status={machineStatusById.get(machine.id)}
+                    railColor={TRACK_META[machine.type].color}
+                    groups={page.groups}
+                    frontPileId={page.frontPileId}
+                    openIdle={idleSessionByMachineId.get(item.value)}
+                    hasActiveStep={currentStepByMachineId.has(machine.id)}
+                    onOpenPile={setOpenCpId}
+                    onBreakdown={() => handleOpenMachineEvent(machine.id, machine.type, 'BREAKDOWN')}
+                    onStartIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_START')}
+                    onEndIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_END')}
+                    onEditSequence={openSequenceModal}
+                  />
+                );
+              }}
+            />
+          </View>
+        ) : null}
       </View>
 
       {openGroup && (
@@ -396,11 +383,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     paddingHorizontal: spacing.md
   },
-  scrollContent: {
+  emptyWrap: {
+    flex: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    paddingBottom: spacing.xxxl,
-    gap: spacing.md,
+  },
+  pagerArea: {
+    flex: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
   emptyText: {
     ...typography.body,
