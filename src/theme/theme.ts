@@ -37,6 +37,7 @@ export const colors = {
   accent: '#14141F',
   accentPink: '#E8467C',
   accentBlue: '#66b5da',
+  accentBlueSoft: 'rgba(102,181,218,0.14)',
   accentSoft: 'rgba(177, 179, 245, 0.1)',
   accentPinkSoft: 'rgba(232,70,124,0.10)',
 

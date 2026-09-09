@@ -2,36 +2,35 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ChevronRight, Drill, Forklift } from 'lucide-react-native';
+import { ChevronRight } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
+import Badge from '@components/shared/Badge';
+import MachineBadge from '@components/shared/MachineBadge';
 import { colors, spacing, radius, typography } from '@theme/theme';
-import { TRACK_META } from '@utils/helpers';
+import { formatTime } from '@utils/formatTime';
 import { ActualEntry } from '@app-types/plan';
-import { getPileProgress } from './pileProgress';
+import { getPileProgress, getPileMachines, PILE_CARD_STATUS_META } from './pileProgress';
 
 interface Props {
   index: number;
   pileCode: string;
-  rigs?: string[];
-  cranes?: string[];
   steps: ActualEntry[];
+  /** 'upNext' = this machine's front-of-queue pile (filled green badge);
+   * 'rail' = every other pile (hollow badge outlined in the machine's own
+   * track color). Unrelated to per-pile status — a pile can be "up next"
+   * and still Not started, or mid-queue and already In progress. */
   circleVariant: 'upNext' | 'rail';
   railColor: string;
   onPress: () => void;
 }
 
-export default function PileSequenceRow({
-  index,
-  pileCode,
-  rigs,
-  cranes,
-  steps,
-  circleVariant,
-  railColor,
-  onPress,
-}: Props) {
-  const { total, doneCount, allDone, statusLabel, statusColor, pct } = getPileProgress(steps);
+export default function PileSequenceRow({ index, pileCode, steps, circleVariant, railColor, onPress }: Props) {
+  const { total, doneCount, pct, status, inProgressStep, nextStep } = getPileProgress(steps);
+  const { worked } = getPileMachines(steps);
+  const meta = PILE_CARD_STATUS_META[status];
   const isUpNext = circleVariant === 'upNext';
+  const currentStepPosition = inProgressStep ? doneCount + 1 : undefined;
+  const subtitleStep = inProgressStep ?? nextStep;
 
   return (
     <Pressable style={styles.cardWrap} onPress={onPress}>
@@ -50,39 +49,67 @@ export default function PileSequenceRow({
             </View>
             <Text style={styles.pileTitle}>{pileCode}</Text>
           </View>
-          <ChevronRight size={20} color={colors.textSecondary} />
+          <View style={styles.topRowRight}>
+            <Badge text={meta.label} textColor={meta.color} bgColor={meta.soft} uppercase={false} />
+            <ChevronRight size={20} color={colors.textSecondary} />
+          </View>
         </View>
 
-        {((rigs && rigs.length > 0) || (cranes && cranes.length > 0)) && (
-          <View style={styles.machineBadgeRow}>
-            {rigs?.map((no) => (
-              <View key={`rig-${no}`} style={[styles.machineBadge, { backgroundColor: TRACK_META.RIG.soft }]}>
-                <Drill size={12} color={TRACK_META.RIG.color} />
-                <Text style={[styles.machineBadgeText, { color: TRACK_META.RIG.color }]}>{no}</Text>
-              </View>
-            ))}
-            {cranes?.map((no) => (
-              <View key={`crane-${no}`} style={[styles.machineBadge, { backgroundColor: TRACK_META.CRANE.soft }]}>
-                <Forklift size={12} color={TRACK_META.CRANE.color} />
-                <Text style={[styles.machineBadgeText, { color: TRACK_META.CRANE.color }]}>{no}</Text>
-              </View>
-            ))}
-          </View>
-        )}
+        <View style={styles.subtitleRow}>
+          <Text style={styles.subtitleText} numberOfLines={1}>
+            {subtitleStep ? `${subtitleStep.stepName} · ` : ''}
+            {doneCount}/{total} steps
+          </Text>
+          <Text style={[styles.pctText, { color: meta.color }]}>{pct}%</Text>
+        </View>
 
         <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              { width: `${pct}%`, backgroundColor: allDone ? colors.success : colors.accent },
-            ]}
-          />
+          <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: meta.color }]} />
         </View>
 
-        <View style={styles.bottomRow}>
-          <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
-          <Text style={styles.countText}>{doneCount}/{total} steps</Text>
+        <View style={[styles.infoGrid, { backgroundColor: meta.soft }]}>
+          <View style={styles.infoCol}>
+            <Text style={styles.infoLabel}>
+              {inProgressStep
+                ? `Current Step${currentStepPosition ? ` (${currentStepPosition}/${total})` : ''}`
+                : nextStep
+                ? 'Next Step'
+                : 'Status'}
+            </Text>
+            <Text style={styles.infoValue} numberOfLines={2}>
+              {(inProgressStep ?? nextStep)?.stepName ?? 'All steps completed'}
+            </Text>
+          </View>
+          {/* Current Machine while a step is actually running, or the
+              machine planned to run the upcoming step once it hasn't
+              started yet — either way, whichever step column 1 is showing. */}
+          {(inProgressStep ?? nextStep) && (
+            <>
+              <View style={styles.infoDivider} />
+              <View style={styles.infoCol}>
+                <Text style={styles.infoLabel}>{inProgressStep ? 'Current Machine' : 'Planned Machine'}</Text>
+                <MachineBadge
+                  track={(inProgressStep ?? nextStep)!.track}
+                  label={(inProgressStep ?? nextStep)!.assignedMachineNo ?? '-'}
+                />
+                {inProgressStep?.actualStartIso && (
+                  <Text style={styles.sinceText}>Since {formatTime(inProgressStep.actualStartIso)}</Text>
+                )}
+              </View>
+            </>
+          )}
         </View>
+
+        {worked.length > 0 && (
+          <View style={styles.machinesSection}>
+            <Text style={styles.machinesSectionLabel}>Machines worked ({worked.length})</Text>
+            <View style={styles.machinesRow}>
+              {worked.map((m) => (
+                <MachineBadge key={`worked-${m.id}`} track={m.track} label={m.no} />
+              ))}
+            </View>
+          </View>
+        )}
       </GlassCard>
     </Pressable>
   );
@@ -98,12 +125,16 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'stretch',
   },
-  pad: { padding: spacing.md },
+  pad: { padding: spacing.md, gap: spacing.sm },
   topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing.xs,
+    alignItems: 'center',
+  },
+  topRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
   titleRow: {
     flex: 1,
@@ -127,21 +158,18 @@ const styles = StyleSheet.create({
     ...typography.cardTitle,
     color: colors.textPrimary,
   },
-  machineBadgeRow: {
+  subtitleRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginBottom: spacing.sm,
-  },
-  machineBadge: {
-    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 4,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
+    gap: spacing.sm,
   },
-  machineBadgeText: {
+  subtitleText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  pctText: {
     ...typography.caption,
     fontWeight: '700',
   },
@@ -150,23 +178,57 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: 'rgba(28,28,46,0.08)',
     overflow: 'hidden',
-    marginBottom: spacing.sm,
   },
   progressFill: {
     height: '100%',
     borderRadius: radius.pill,
   },
-  bottomRow: {
+  infoGrid: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
   },
-  statusText: {
+  infoCol: {
+    flex: 1,
+    gap: 2,
+  },
+  infoDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    backgroundColor: colors.border,
+  },
+  infoLabel: {
+    ...typography.smallTxt,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  infoValue: {
     ...typography.caption,
     fontWeight: '700',
+    color: colors.textPrimary,
   },
-  countText: {
-    ...typography.caption,
+  sinceText: {
+    ...typography.smallTxt,
     color: colors.textSecondary,
+  },
+  machinesSection: {
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.glassFillStrong,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  machinesSectionLabel: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  machinesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
 });

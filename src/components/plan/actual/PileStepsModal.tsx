@@ -48,7 +48,7 @@ import {
 import { computeExpectedStepStart, type MachineFloorIndex } from '@utils/machineFloor';
 import { type ConflictNotice } from '@utils/timeValidation';
 import { buildActualTimeRules } from '@utils/actualTimeRules';
-import { getTrackBadgeColors } from '@utils/helpers';
+import { TRACK_META } from '@utils/helpers';
 import { notify } from '@utils/notify';
 
 /** Signed duration for a delay chip — e.g. 460 → "+7h 40m", -10 → "-10m", 0 → "On time". */
@@ -429,13 +429,13 @@ export default function PileStepsModal({
                 <View
                   style={[
                     modalStyles.trackBadge,
-                    { backgroundColor: getTrackBadgeColors(step.track).bg },
+                    { backgroundColor: TRACK_META[step.track].soft },
                   ]}
                 >
                   <Text
                     style={[
                       modalStyles.trackTag,
-                      { color: getTrackBadgeColors(step.track).fg },
+                      { color: TRACK_META[step.track].color },
                     ]}
                   >
                     {`${step.track}${step.assignedMachineNo ? ` (${step.assignedMachineNo})` : ''}`}

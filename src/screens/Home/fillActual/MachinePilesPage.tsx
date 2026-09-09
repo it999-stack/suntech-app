@@ -61,15 +61,13 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
 
       {groups.length > 0 && (
         <ScrollView style={styles.sequenceScroll} showsVerticalScrollIndicator={false}>
-          <Text style={styles.sectionHeader}>Pile Sequence</Text>
+          <Text style={styles.sectionHeader}>Pile Sequence ({groups.length} piles)</Text>
           <View style={styles.sequenceList}>
             {groups.map((group, i) => (
               <PileSequenceRow
                 key={group.checklistPileId}
                 index={i + 1}
                 pileCode={group.pileCode}
-                rigs={group.rigs}
-                cranes={group.cranes}
                 steps={group.steps}
                 circleVariant={group.checklistPileId === frontPileId ? 'upNext' : 'rail'}
                 railColor={railColor}

@@ -75,8 +75,16 @@ export function useSequenceEditor(args: {
     (m) => m.id === (selectedMachineId ?? activeMachines[0]?.id),
   );
 
-  // Real DB-derived progress (not something the user edits locally) — looked
-  // up by pileId so it still applies to piles sitting in the local draft below.
+  const groupByPileId = useMemo(() => new Map(pileGroups.map((g) => [g.pileId, g])), [pileGroups]);
+
+  function currentMachineIds(row: EditPlanPileInput): { rigId: string; craneId?: string } {
+    const group = groupByPileId.get(row.pileId);
+    return {
+      rigId: group?.rigId ?? row.rigId,
+      craneId: group?.craneId ?? row.craneId,
+    };
+  }
+
   const pileProgressByPileId = useMemo(() => {
     const map = new Map<string, { hasProgress: boolean; isRunning: boolean }>();
     for (const g of pileGroups) {
@@ -88,42 +96,31 @@ export function useSequenceEditor(args: {
     return map;
   }, [pileGroups]);
 
-  // Local draft for the sequence modal — reorder/add/remove only mutate this;
-  // nothing is sent to the server until the modal's Save is tapped.
   const [draftRows, setDraftRows] = useState<EditPlanPileInput[] | null>(null);
 
   const sequencePiles = useMemo((): ReorderPile[] => {
     if (!activeMachine || !draftRows) return [];
     return draftRows
-      .filter((r) => (activeMachine.type === 'RIG' ? r.rigId : r.craneId) === activeMachine.id)
-      .map((r) => ({
+      .map((r) => ({ r, current: currentMachineIds(r) }))
+      // LIVE membership — never the draft's own (possibly stale) rigId/craneId.
+      .filter(({ current }) => (activeMachine.type === 'RIG' ? current.rigId : current.craneId) === activeMachine.id)
+      .map(({ r, current }) => ({
         id: r.pileId,
         label: `Pile ${pileMap.get(r.pileId)?.pileIdCode ?? r.pileId}`,
-        // Already has progress — the scheduler always places resuming piles
-        // ahead of fresh ones regardless of position, so it's pinned rather
-        // than offered a reorder control with no effect.
         locked: !!pileProgressByPileId.get(r.pileId)?.hasProgress,
-        // This pile's machine on the other track — e.g. sequencing a rig
-        // surfaces which crane(s) it's paired with, for the overlay's header.
         otherMachineLabel: activeMachine.type === 'RIG'
-          ? (r.craneId ? machineNoById.get(r.craneId) : undefined)
-          : machineNoById.get(r.rigId),
+          ? (current.craneId ? machineNoById.get(current.craneId) : undefined)
+          : machineNoById.get(current.rigId),
       }));
-  }, [activeMachine, draftRows, pileProgressByPileId, pileMap, machineNoById]);
+  }, [activeMachine, draftRows, pileProgressByPileId, pileMap, machineNoById, groupByPileId]);
 
   const [sequenceModalOpen, setSequenceModalOpen] = useState(false);
   const [sequenceRemountKey, setSequenceRemountKey] = useState(0);
   const [addPileModalOpen, setAddPileModalOpen] = useState(false);
   const [isSavingSequence, setIsSavingSequence] = useState(false);
 
-  // step_track_overrides is never persisted server-side (see
-  // _resolve_step_execution's own docstring) — each edit-plan request must
-  // resend it or the server re-resolves every step to its nominal track.
-  // Reconstructed here from the pile's current steps: a step whose nominal
-  // track is CRANE but whose current execution track is RIG is, by
-  // definition, an override already in effect.
   function deriveStepTrackOverrides(pileId: string): string[] {
-    const group = pileGroups.find((g) => g.pileId === pileId);
+    const group = groupByPileId.get(pileId);
     if (!group) return [];
     return group.steps
       .filter((s) => (s.businessTrack ?? s.track) === 'CRANE' && s.track === 'RIG')
@@ -132,12 +129,15 @@ export function useSequenceEditor(args: {
 
   function openSequenceModal() {
     setDraftRows(
-      checklistPiles.map((cp) => ({
-        pileId: cp.pileId,
-        rigId: cp.rigId,
-        craneId: cp.craneId ?? undefined,
-        stepTrackOverrides: deriveStepTrackOverrides(cp.pileId),
-      })),
+      checklistPiles.map((cp) => {
+        const group = groupByPileId.get(cp.pileId);
+        return {
+          pileId: cp.pileId,
+          rigId: group?.rigId ?? cp.rigId,
+          craneId: group?.craneId ?? (cp.craneId ?? undefined),
+          stepTrackOverrides: deriveStepTrackOverrides(cp.pileId),
+        };
+      }),
     );
     setSequenceModalOpen(true);
   }
@@ -161,9 +161,11 @@ export function useSequenceEditor(args: {
     const merged = mergeOrder(fullOrder, newSubsetOrder);
     const piles: EditPlanPileInput[] = merged.map((pileId) => {
       const row = byPileId.get(pileId)!;
-      return overridesForNewOrder.has(pileId)
-        ? { ...row, stepTrackOverrides: overridesForNewOrder.get(pileId) }
-        : row;
+      return {
+        ...row,
+        ...currentMachineIds(row),
+        ...(overridesForNewOrder.has(pileId) ? { stepTrackOverrides: overridesForNewOrder.get(pileId) } : {}),
+      };
     });
 
     setIsSavingSequence(true);
