@@ -2,6 +2,10 @@
 // Shared types for the plan generation wizard.
 
 import { toLocalIsoString } from '@utils/formatTime';
+import type { StepStatus } from '@services/stepSegments';
+import type { CarriedSegment } from '@services/resumeWorkService';
+
+export type { StepStatus };
 
 /** Assignment of rig (+ optional crane) to a single pile. A rig alone is a
  * valid plan — a rig can perform any CRANE-track step, never the reverse. */
@@ -65,6 +69,15 @@ export type ResumeWork = {
   /** Historical checklist-pile id the in-progress step belongs to — needed to write remarks back. */
   pastChecklistPileId?: string;
   pastActualStart?: string | null;
+  /** The in-progress step's work sessions from the previous day(s), oldest
+   * first — what the confirm modal shows in place of a single "started at"
+   * line once a step has been split between machines. Empty for a step that
+   * was never split. */
+  carriedSegments?: CarriedSegment[];
+  /** Minutes actually worked across those sessions, EXCLUDING the gaps
+   * between them — what makes remainingMinutes above a real estimate rather
+   * than the step's whole template duration. */
+  workedMinutes?: number;
   completedStepNames?: string[];
   /** Same steps as completedStepNames, with plan + actual times. */
   completedSteps?: CompletedStepInfo[];
@@ -187,6 +200,34 @@ export type PlanDraft = {
 // ─── Legacy types used by actual-time components ─────────────────────────────
 
 /**
+ * One continuous work session on a step by one machine — see
+ * pileActualStepSegments in db/schema.ts.
+ *
+ * A step handed between machines mid-way has several; an ordinary step has
+ * none at all, and its ActualEntry timestamps are the whole record. All times
+ * are ISO strings (not minutes-since-midnight), because a session can span
+ * midnight and its duration has to survive that.
+ */
+export type ActualSegment = {
+  id: string;
+  startedAt: string;
+  /** undefined = this session is still running. */
+  endedAt?: string;
+  /** The machine that did THIS session, not the step as a whole. */
+  assignedMachineId?: string;
+  assignedMachineNo?: string;
+  /** undefined while open; 'PARTIAL' = stopped with work left; 'FINAL' = the
+   * step finished in this session. Only FINAL gives the step an actualEnd. */
+  outcome?: 'PARTIAL' | 'FINAL';
+  stopReason?: 'SHIFT_CHANGE' | 'BREAKDOWN' | 'IDLE' | 'OTHER';
+  /** Work left when a PARTIAL session stopped — feeds the re-plan's duration. */
+  remainingMinutes?: number;
+  notes?: string;
+  /** The breakdown/replacement event that caused this session, if any. */
+  machineEventId?: string;
+};
+
+/**
  * A single step entry used by FillActualScreen / PileProgressCard.
  * All time fields are minutes-since-midnight (number) or undefined if not yet recorded.
  */
@@ -259,6 +300,17 @@ export type ActualEntry = {
    * *previous* day's checklist — rendered faded, with no edit/remarks/
    * machine-event controls (see FillActualScreen/PileStepsModal). */
   isHistorical?: boolean;
+  /** This step's work sessions, live ones only and oldest first. Empty for an
+   * ordinary step — the timestamps above are then the whole record. Present
+   * only once a step has actually been split between machines. */
+  segments?: ActualSegment[];
+  /** Derived from `segments` + the timestamps above (see deriveStepStatus).
+   *
+   * The distinction the timestamps alone cannot express is RUNNING vs PAUSED:
+   * both have a start and no end, but a paused step's machine has walked away.
+   * Reading actualStart/actualEnd directly still works and still means what it
+   * always did — this is the finer-grained answer where one is needed. */
+  status?: StepStatus;
 };
 
 /**

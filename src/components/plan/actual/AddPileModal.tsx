@@ -287,7 +287,7 @@ export default function AddPileModal({
                   code={item.pileIdCode}
                   dia={item.dia}
                   depth={item.depth}
-                  area={item.area}
+                  location={item.locationName}
                   onPress={() => setPendingPile(item)}
                 />
               )}
@@ -351,9 +351,6 @@ export default function AddPileModal({
 }
 
 const styles = StyleSheet.create({
-  // AppModal supplies the backdrop, sheet chrome, keyboard avoidance, and
-  // header (title + close) now — this just bounds the content area to the
-  // same browsing-height/keyboard-aware sizing the old hand-rolled card used.
   content: {
     width: '100%',
   },

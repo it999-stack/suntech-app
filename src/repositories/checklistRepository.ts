@@ -10,6 +10,7 @@ import {
   pilingChecklistPersonnel,
   pilePlanSteps,
   pileActualSteps,
+  pileActualStepSegments,
   pilMachineEvents,
   type PilingDailyChecklist,
   type NewPilingDailyChecklist,
@@ -20,6 +21,7 @@ import {
   type PileActualStep,
   type NewPilePlanStep,
   type NewPileActualStep,
+  type NewPileActualStepSegment,
 } from '@db/schema';
 import { generateId, isContinuingStep } from '@utils/helpers';
 import { saveMeasurementsBatch, type PileMeasurementSyncRow } from '@repositories/pileMeasurementsRepository';
@@ -325,6 +327,21 @@ export async function hydrateChecklistFromServer(serverChecklist: {
       assigned_machine_id?: string | null;
       // See checklist_piles[].updated_at above — same purpose, per actual step.
       updated_at?: string | null;
+      /** This step's work sessions (see pileActualStepSegments). Absent from
+       * responses predating the feature, and empty for any step that was never
+       * split — which is most of them. */
+      segments?: Array<{
+        id: string;
+        started_at: string;
+        ended_at: string | null;
+        assigned_machine_id: string | null;
+        outcome: 'PARTIAL' | 'FINAL' | null;
+        stop_reason: 'SHIFT_CHANGE' | 'BREAKDOWN' | 'IDLE' | 'OTHER' | null;
+        remaining_minutes: number | null;
+        notes: string | null;
+        machine_event_id: string | null;
+        updated_at?: string | null;
+      }>;
     }>;
     // One-time engineering measurements for this pile — only present on the
     // bootstrap-history response (see syncChecklistHistory.ts). Contractor
@@ -429,6 +446,7 @@ export async function hydrateChecklistFromServer(serverChecklist: {
 
     const planStepRows: NewPilePlanStep[] = [];
     const actualStepRows: NewPileActualStep[] = [];
+    const segmentRows: NewPileActualStepSegment[] = [];
     for (const cp of serverPiles) {
       for (const ps of cp.plan_steps ?? []) {
         planStepRows.push({
@@ -456,19 +474,50 @@ export async function hydrateChecklistFromServer(serverChecklist: {
           updatedAt: now,
           serverUpdatedAt: as.updated_at ?? null,
         });
+        // The server only ever sends LIVE sessions, so replacing the local set
+        // wholesale below is also how a session deleted elsewhere disappears
+        // from this device.
+        for (const seg of as.segments ?? []) {
+          segmentRows.push({
+            id: seg.id,
+            checklistPileId: cp.id,
+            stepId: as.step_id,
+            startedAt: seg.started_at,
+            endedAt: seg.ended_at,
+            assignedMachineId: seg.assigned_machine_id,
+            outcome: seg.outcome,
+            stopReason: seg.stop_reason,
+            remainingMinutes: seg.remaining_minutes,
+            notes: seg.notes,
+            machineEventId: seg.machine_event_id,
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: null,
+            serverUpdatedAt: seg.updated_at ?? null,
+          });
+        }
       }
     }
 
     // deletePlanStepsForChecklist/deleteActualStepsForChecklist (planRepository)
     // aren't reusable here without a circular import — clean up using the
     // stale checklist-pile ids captured above, then insert the fresh set.
+    //
+    // Segments are cleared alongside their actual steps, in the same
+    // transaction: leaving them behind would orphan them against re-inserted
+    // actual rows, and a step's own sessions are exactly as much a part of the
+    // server's copy as its start/end times are.
     for (const cpId of staleCpIds) {
       await tx.delete(pilePlanSteps).where(eq(pilePlanSteps.checklistPileId, cpId));
       await tx.delete(pileActualSteps).where(eq(pileActualSteps.checklistPileId, cpId));
+      await tx
+        .delete(pileActualStepSegments)
+        .where(eq(pileActualStepSegments.checklistPileId, cpId));
     }
 
     if (planStepRows.length) await tx.insert(pilePlanSteps).values(planStepRows);
     if (actualStepRows.length) await tx.insert(pileActualSteps).values(actualStepRows);
+    if (segmentRows.length) await tx.insert(pileActualStepSegments).values(segmentRows);
   });
 
   // Seed one-time pile measurements from bootstrap-history's nested
@@ -513,6 +562,9 @@ export async function purgeChecklistPilesByIds(checklistPileIds: string[]): Prom
   const db = await initDb();
   await db.delete(pilePlanSteps).where(inArray(pilePlanSteps.checklistPileId, checklistPileIds));
   await db.delete(pileActualSteps).where(inArray(pileActualSteps.checklistPileId, checklistPileIds));
+  await db
+    .delete(pileActualStepSegments)
+    .where(inArray(pileActualStepSegments.checklistPileId, checklistPileIds));
   await db.delete(pilingChecklistPiles).where(inArray(pilingChecklistPiles.id, checklistPileIds));
 }
 
@@ -535,6 +587,9 @@ export async function purgeChecklistsByIds(checklistIds: string[]): Promise<void
   if (checklistPileIds.length) {
     await db.delete(pilePlanSteps).where(inArray(pilePlanSteps.checklistPileId, checklistPileIds));
     await db.delete(pileActualSteps).where(inArray(pileActualSteps.checklistPileId, checklistPileIds));
+    await db
+      .delete(pileActualStepSegments)
+      .where(inArray(pileActualStepSegments.checklistPileId, checklistPileIds));
   }
   await db.delete(pilingChecklistPiles).where(inArray(pilingChecklistPiles.checklistId, checklistIds));
   await db.delete(pilingChecklistPersonnel).where(inArray(pilingChecklistPersonnel.checklistId, checklistIds));

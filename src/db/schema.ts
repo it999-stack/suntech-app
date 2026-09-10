@@ -441,6 +441,57 @@ export const pileActualSteps = sqliteTable('pil_actual_steps', {
 export type PileActualStep = typeof pileActualSteps.$inferSelect;
 export type NewPileActualStep = typeof pileActualSteps.$inferInsert;
 
+// ─── Actual Step Segments (per-machine work sessions within one step) ────────
+
+/**
+ * One continuous work session on a step by one machine.
+ *
+ * A step can be paused and handed to another machine mid-way (shift change,
+ * breakdown): R-1 bores until 10:30, R-3 finishes from 14:00. Each of those is
+ * a row here, so per-machine attribution is exact.
+ *
+ * pil_actual_steps stays the roll-up over these — the server recomputes it on
+ * every push and never trusts the client's version. Locally we mirror that
+ * derivation as we write, so every existing reader stays correct offline.
+ * A step with NO segments keeps its actual row exactly as authored, which is
+ * every row predating this table.
+ *
+ * Deliberately no segment number and no unique index: a counter minted offline
+ * as max+1 collides between devices, and matching sync on it would let one
+ * device's push overwrite another's recorded session. Sync matches on `id`,
+ * order comes from startedAt.
+ */
+export const pileActualStepSegments = sqliteTable('pil_actual_step_segments', {
+  id: text('id').primaryKey(),
+  checklistPileId: text('checklist_pile_id').notNull(),
+  stepId: text('step_id').notNull(),
+  /** ISO timestamp string, like actualStart/actualEnd above. */
+  startedAt: text('started_at').notNull(),
+  /** null = this session is still running — what makes the step RUNNING. */
+  endedAt: text('ended_at'),
+  /** The machine that did THIS session. The whole point of the table. */
+  assignedMachineId: text('assigned_machine_id'),
+  /** null while open; 'PARTIAL' = stopped with work left; 'FINAL' = step done. */
+  outcome: text('outcome').$type<'PARTIAL' | 'FINAL'>(),
+  stopReason: text('stop_reason').$type<'SHIFT_CHANGE' | 'BREAKDOWN' | 'IDLE' | 'OTHER'>(),
+  /** Work left when a PARTIAL session stopped — drives the re-plan's duration. */
+  remainingMinutes: integer('remaining_minutes'),
+  notes: text('notes'),
+  /** The machine event (breakdown/replacement) that caused this session, if any. */
+  machineEventId: text('machine_event_id'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  /** Soft delete. Sent explicitly on push — the payload carries the whole
+   * checklist subtree, so absence must never mean "removed". */
+  deletedAt: integer('deleted_at'),
+  /** Server's own updated_at, echoed verbatim for optimistic concurrency —
+   * same contract as pil_actual_steps.serverUpdatedAt. Never a device clock. */
+  serverUpdatedAt: text('server_updated_at'),
+});
+
+export type PileActualStepSegment = typeof pileActualStepSegments.$inferSelect;
+export type NewPileActualStepSegment = typeof pileActualStepSegments.$inferInsert;
+
 // ─── Machine Events (audit log for swap/breakdown reporting) ─────────────────
 
 /**

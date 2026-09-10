@@ -9,11 +9,13 @@ import {
   pilingChecklistPersonnel,
   pilePlanSteps,
   pileActualSteps,
+  pileActualStepSegments,
   pilMachineEvents,
   type PilingChecklistPile,
   type PilingChecklistPersonnel,
   type PilePlanStep,
   type PileActualStep,
+  type PileActualStepSegment,
   type PilMachineEvent,
 } from '@db/schema';
 import type { SyncChecklist, SyncedVersion } from '@sync/SyncAppPlanPayload';
@@ -70,6 +72,25 @@ async function getActualSteps(checklistPileIds: string[]): Promise<PileActualSte
   return results;
 }
 
+/** Includes soft-deleted rows on purpose — unlike every other getter here.
+ * A removed session has to reach the server as an explicit deleted_at, or the
+ * deletion never leaves this device (the server can't infer it from absence,
+ * since absence is also what a device that never saw the row sends). */
+async function getActualStepSegments(checklistPileIds: string[]): Promise<PileActualStepSegment[]> {
+  if (!checklistPileIds.length) return [];
+  const db = await initDb();
+  const results: PileActualStepSegment[] = [];
+  for (const cpId of checklistPileIds) {
+    const rows = await db
+      .select()
+      .from(pileActualStepSegments)
+      .where(eq(pileActualStepSegments.checklistPileId, cpId))
+      .all();
+    results.push(...rows);
+  }
+  return results;
+}
+
 async function getMachineEvents(checklistId: string): Promise<PilMachineEvent[]> {
   const db = await initDb();
   return db.select().from(pilMachineEvents).where(eq(pilMachineEvents.checklistId, checklistId)).all();
@@ -108,13 +129,15 @@ export async function getChecklistsForSync(
     const cpIds = (await getChecklistPiles(cl.id)).map((cp) => cp.id);
 
     // Get all related data
-    const [piles, personnel, planSteps, actualSteps, machineEvents] = await Promise.all([
-      getChecklistPiles(cl.id),
-      getChecklistPersonnel(cl.id),
-      getPlanSteps(cpIds),
-      getActualSteps(cpIds),
-      getMachineEvents(cl.id),
-    ]);
+    const [piles, personnel, planSteps, actualSteps, actualStepSegments, machineEvents] =
+      await Promise.all([
+        getChecklistPiles(cl.id),
+        getChecklistPersonnel(cl.id),
+        getPlanSteps(cpIds),
+        getActualSteps(cpIds),
+        getActualStepSegments(cpIds),
+        getMachineEvents(cl.id),
+      ]);
 
     // Measurements are per *physical* pile (pile_id), not per checklist-pile
     // — gather this checklist's distinct physical pile ids and only send
@@ -179,6 +202,24 @@ export async function getChecklistsForSync(
         // the server's clock and causes false optimistic-concurrency conflicts.
         updated_at: as.serverUpdatedAt ?? undefined,
       })),
+      actual_step_segments: actualStepSegments.map((s) => ({
+        id: s.id,
+        checklist_pile_id: s.checklistPileId,
+        step_id: s.stepId,
+        started_at: s.startedAt,
+        ended_at: s.endedAt ?? undefined,
+        assigned_machine_id: s.assignedMachineId ?? undefined,
+        outcome: s.outcome ?? undefined,
+        stop_reason: s.stopReason ?? undefined,
+        remaining_minutes: s.remainingMinutes ?? undefined,
+        notes: s.notes ?? undefined,
+        machine_event_id: s.machineEventId ?? undefined,
+        // Epoch-ms locally (the app's bookkeeping convention), ISO on the wire.
+        deleted_at: s.deletedAt ? new Date(s.deletedAt).toISOString() : undefined,
+        // Verbatim passthrough of the server's own last-known updated_at —
+        // never the device's edit clock, same reasoning as actual_steps above.
+        updated_at: s.serverUpdatedAt ?? undefined,
+      })),
       machine_events: machineEvents.map((e) => ({
         id: e.id,
         // Always set here — this fetch is scoped to eq(checklistId), which a
@@ -234,6 +275,11 @@ export async function applySyncedVersions(versions: SyncedVersion[]): Promise<vo
         .update(pileActualSteps)
         .set({ serverUpdatedAt: v.updated_at })
         .where(eq(pileActualSteps.id, v.id));
+    } else if (v.entity === 'actual_step_segment') {
+      await db
+        .update(pileActualStepSegments)
+        .set({ serverUpdatedAt: v.updated_at })
+        .where(eq(pileActualStepSegments.id, v.id));
     } else if (v.entity === 'checklist_pile') {
       await db
         .update(pilingChecklistPiles)

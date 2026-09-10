@@ -22,6 +22,7 @@ import MachineDownModal from '@components/plan/actual/MachineDownModal';
 import MachineIdleModal from '@components/plan/actual/MachineIdleModal';
 import SwipeableTabBar from '@components/shared/SwipeableTabBar';
 import ReorderPilesModal from '@components/plan/generate/preview/ReorderPilesModal';
+import ReplanPromptSheet from '@components/plan/actual/ReplanPromptSheet';
 import AddPileModal from '@components/plan/actual/AddPileModal';
 import EmptyState from '@components/shared/EmptyState';
 import { useModalBackGuard } from '@components/shared/ModalHost';
@@ -35,6 +36,7 @@ import { useMachineFloor } from './fillActual/useMachineFloor';
 import { useMachinePages, EMPTY_PILE_GROUPS } from './fillActual/useMachinePages';
 import { usePileModal } from './fillActual/usePileModal';
 import { useSequenceEditor } from './fillActual/useSequenceEditor';
+import { useReplanPrompt } from './fillActual/useReplanPrompt';
 import { useActualTimeActions } from './fillActual/useActualTimeActions';
 import { useMachineEventActions } from './fillActual/useMachineEventActions';
 import MachinePilesPage from './fillActual/MachinePilesPage';
@@ -72,6 +74,13 @@ export default function FillActualsScreen() {
     logMachineEvent,
     editPlanMidDay,
     previewEditPlanMidDay,
+    segmentsByStepKey,
+    pauseStep,
+    resumeStep,
+    finishSegment,
+    editSegmentTime,
+    setSegmentNotes,
+    deleteSegment,
   } = usePlan();
 
   // ── Load the working date's checklist on mount ─────────────────────────
@@ -126,6 +135,7 @@ export default function FillActualsScreen() {
     measurementsByPileId: pileMeasurementsByPileId,
     allSteps,
     durationTemplates,
+    segmentsByStepKey,
   });
 
   const { machineFloorIndex, frontPileIdByMachineId, currentStepByMachineId, inProgressStepByMachineId } =
@@ -171,15 +181,41 @@ export default function FillActualsScreen() {
     previewEditPlanMidDay,
   });
 
-  const { handleSetActualTime, handleClearActualTime, handleSaveRemarks, handleSaveMeasurements } =
-    useActualTimeActions({
-      openGroup,
-      checklist,
-      setActualTime,
-      clearActualTime,
-      setRemarks,
-      setPileMeasurement,
-    });
+  const replan = useReplanPrompt({
+    siteId,
+    checklist,
+    workingDate,
+    checklistPiles,
+    pileGroups,
+    previewEditPlanMidDay,
+    editPlanMidDay,
+  });
+
+  const {
+    handleSetActualTime,
+    handleClearActualTime,
+    handleSaveRemarks,
+    handleSaveMeasurements,
+    handlePauseStep,
+    handleResumeStep,
+    handleFinishSegment,
+    handleEditSegmentTime,
+    handleSetSegmentNotes,
+    handleDeleteSegment,
+  } = useActualTimeActions({
+    openGroup,
+    checklist,
+    setActualTime,
+    clearActualTime,
+    setRemarks,
+    setPileMeasurement,
+    pauseStep,
+    resumeStep,
+    finishSegment,
+    editSegmentTime,
+    setSegmentNotes,
+    deleteSegment,
+  });
 
   const {
     handleLogMachineEvent,
@@ -302,6 +338,17 @@ export default function FillActualsScreen() {
           onSaveRemarks={handleSaveRemarks}
           onLogMachineEvent={handleLogMachineEvent}
           onSaveMeasurements={handleSaveMeasurements}
+          onPauseStep={async (stepId, input) => {
+            await handlePauseStep(stepId, input);
+            // Only after the pause is durably recorded. The prompt is a
+            // follow-up offer, never a gate on logging the time.
+            await replan.offerReplan();
+          }}
+          onResumeStep={handleResumeStep}
+          onFinishSegment={handleFinishSegment}
+          onEditSegmentTime={handleEditSegmentTime}
+          onSetSegmentNotes={handleSetSegmentNotes}
+          onDeleteSegment={handleDeleteSegment}
         />
       )}
 
@@ -350,17 +397,16 @@ export default function FillActualsScreen() {
         />
       )}
 
-      {/* `checklist` is guarded, not asserted: a background sync can purge it
-          mid-session (e.g. the day's plan deleted on another device) while
-          this modal is open, and checklist!.id would then crash. Same for
-          lockedMachineRecord — machines.find() can transiently miss (e.g.
-          machines still loading) now that this stays mounted continuously
-          instead of only while addPileModalOpen was true, so it's part of
-          the mount gate too, not force-unwrapped. */}
-      {/* Stays mounted whenever the underlying data is available — visible
-          toggles instead of the JSX conditionally unmounting it, same as
-          ReorderPilesModal above, so AppModal's own close animation (now
-          that AddPileModal is built on it) actually gets to play. */}
+      {replan.preview && (
+        <ReplanPromptSheet
+          visible
+          preview={replan.preview}
+          isApplying={replan.isApplying}
+          onClose={replan.dismiss}
+          onConfirm={replan.confirmReplan}
+        />
+      )}
+
       {activeMachine && checklist && lockedMachineRecord && (
         <AddPileModal
           visible={addPileModalOpen}
@@ -368,11 +414,6 @@ export default function FillActualsScreen() {
           siteId={siteId}
           checklistId={checklist.id}
           targetDate={workingDate}
-          // Codes, not ids — pil_piles has no uniqueness constraint on
-          // (site_id, pile_id_code) yet, so a sync can leave two different
-          // local rows sharing the same code. Matching by pileId alone would
-          // only exclude whichever row today's plan happens to reference,
-          // letting a duplicate row for the same pile still show as pickable.
           excludePileCodes={
             new Set(
               (draftRows ?? [])

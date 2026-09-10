@@ -25,12 +25,18 @@ interface Props {
 }
 
 export default function PileSequenceRow({ index, pileCode, steps, circleVariant, railColor, onPress }: Props) {
-  const { total, doneCount, pct, status, inProgressStep, nextStep } = getPileProgress(steps);
+  const { total, doneCount, pct, status, inProgressStep, pausedStep, nextStep } = getPileProgress(steps);
   const { worked } = getPileMachines(steps);
   const meta = PILE_CARD_STATUS_META[status];
   const isUpNext = circleVariant === 'upNext';
-  const currentStepPosition = inProgressStep ? doneCount + 1 : undefined;
-  const subtitleStep = inProgressStep ?? nextStep;
+  // A paused step occupies a position in the sequence just as a running one
+  // does — it is the step the pile is stuck on.
+  const liveStep = inProgressStep ?? pausedStep;
+  const currentStepPosition = liveStep ? doneCount + 1 : undefined;
+  const subtitleStep = liveStep ?? nextStep;
+  // The session that stopped, for the "paused 10:30 · 40 min left" line. Last
+  // one wins — a step paused more than once shows its most recent stop.
+  const lastPausedSegment = pausedStep?.segments?.filter((s) => s.endedAt).slice(-1)[0];
 
   return (
     <Pressable style={styles.cardWrap} onPress={onPress}>
@@ -72,28 +78,44 @@ export default function PileSequenceRow({ index, pileCode, steps, circleVariant,
             <Text style={styles.infoLabel}>
               {inProgressStep
                 ? `Current Step${currentStepPosition ? ` (${currentStepPosition}/${total})` : ''}`
-                : nextStep
-                ? 'Next Step'
-                : 'Status'}
+                : pausedStep
+                  ? `Paused At${currentStepPosition ? ` (${currentStepPosition}/${total})` : ''}`
+                  : nextStep
+                    ? 'Next Step'
+                    : 'Status'}
             </Text>
             <Text style={styles.infoValue} numberOfLines={2}>
-              {(inProgressStep ?? nextStep)?.stepName ?? 'All steps completed'}
+              {(liveStep ?? nextStep)?.stepName ?? 'All steps completed'}
             </Text>
           </View>
           {/* Current Machine while a step is actually running, or the
               machine planned to run the upcoming step once it hasn't
               started yet — either way, whichever step column 1 is showing. */}
-          {(inProgressStep ?? nextStep) && (
+          {(liveStep ?? nextStep) && (
             <>
               <View style={styles.infoDivider} />
               <View style={styles.infoCol}>
-                <Text style={styles.infoLabel}>{inProgressStep ? 'Current Machine' : 'Planned Machine'}</Text>
+                <Text style={styles.infoLabel}>
+                  {inProgressStep ? 'Current Machine' : pausedStep ? 'Last Machine' : 'Planned Machine'}
+                </Text>
                 <MachineBadge
-                  track={(inProgressStep ?? nextStep)!.track}
-                  label={(inProgressStep ?? nextStep)!.assignedMachineNo ?? '-'}
+                  track={(liveStep ?? nextStep)!.track}
+                  label={(liveStep ?? nextStep)!.assignedMachineNo ?? '-'}
                 />
                 {inProgressStep?.actualStartIso && (
                   <Text style={styles.sinceText}>Since {formatTime(inProgressStep.actualStartIso)}</Text>
+                )}
+                {/* Deliberately NOT "Since ..." for a paused step: the machine
+                    stopped working it, so how long ago it started is
+                    misleading. When it stopped, and how much is left, is what
+                    the supervisor actually needs. */}
+                {pausedStep && lastPausedSegment?.endedAt && (
+                  <Text style={styles.sinceText}>
+                    Paused {formatTime(lastPausedSegment.endedAt)}
+                    {lastPausedSegment.remainingMinutes != null
+                      ? ` · ${lastPausedSegment.remainingMinutes} min left`
+                      : ''}
+                  </Text>
                 )}
               </View>
             </>

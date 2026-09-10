@@ -21,6 +21,14 @@ export function useSaveMachineEvent(args: {
   async function handleSave() {
     Keyboard.dismiss();
     setSaving(true);
+    // Every write this drives is local SQLite — no network round trip — so
+    // it can resolve within the same microtask flush that `setSaving(true)`
+    // scheduled. Without a real yield here, React can batch that render
+    // together with the completion (which unmounts this modal) into a single
+    // commit, and the spinner never actually reaches the screen even though
+    // `saving` was briefly true. Waiting a frame forces the "saving" state to
+    // paint before the write starts.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     try {
       await onLogMachineEvent(buildInput());
       onSaved();

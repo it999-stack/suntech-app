@@ -37,6 +37,18 @@ import {
   type PlanStepWithMeta,
   type ActualStepWithMeta,
 } from '@repositories/planRepository';
+import {
+  ensureBaselineSegment,
+  getSegmentsForChecklistPiles,
+  getSegmentsForStep,
+  insertSegment,
+  softDeleteSegment,
+  updateSegment,
+} from '@repositories/segmentsRepository';
+import {
+  closeLastLiveSegment,
+  syncActualRollupFromSegments,
+} from '@services/stepSegmentActions';
 import { insertMachineEvent } from '@repositories/machineEventsRepository';
 import { setMachineStatusLocal } from '@repositories/machinesRepository';
 import {
@@ -55,6 +67,7 @@ import type {
   PilingDailyChecklist,
   PilingChecklistPile,
   PilPileMeasurement,
+  PileActualStepSegment,
 } from '@db/schema';
 import type { ResumeWork, ChecklistPersonnelAssignment, PileMeasurementFields } from '@/types/plan';
 import { buildChecklistPersonnelPayload } from '@/utils/personnelRoles';
@@ -174,6 +187,23 @@ export type LogMachineEventInput = {
   occurredAt: string;
 };
 
+/** Group a checklist's live work sessions by `${checklistPileId}:${stepId}`.
+ * Module-level rather than a hook so loadChecklist and the post-write refresh
+ * can't drift into building the key differently. */
+async function loadSegmentsByStepKey(
+  checklistPileIds: string[],
+): Promise<Map<string, PileActualStepSegment[]>> {
+  const rows = await getSegmentsForChecklistPiles(checklistPileIds);
+  const map = new Map<string, PileActualStepSegment[]>();
+  for (const row of rows) {
+    const key = `${row.checklistPileId}:${row.stepId}`;
+    const list = map.get(key);
+    if (list) list.push(row);
+    else map.set(key, [row]);
+  }
+  return map;
+}
+
 type PlanContextValue = {
   /** Checklist for the currently loaded date. */
   checklist: PilingDailyChecklist | null;
@@ -259,6 +289,52 @@ type PlanContextValue = {
     stepId: string,
     input: LogMachineEventInput,
   ) => Promise<void>;
+
+  // ── Work sessions ───────────────────────────────────────────────────────
+  /** This checklist's live work sessions, keyed `${checklistPileId}:${stepId}`
+   * and oldest-first. Empty for every step never split. */
+  segmentsByStepKey: Map<string, PileActualStepSegment[]>;
+  /** Stop a step part-way, optionally handing it to another machine. */
+  pauseStep: (
+    checklistPileId: string,
+    stepId: string,
+    input: {
+      stoppedAtIso: string;
+      notes?: string;
+      /** Only set by the machine-replacement path, which knows why work
+       * stopped and who is taking over without having to ask. */
+      stopReason?: 'SHIFT_CHANGE' | 'BREAKDOWN' | 'IDLE' | 'OTHER';
+      continueOnMachineId?: string;
+      machineId?: string;
+      actualStartIso?: string;
+      machineEventId?: string;
+    },
+  ) => Promise<void>;
+  /** Pick a paused step back up on a machine. */
+  resumeStep: (
+    checklistPileId: string,
+    stepId: string,
+    input: { startedAtIso: string; machineId?: string },
+  ) => Promise<void>;
+  /** Finish a step that has work sessions — closes the open one as FINAL. */
+  finishSegment: (
+    checklistPileId: string,
+    stepId: string,
+    input: { endedAtIso: string; notes?: string },
+  ) => Promise<void>;
+  /** Correct one already-recorded session's start or end time. */
+  editSegmentTime: (
+    checklistPileId: string,
+    stepId: string,
+    segmentId: string,
+    field: 'start' | 'finish',
+    isoTimestamp: string,
+  ) => Promise<void>;
+  /** Remove one mis-recorded work session. */
+  /** Free-text note on one work session — the segment-scoped counterpart to
+   * setRemarks above. */
+  setSegmentNotes: (checklistPileId: string, stepId: string, segmentId: string, notes: string) => Promise<void>;
+  deleteSegment: (checklistPileId: string, stepId: string, segmentId: string) => Promise<void>;
 };
 
 const PlanContext = createContext<PlanContextValue | undefined>(undefined);
@@ -284,6 +360,12 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
   );
   const [planSteps, setPlanSteps] = useState<PlanStepWithMeta[]>([]);
   const [actualSteps, setActualSteps] = useState<ActualStepWithMeta[]>([]);
+  /** Live work sessions for the loaded checklist, keyed
+   * `${checklistPileId}:${stepId}` and oldest-first. Empty for every step that
+   * was never split, which is most of them. */
+  const [segmentsByStepKey, setSegmentsByStepKey] = useState<Map<string, PileActualStepSegment[]>>(
+    new Map(),
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   // Separate from isGenerating: Delete and Edit sit next to each other on
@@ -318,11 +400,13 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         setPlanSteps(steps);
         setActualSteps(actuals);
         setChecklistPiles(piles);
+        setSegmentsByStepKey(await loadSegmentsByStepKey(piles.map((p) => p.id)));
         setPileMeasurementsByPileId(await getPileMeasurementsByPileIds(piles.map((p) => p.pileId)));
       } else {
         setPlanSteps([]);
         setActualSteps([]);
         setChecklistPiles([]);
+        setSegmentsByStepKey(new Map());
         setPileMeasurementsByPileId(new Map());
       }
     } catch (err) {
@@ -600,12 +684,16 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           id: existing?.id ?? generateId(),
           checklistPileId,
           stepId,
-          actualStart: field === 'actualStart' ? isoTimestamp : (existing?.actualStart ?? null),
-          actualEnd: field === 'actualEnd' ? isoTimestamp : (existing?.actualEnd ?? null),
-          remarks: existing?.remarks ?? null,
-          // Falls back to whatever was already recorded rather than blanking
-          // it, so a caller that can't resolve a machine never erases one.
-          assignedMachineId: assignedMachineId ?? existing?.assignedMachineId ?? null,
+          // Only the field being set is passed — upsertActualStep's patch
+          // semantics leave every other column (remarks included) exactly as
+          // stored, rather than this re-copying a possibly-stale snapshot of
+          // it. This is what keeps a Stop-work action safe: it calls this and
+          // then setRemarks back to back, and neither call may clobber what
+          // the other just wrote.
+          ...(field === 'actualStart' ? { actualStart: isoTimestamp } : { actualEnd: isoTimestamp }),
+          // Omitted entirely when the caller can't resolve a machine, so a
+          // caller that can't resolve one never erases one already recorded.
+          ...(assignedMachineId !== undefined ? { assignedMachineId } : {}),
         });
 
         if (checklist) {
@@ -622,6 +710,244 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     [actualSteps, checklist],
   );
 
+  // ── Work sessions (a step split between machines) ─────────────────────────
+  //
+  // The server owns the roll-up: it recomputes pil_actual_steps from a step's
+  // sessions on every push and ignores whatever the client claims. These
+  // actions mirror that derivation locally as they write, so every existing
+  // reader (progress counts, the machine floor, the reports screen) stays
+  // correct while offline instead of waiting for a round trip.
+
+  /** Re-read this checklist's sessions and the roll-ups they drive, then queue
+   * a push. Shared by all three actions below so none of them can forget a
+   * step and leave the screen showing stale state. */
+  const refreshAfterSegmentWrite = useCallback(async () => {
+    if (!checklist) return;
+    const [segments, actuals] = await Promise.all([
+      loadSegmentsByStepKey(checklistPiles.map((cp) => cp.id)),
+      getActualStepsForChecklist(checklist.id),
+    ]);
+    setSegmentsByStepKey(segments);
+    setActualSteps(actuals);
+    await enqueueChecklistSync(checklist.id);
+    triggerDebounced('new-write');
+  }, [checklist, checklistPiles]);
+
+  /** Mirror the server's roll-up rule onto the local actual row — see
+   * services/stepSegmentActions.ts, the one place this derivation is stated
+   * so no other write path (e.g. resumeWorkService's close-out) can drift
+   * into a different answer for the same question. */
+  const syncRollupFromSegments = useCallback(
+    async (checklistPileId: string, stepId: string) => {
+      const existing = actualSteps.find(
+        (a) => a.checklistPileId === checklistPileId && a.stepId === stepId,
+      );
+      await syncActualRollupFromSegments(checklistPileId, stepId, existing);
+    },
+    [actualSteps],
+  );
+
+  /**
+   * Stop work on a step part-way: close the running session as PARTIAL and,
+   * when a machine is taking over, open the next one on it.
+   *
+   * `machineId` is the step's FULLY RESOLVED machine (plan ?? actual ?? the
+   * pile's own rig/crane), needed to back-fill a baseline session for a step
+   * that was already in progress before this feature existed.
+   */
+  const pauseStep = useCallback(
+    async (
+      checklistPileId: string,
+      stepId: string,
+      input: {
+        stoppedAtIso: string;
+        notes?: string;
+        /** Why work stopped. Not asked in the finish sheet — the remark says
+         * it in the operator's own words — but the machine-replacement path
+         * already knows, so it passes one through. */
+        stopReason?: 'SHIFT_CHANGE' | 'BREAKDOWN' | 'IDLE' | 'OTHER';
+        /** Machine picking the work up. Omitted = paused with nobody
+         * assigned, which is the normal case: who resumes is asked when the
+         * step is actually resumed, by which point it is known. */
+        continueOnMachineId?: string;
+        /** The step's currently resolved machine — see above. */
+        machineId?: string;
+        actualStartIso?: string;
+        machineEventId?: string;
+      },
+    ) => {
+      setError(null);
+      try {
+        await ensureBaselineSegment({
+          checklistPileId,
+          stepId,
+          actualStartIso: input.actualStartIso,
+          machineId: input.machineId,
+        });
+
+        const live = await getSegmentsForStep(checklistPileId, stepId);
+        const open = live.find((s) => !s.endedAt) ?? live[live.length - 1];
+        if (open) {
+          await updateSegment(open.id, {
+            endedAt: input.stoppedAtIso,
+            outcome: 'PARTIAL',
+            stopReason: input.stopReason ?? null,
+            // Not captured here. The re-plan derives what is left from the
+            // step's template minus what was actually worked (see
+            // classify_piles._paused_resume_work), so asking for a number the
+            // system can compute would be a field with no decision behind it.
+            remainingMinutes: null,
+            notes: input.notes ?? null,
+            machineEventId: input.machineEventId ?? null,
+          });
+        }
+
+        if (input.continueOnMachineId) {
+          await insertSegment({
+            checklistPileId,
+            stepId,
+            // Starts where the previous one stopped: a handover is continuous
+            // work by definition. A genuine gap is a pause with no machine,
+            // resumed later at its own recorded time.
+            startedAt: input.stoppedAtIso,
+            endedAt: null,
+            assignedMachineId: input.continueOnMachineId,
+            outcome: null,
+            stopReason: null,
+            remainingMinutes: null,
+            notes: null,
+            machineEventId: input.machineEventId ?? null,
+            deletedAt: null,
+            serverUpdatedAt: null,
+          });
+        }
+
+        await syncRollupFromSegments(checklistPileId, stepId);
+        await refreshAfterSegmentWrite();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to pause step');
+        throw err;
+      }
+    },
+    [refreshAfterSegmentWrite, syncRollupFromSegments],
+  );
+
+  /** Pick a paused step back up — opens a new session on the given machine. */
+  const resumeStep = useCallback(
+    async (
+      checklistPileId: string,
+      stepId: string,
+      input: { startedAtIso: string; machineId?: string },
+    ) => {
+      setError(null);
+      try {
+        await insertSegment({
+          checklistPileId,
+          stepId,
+          startedAt: input.startedAtIso,
+          endedAt: null,
+          assignedMachineId: input.machineId ?? null,
+          outcome: null,
+          stopReason: null,
+          remainingMinutes: null,
+          notes: null,
+          machineEventId: null,
+          deletedAt: null,
+          serverUpdatedAt: null,
+        });
+        await syncRollupFromSegments(checklistPileId, stepId);
+        await refreshAfterSegmentWrite();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to resume step');
+        throw err;
+      }
+    },
+    [refreshAfterSegmentWrite, syncRollupFromSegments],
+  );
+
+  /** Finish a step that has sessions — closes the open one as FINAL. */
+  const finishSegment = useCallback(
+    async (
+      checklistPileId: string,
+      stepId: string,
+      input: { endedAtIso: string; notes?: string },
+    ) => {
+      setError(null);
+      try {
+        await closeLastLiveSegment(checklistPileId, stepId, {
+          endedAtIso: input.endedAtIso,
+          notes: input.notes,
+        });
+        await syncRollupFromSegments(checklistPileId, stepId);
+        await refreshAfterSegmentWrite();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to finish step');
+        throw err;
+      }
+    },
+    [refreshAfterSegmentWrite, syncRollupFromSegments],
+  );
+
+  /** Correct one already-recorded session time (not for filling a blank one —
+   * that's pauseStep/resumeStep/finishSegment). `isoTimestamp` has already
+   * been validated against this session's own bounds by the caller (see
+   * actualTimeRules.forSegment) before this is called. */
+  const editSegmentTime = useCallback(
+    async (
+      checklistPileId: string,
+      stepId: string,
+      segmentId: string,
+      field: 'start' | 'finish',
+      isoTimestamp: string,
+    ) => {
+      setError(null);
+      try {
+        await updateSegment(segmentId, field === 'start' ? { startedAt: isoTimestamp } : { endedAt: isoTimestamp });
+        await syncRollupFromSegments(checklistPileId, stepId);
+        await refreshAfterSegmentWrite();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to update the work session');
+        throw err;
+      }
+    },
+    [refreshAfterSegmentWrite, syncRollupFromSegments],
+  );
+
+  /** Free-text note on one session — the segment-scoped counterpart to
+   * setRemarks, which is step-scoped. Never touches actual_start/actual_end/
+   * assigned_machine_id, so unlike editSegmentTime/pauseStep/resumeStep it
+   * needs no roll-up re-derivation: derive_rollup (and its local mirror,
+   * syncActualRollupFromSegments) never reads a segment's notes. */
+  const setSegmentNotes = useCallback(
+    async (checklistPileId: string, stepId: string, segmentId: string, notes: string) => {
+      setError(null);
+      try {
+        await updateSegment(segmentId, { notes: notes || null });
+        await refreshAfterSegmentWrite();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to save remarks');
+        throw err;
+      }
+    },
+    [refreshAfterSegmentWrite],
+  );
+
+  /** Remove one recorded session (a mis-entry). Soft — see segmentsRepository. */
+  const deleteSegment = useCallback(
+    async (checklistPileId: string, stepId: string, segmentId: string) => {
+      setError(null);
+      try {
+        await softDeleteSegment(segmentId);
+        await syncRollupFromSegments(checklistPileId, stepId);
+        await refreshAfterSegmentWrite();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to remove work session');
+        throw err;
+      }
+    },
+    [refreshAfterSegmentWrite, syncRollupFromSegments],
+  );
+
   const clearActualTime = useCallback(
     async (checklistPileId: string, stepId: string, field: 'actualStart' | 'actualEnd') => {
       setError(null);
@@ -635,9 +961,11 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           id: existing.id,
           checklistPileId,
           stepId,
-          actualStart: field === 'actualStart' ? null : (existing.actualStart ?? null),
-          actualEnd: field === 'actualStart' || field === 'actualEnd' ? null : (existing.actualEnd ?? null),
-          remarks: existing.remarks ?? null,
+          // Clearing the start also clears the end — a step can't have a
+          // finish time without a start. Remarks is untouched (omitted), not
+          // recopied from `existing`.
+          actualStart: field === 'actualStart' ? null : undefined,
+          actualEnd: null,
         });
 
         if (checklist) {
@@ -666,8 +994,11 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           id: existing?.id ?? generateId(),
           checklistPileId,
           stepId,
-          actualStart: existing?.actualStart ?? null,
-          actualEnd: existing?.actualEnd ?? null,
+          // actualStart/actualEnd omitted entirely — this only ever touches
+          // remarks. Previously this recopied existing?.actualStart/actualEnd
+          // from React state, which could still be the pre-finish snapshot
+          // when this runs right after setActualTime in the same Stop-work
+          // action, silently reverting the finish time it had just saved.
           remarks,
         });
 
@@ -729,6 +1060,39 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           occurredAt: input.occurredAt,
         });
 
+        // Replacing the machine on a step that is CURRENTLY RUNNING is a
+        // handover, not a correction: one machine did the first part, another
+        // does the rest. Recorded as work sessions so each is credited with
+        // what it actually did — reassignMachineFromStep below rewrites the
+        // plan row's machine, which on its own would hand the departing
+        // machine's hours to the replacement.
+        //
+        // Only for a running step. On a not-yet-started one there is nothing
+        // to split, and on a finished one the supervisor is correcting who did
+        // it — both keep the original behaviour.
+        if (input.eventType === 'REPLACED' && input.replacementId) {
+          const existingSegments = await getSegmentsForStep(checklistPileId, stepId);
+          const rollup = actualSteps.find(
+            (a) => a.checklistPileId === checklistPileId && a.stepId === stepId,
+          );
+          const isRunning = existingSegments.length
+            ? !existingSegments[existingSegments.length - 1].endedAt
+            : !!rollup?.actualStart && !rollup?.actualEnd;
+
+          if (isRunning) {
+            await pauseStep(checklistPileId, stepId, {
+              stoppedAtIso: input.occurredAt,
+              // The event already says why. BREAKDOWN when that's what
+              // prompted the swap, OTHER for a plain reassignment.
+              stopReason: input.notes?.toLowerCase().includes('breakdown') ? 'BREAKDOWN' : 'OTHER',
+              notes: input.notes ?? undefined,
+              continueOnMachineId: input.replacementId,
+              machineId: input.machineId ?? undefined,
+              actualStartIso: rollup?.actualStart ?? undefined,
+            });
+          }
+        }
+
         if (input.eventType === 'REPLACED' && input.replacementId) {
           const currentStep = planSteps.find(
             (s) => s.checklistPileId === checklistPileId && s.stepId === stepId,
@@ -758,9 +1122,8 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
               id: existingActual?.id ?? generateId(),
               checklistPileId,
               stepId,
-              actualStart: existingActual?.actualStart ?? null,
-              actualEnd: existingActual?.actualEnd ?? null,
-              remarks: existingActual?.remarks ?? null,
+              // actualStart/actualEnd/remarks omitted — patch semantics
+              // preserve them exactly, rather than recopying them here.
               assignedMachineId: input.replacementId,
             });
           }
@@ -796,7 +1159,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [checklistPiles, planSteps, actualSteps, checklist],
+    [checklistPiles, planSteps, actualSteps, checklist, pauseStep],
   );
 
   // ── Derived plan status ───────────────────────────────────────────────────
@@ -829,6 +1192,13 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       setRemarks,
       setPileMeasurement,
       logMachineEvent,
+      segmentsByStepKey,
+      pauseStep,
+      resumeStep,
+      finishSegment,
+      editSegmentTime,
+      setSegmentNotes,
+      deleteSegment,
     }),
     [
       checklist,
@@ -853,6 +1223,13 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       setRemarks,
       setPileMeasurement,
       logMachineEvent,
+      segmentsByStepKey,
+      pauseStep,
+      resumeStep,
+      finishSegment,
+      editSegmentTime,
+      setSegmentNotes,
+      deleteSegment,
     ],
   );
 

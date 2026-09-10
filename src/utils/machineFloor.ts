@@ -30,6 +30,9 @@ type MachineInterval = {
    * two different piles' same-named step apart. This is what actually makes an
    * interval unique across the whole checklist; see the exclusion check below. */
   checklistPileId: string;
+  /** Set when this interval came from one work session rather than the step as
+   * a whole — lets a caller exclude the very session being edited. */
+  segmentId?: string;
   start: string;
   end: string;
   /** Carried along purely so a conflict can be reported by name — "Machine
@@ -52,20 +55,46 @@ export type MachineFloorIndex = Map<string, MachineInterval[]>;
  */
 export function buildMachineFloorIndex(pileGroups: PileGroup[]): MachineFloorIndex {
   const index: MachineFloorIndex = new Map();
+  const push = (machineId: string, entry: MachineInterval) => {
+    const list = index.get(machineId);
+    if (list) list.push(entry);
+    else index.set(machineId, [entry]);
+  };
+
   for (const group of pileGroups) {
     for (const step of group.steps) {
-      if (!step.assignedMachineId || !step.actualStartIso || !step.actualEndIso) continue;
-      const entry: MachineInterval = {
+      const base = {
         stepId: step.stepId,
         checklistPileId: group.checklistPileId,
-        start: step.actualStartIso,
-        end: step.actualEndIso,
         pileCode: group.pileCode,
         stepName: step.stepName,
       };
-      const list = index.get(step.assignedMachineId);
-      if (list) list.push(entry);
-      else index.set(step.assignedMachineId, [entry]);
+
+      // A step split between machines contributes ONE INTERVAL PER SESSION,
+      // each under the machine that actually worked it. Collapsing it to the
+      // step's own span under its roll-up machine would be wrong three times
+      // over: it would credit the whole span to whichever machine holds the
+      // step now, hide the other machine's occupancy entirely, and mark the
+      // pause gap — when neither was on this pile — as busy.
+      if (step.segments?.length) {
+        for (const seg of step.segments) {
+          if (!seg.assignedMachineId || !seg.endedAt) continue; // open session isn't settled
+          push(seg.assignedMachineId, {
+            ...base,
+            segmentId: seg.id,
+            start: seg.startedAt,
+            end: seg.endedAt,
+          });
+        }
+        continue;
+      }
+
+      if (!step.assignedMachineId || !step.actualStartIso || !step.actualEndIso) continue;
+      push(step.assignedMachineId, {
+        ...base,
+        start: step.actualStartIso,
+        end: step.actualEndIso,
+      });
     }
   }
   return index;
@@ -101,6 +130,13 @@ function candidateRange(candidateStart: Date, candidateEnd?: Date): [number, num
  * pile's same-named step on this machine, hiding a genuine double-booking
  * between two different piles. `excludeChecklistPileId` (unique per pile)
  * is what actually disambiguates.
+ *
+ * `excludeSegmentId`, when given, narrows exclusion from "the whole step" to
+ * "this one session" — needed when editing a single work session's time on a
+ * step that has several. Excluding by step there would also hide a SIBLING
+ * session on the same machine, which is exactly the case this check has to
+ * catch: two sessions of the same step overlapping on the same machine is a
+ * genuine double-booking, not something "being the same step" excuses.
  */
 export function findMachineConflict(
   index: MachineFloorIndex,
@@ -109,6 +145,7 @@ export function findMachineConflict(
   excludeStepId: string,
   candidateStart: Date,
   candidateEnd?: Date,
+  excludeSegmentId?: string,
 ): MachineInterval | null {
   if (!machineId) return null;
   const intervals = index.get(machineId);
@@ -117,7 +154,11 @@ export function findMachineConflict(
   const [start, end] = candidateRange(candidateStart, candidateEnd);
   return (
     intervals.find((interval) => {
-      if (interval.checklistPileId === excludeChecklistPileId && interval.stepId === excludeStepId) return false;
+      if (excludeSegmentId) {
+        if (interval.segmentId === excludeSegmentId) return false;
+      } else if (interval.checklistPileId === excludeChecklistPileId && interval.stepId === excludeStepId) {
+        return false;
+      }
       const otherStart = new Date(interval.start).getTime();
       const otherEnd = new Date(interval.end).getTime();
       return intervalsOverlap(start, end, otherStart, otherEnd);
@@ -131,6 +172,14 @@ export function findMachineConflict(
  * already-recorded actual interval genuinely overlaps
  * `[candidateStart, candidateEnd)`, or null if none does. Purely "does this
  * pile's own timeline already have something recorded here".
+ *
+ * Deliberately still reads the step's ROLL-UP span, not its individual work
+ * sessions — unlike buildMachineFloorIndex above, and this asymmetry is the
+ * point. A machine genuinely is free during another step's pause gap, so it
+ * must be bookable then. A PILE is not: its steps are one physical sequence,
+ * and step N+1 must not be recorded inside step N's pause, whoever is holding
+ * the machine. Narrowing this to segments would let a pile's own steps
+ * interleave.
  */
 export function findPileStepConflict(
   steps: ActualEntry[],

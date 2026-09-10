@@ -14,6 +14,12 @@ type Mode = 'start' | 'finish';
 
 interface Props {
   mode: Mode;
+  /** Overrides the default button text. The finish control no longer always
+   * FINISHES a step — for a running step it opens the "complete or paused?"
+   * sheet — so the caller in that case names it for what it actually does.
+   * Without this the only affordance for pausing reads as "Fill finish time",
+   * which nobody looking to pause would ever tap. */
+  label?: string;
   /**
    * What the picker opens on, as minutes-since-midnight. A thunk, not a
    * value: the finish seed falls back to "now" once a step has overrun its
@@ -94,6 +100,7 @@ interface Props {
 
 export default function StepTimeControl({
   mode,
+  label,
   getDefaultMinutes,
   onConfirm,
   machineConflictCheck,
@@ -148,7 +155,7 @@ export default function StepTimeControl({
     <>
         <View style={styles.wrap}>
           <Button
-            label={mode === 'start' ? 'Fill start time' : 'Fill finish time'}
+            label={label ?? (mode === 'start' ? 'Fill start time' : 'Fill finish time')}
             icon={mode === 'start' ? Play : Flag}
             disabled={saving}
             onPress={() => {

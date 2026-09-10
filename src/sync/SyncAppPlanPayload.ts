@@ -37,6 +37,40 @@ export interface SyncActualStep {
 }
 
 /**
+ * One work session on a step — see pileActualStepSegments in db/schema.ts.
+ *
+ * Sent as a flat list on the checklist rather than nested inside its actual
+ * step: a session is keyed on (checklist_pile_id, step_id) directly, and can
+ * legitimately exist for a step whose roll-up row the server hasn't seen yet.
+ *
+ * Matched server-side on `id`, NOT on a natural key the way actual steps are.
+ * The only candidate natural key would need an ordinal, and one minted offline
+ * is duplicated by every device working that step — natural-key matching would
+ * then let one device's push silently overwrite another's recorded session.
+ */
+export interface SyncActualStepSegment {
+  id: string;
+  checklist_pile_id: string;
+  step_id: string;
+  started_at: string;
+  ended_at?: string | null;
+  assigned_machine_id?: string | null;
+  outcome?: 'PARTIAL' | 'FINAL' | null;
+  stop_reason?: 'SHIFT_CHANGE' | 'BREAKDOWN' | 'IDLE' | 'OTHER' | null;
+  remaining_minutes?: number | null;
+  notes?: string | null;
+  machine_event_id?: string | null;
+  /**
+   * Soft delete, sent explicitly rather than by omission: this payload carries
+   * the whole checklist subtree, so a device that never saw a session would
+   * otherwise erase it just by pushing.
+   */
+  deleted_at?: string | null;
+  /** Optimistic-concurrency base version — see SyncActualStep.updated_at. */
+  updated_at?: string | null;
+}
+
+/**
  * One physical pile's one-time engineering measurements — keyed by pile_id
  * (not checklist_pile_id), all fields but pile_id optional. Upserted
  * server-side keyed by pile_id, plain last-write-wins (no
@@ -107,6 +141,9 @@ export interface SyncChecklist {
   piles: SyncChecklistPile[];
   plan_steps: SyncPlanStep[];
   actual_steps: SyncActualStep[];
+  /** Per-machine work sessions. Empty for a checklist where no step was ever
+   * split — which is every checklist until someone uses the feature. */
+  actual_step_segments: SyncActualStepSegment[];
   machine_events: SyncMachineEvent[];
   pile_measurements: SyncPileMeasurement[];
 }
@@ -116,7 +153,7 @@ export interface SyncAppPlanPayload {
 }
 
 export interface SyncConflict {
-  entity: 'actual_step' | 'checklist_pile';
+  entity: 'actual_step' | 'actual_step_segment' | 'checklist_pile';
   id: string;
   reason: string;
   /** Absent when the conflict is not a version race — an actual step rejected
@@ -137,7 +174,7 @@ export interface SyncConflict {
  * back-to-back edits could get rejected as a false self-conflict.
  */
 export interface SyncedVersion {
-  entity: 'actual_step' | 'checklist_pile';
+  entity: 'actual_step' | 'actual_step_segment' | 'checklist_pile';
   id: string;
   updated_at: string;
 }
@@ -163,6 +200,7 @@ export interface SyncAppPlanResponse {
   checklists_synced: number;
   plan_steps_synced: number;
   actual_steps_synced: number;
+  actual_step_segments_synced?: number;
   machine_events_synced: number;
   /** Informational only — the server never reports per-row conflicts for
    * measurements (plain last-write-wins, no optimistic-concurrency check). */

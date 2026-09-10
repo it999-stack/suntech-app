@@ -116,6 +116,12 @@ export default function MachineInfoCard({
             icon={AlertTriangle}
             label="Report issue"
             variant="danger"
+            // A machine is in exactly one of ACTIVE/IDLE/BREAKDOWN at a time
+            // (pilingMachines.status is a single column, not independent
+            // flags) — reporting a breakdown while idle would silently
+            // overwrite the open idle session's status, so idle has to be
+            // ended first.
+            disabled={isIdle}
             onPress={onBreakdown}
           />
         )}
@@ -126,6 +132,11 @@ export default function MachineInfoCard({
             icon={Coffee}
             label="Start idle"
             variant="outline"
+            // Same reasoning in the other direction: starting idle while
+            // BREAKDOWN would overwrite that status, and ending idle later
+            // would then silently clear the breakdown too, with no RESUMED
+            // event ever logged.
+            disabled={isDown}
             onPress={onStartIdle}
           />
         )}

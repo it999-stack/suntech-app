@@ -74,12 +74,8 @@ interface ResumeTimeConfirmModalProps {
 type ResumeStatus = 'partial' | 'full' | null;
 
 const REMARKS_MAX_LENGTH = 300;
-// Caps how tall the completed-steps list can grow before it scrolls within
-// itself, so a pile with ten prior steps doesn't push the question and its
-// answer buttons off-screen. Every step stays reachable — bounded, not
-// truncated. ~3.4 rows at the row height below, so a partly-visible row is
-// always peeking when there's more to scroll to.
 const COMPLETED_STEPS_MAX_HEIGHT = 236;
+const DEFAULT_FINISH_OFFSET_MINUTES = 60;
 
 export default function ResumeTimeConfirmModal({
   visible,
@@ -93,8 +89,23 @@ export default function ResumeTimeConfirmModal({
   todayPlanEndIso,
   onClose,
 }: ResumeTimeConfirmModalProps) {
-  const seedFinish = () =>
-    new Date(effectiveStart.getTime() + Math.max(0, resumeWork.remainingMinutes) * 60000);
+  const seedFinish = () => new Date(effectiveStart.getTime() + DEFAULT_FINISH_OFFSET_MINUTES * 60000);
+
+  // The in-progress step's own work sessions from the previous day(s),
+  // oldest first — empty for an ordinary step that was never split.
+  const carriedSegments = resumeWork.carriedSegments ?? [];
+  const lastCarriedSegment = carriedSegments.length
+    ? carriedSegments[carriedSegments.length - 1]
+    : null;
+
+  const seedPastDate = (): Date => {
+    if (lastCarriedSegment?.endedAt) return new Date(lastCarriedSegment.endedAt);
+    return seedResumeCloseOutTime({
+      pastActualStartIso: lastCarriedSegment?.startedAt ?? resumeWork.pastActualStart,
+      checklistDate: resumeWork.checklistDate,
+      templateMinutes: resumeWork.remainingMinutes,
+    });
+  };
 
   // In editingCompleted mode, "the previous day" refers to lastConfirmedFull's own
   // step — resumeWork.pastActualStart/stepName by then describe the *next*
@@ -120,37 +131,11 @@ export default function ResumeTimeConfirmModal({
       return resumeWork.lastConfirmedFull ? new Date(resumeWork.lastConfirmedFull.pastEndIso) : new Date();
     }
     if (resumeWork.confirmedPastEndIso) return new Date(resumeWork.confirmedPastEndIso);
-    return seedResumeCloseOutTime({
-            pastActualStartIso: resumeWork.pastActualStart,
-            checklistDate: resumeWork.checklistDate,
-            templateMinutes: resumeWork.remainingMinutes,
-          });
+    return seedPastDate();
   });
   const [finishDate, setFinishDate] = useState<Date>(seedFinish);
   const [pickerTarget, setPickerTarget] = useState<'past' | 'finish' | null>(null);
-  /**
-   * Forces a re-render after the date picker's native window is torn down.
-   * Nobody reads the value — the render itself is the point.
-   *
-   * NativeTimerSelectMenu uses react-native-date-picker's `modal`, which opens
-   * its OWN native window on top of the single shared one ModalHost owns. That
-   * is exactly the stacked-native-window pattern ModalHost.tsx was built to
-   * eliminate, and the picker escapes it by rendering its own <Modal>. On
-   * Android, tearing that window down can leave the host window's backdrop
-   * painted but its contents stale — the sheet disappears and only the dim
-   * overlay remains.
-   *
-   * An ACCEPTED pick recovers by accident: setFinishDate/setPastDate re-renders
-   * this component, AppModal re-pushes a fresh content element, and ModalHost
-   * repaints. A REJECTED pick changes no state whatsoever, so nothing repaints
-   * and the sheet stays gone — which is why this only ever showed up alongside
-   * a notify.error. Bumping this in the confirm handler gives the rejected path
-   * the same re-render the accepted one gets for free.
-   *
-   * It must fire from onConfirm, not onClose: onClose runs immediately, while
-   * the native dialog is still animating away, so its repaint gets clobbered.
-   * onConfirm is deferred 300ms by the picker, landing after teardown.
-   */
+ 
   const [, bumpHostRepaint] = useState(0);
   const [remarks, setRemarks] = useState(
     editingCompleted ? (resumeWork.lastConfirmedFull?.remarks ?? '') : (resumeWork.confirmedRemarks ?? ''),
@@ -199,13 +184,7 @@ export default function ResumeTimeConfirmModal({
     }
     setStatus(resumeWork.confirmedStatus ?? null);
     setPastDate(
-      resumeWork.confirmedPastEndIso
-        ? new Date(resumeWork.confirmedPastEndIso)
-        : seedResumeCloseOutTime({
-            pastActualStartIso: resumeWork.pastActualStart,
-            checklistDate: resumeWork.checklistDate,
-            templateMinutes: resumeWork.remainingMinutes,
-          }),
+      resumeWork.confirmedPastEndIso ? new Date(resumeWork.confirmedPastEndIso) : seedPastDate(),
     );
     setFinishDate(seedFinish());
     setRemarks(resumeWork.confirmedRemarks ?? '');
@@ -215,6 +194,7 @@ export default function ResumeTimeConfirmModal({
     resumeWork.remainingMinutes,
     resumeWork.pastActualStart,
     resumeWork.checklistDate,
+    resumeWork.carriedSegments,
     resumeWork.lastConfirmedFull,
     resumeWork.confirmedStatus,
     resumeWork.confirmedPastEndIso,
@@ -357,10 +337,29 @@ export default function ResumeTimeConfirmModal({
               <View style={styles.timelineInfo}>
                 <Text style={styles.timelineStepName} numberOfLines={1}>{stepLabel}</Text>
                 <Text style={[styles.timelineStatusText, { color: colors.warning }]}>In progress</Text>
-                {resumeWork.pastActualStart && (
-                  <Text style={styles.timelineTimes}>
-                    Started {formatTimeWithDay(resumeWork.pastActualStart)} · No finish time logged yet
-                  </Text>
+
+                {carriedSegments.length > 0 ? (
+                  <>
+                    {carriedSegments.map((seg) => (
+                      <Text key={seg.id} style={styles.timelineTimes}>
+                        {seg.machineNo ? `${seg.machineNo}  ` : ''}
+                        {formatTimeWithDay(seg.startedAt)} →{' '}
+                        {seg.endedAt ? formatTime(seg.endedAt) : 'no finish logged'}
+                      </Text>
+                    ))}
+                    {resumeWork.workedMinutes !== undefined && (
+                      <Text style={styles.timelineWorked}>
+                        Worked {Math.floor(resumeWork.workedMinutes / 60)}h{' '}
+                        {resumeWork.workedMinutes % 60}m across {carriedSegments.length} sessions
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  resumeWork.pastActualStart && (
+                    <Text style={styles.timelineTimes}>
+                      Started {formatTimeWithDay(resumeWork.pastActualStart)} · No finish time logged yet
+                    </Text>
+                  )
                 )}
               </View>
             </View>
@@ -657,6 +656,12 @@ const styles = StyleSheet.create({
   timelineStepName: { ...typography.caption, fontWeight: '700', color: colors.textPrimary },
   timelineStatusText: { ...typography.caption, fontWeight: '700', marginTop: 1 },
   timelineTimes: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  timelineWorked: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: '700',
+    marginTop: 2,
+  },
 
   question: {
     ...typography.body,

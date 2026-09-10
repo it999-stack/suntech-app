@@ -40,6 +40,7 @@ export async function initDb() {
       DROP TABLE IF EXISTS pil_sync_queue;
       DROP TABLE IF EXISTS pil_pile_measurements;
       DROP TABLE IF EXISTS pil_machine_events;
+      DROP TABLE IF EXISTS pil_actual_step_segments;
       DROP TABLE IF EXISTS pil_actual_steps;
       DROP TABLE IF EXISTS pil_plan_steps;
       DROP TABLE IF EXISTS pil_checklist_piles;
@@ -439,6 +440,37 @@ export async function initDb() {
   if (!actualStepColumns.some((c) => c.name === 'assigned_machine_id')) {
     await sqlite.execAsync(`ALTER TABLE pil_actual_steps ADD COLUMN assigned_machine_id TEXT;`);
   }
+
+  // One row per work session on a step — see pileActualStepSegments in
+  // schema.ts. Deliberately NO unique index: there is no natural key to build
+  // one from (a segment number minted offline collides between devices), so
+  // rows are matched on their client-minted id and ordered by started_at.
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_actual_step_segments (
+      id                  TEXT PRIMARY KEY NOT NULL,
+      checklist_pile_id   TEXT NOT NULL,
+      step_id             TEXT NOT NULL,
+      started_at          TEXT NOT NULL,
+      ended_at            TEXT,
+      assigned_machine_id TEXT,
+      outcome             TEXT,
+      stop_reason         TEXT,
+      remaining_minutes   INTEGER,
+      notes               TEXT,
+      machine_event_id    TEXT,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL,
+      deleted_at          INTEGER,
+      server_updated_at   TEXT
+    );
+  `);
+
+  // Every read wants "this step's sessions, in time order", so started_at is
+  // part of the index rather than left to a sort.
+  await sqlite.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_actual_step_segments_step
+      ON pil_actual_step_segments (checklist_pile_id, step_id, started_at);
+  `);
 
   // Migration: relax checklist_id/pile_id to nullable (a fleet-level
   // breakdown/resume reported from the Machines screen has neither — see

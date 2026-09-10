@@ -18,6 +18,7 @@ import {
   Hourglass,
   Clock,
   Ruler,
+  Play,
 } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import Button from '@components/shared/Button';
@@ -28,6 +29,9 @@ import RemarksModal from '@components/plan/actual/RemarksModal';
 import MachineDownModal from '@components/plan/actual/MachineDownModal';
 import MachineIdleModal from '@components/plan/actual/MachineIdleModal';
 import MachineReplaceModal from '@components/plan/actual/MachineReplaceModal';
+import SegmentList from '@components/plan/actual/SegmentList';
+import StepFinishSheet from '@components/plan/actual/StepFinishSheet';
+import ResumeWorkSheet from '@components/plan/actual/ResumeWorkSheet';
 import MeasurementFieldsModal, {
   type MeasurementFieldConfig,
 } from '@components/plan/actual/MeasurementFieldsModal';
@@ -44,12 +48,21 @@ import {
   formatDuration,
   formatDurationMinutes,
   durationMinutes,
+  resolveOvernightDate,
+  toLocalIsoString,
 } from '@utils/formatTime';
 import { computeExpectedStepStart, type MachineFloorIndex } from '@utils/machineFloor';
 import { type ConflictNotice } from '@utils/timeValidation';
 import { buildActualTimeRules } from '@utils/actualTimeRules';
 import { TRACK_META } from '@utils/helpers';
 import { notify } from '@utils/notify';
+
+/** Minutes-since-midnight of an ISO timestamp — the units the older
+ * actual-time write path still speaks. */
+function minutesOfDay(iso: string): number {
+  const d = new Date(iso);
+  return d.getHours() * 60 + d.getMinutes();
+}
 
 /** Signed duration for a delay chip — e.g. 460 → "+7h 40m", -10 → "-10m", 0 → "On time". */
 function formatSignedDuration(minutes: number): string {
@@ -97,6 +110,34 @@ interface Props {
   /** Upserts a partial patch of one-time engineering measurements for this
    * pile — see MeasurementFieldsModal.tsx / pileMeasurementTriggers.ts. */
   onSaveMeasurements: (patch: Partial<PileMeasurementFields>) => Promise<void>;
+  /** Stop a step part-way. `stoppedAtIso` has already been validated by this
+   * modal's own time rules before this is called. */
+  onPauseStep: (
+    stepId: string,
+    input: {
+      stoppedAtIso: string;
+      notes: string;
+      machineId?: string;
+      actualStartIso?: string;
+    },
+  ) => Promise<void>;
+  onResumeStep: (stepId: string, input: { startedAtIso: string; machineId?: string }) => Promise<void>;
+  /** Finish a step that already has work sessions — closes the open one. */
+  onFinishSegment: (stepId: string, input: { endedAtIso: string; notes?: string }) => Promise<void>;
+  /** Correct one already-recorded session's start or end time. `minutes`/
+   * `explicitDate` arrive exactly as StepTimeControl/EditTimeButton emit them
+   * — not yet resolved to a full timestamp, see useActualTimeActions. */
+  onEditSegmentTime: (
+    stepId: string,
+    segmentId: string,
+    field: 'start' | 'finish',
+    minutes: number,
+    explicitDate?: Date,
+  ) => Promise<void>;
+  /** Free-text note on one work session — the segment-scoped counterpart to
+   * onSaveRemarks. */
+  onSetSegmentNotes: (stepId: string, segmentId: string, notes: string) => Promise<void>;
+  onDeleteSegment: (stepId: string, segmentId: string) => Promise<void>;
 }
 
 export default function PileStepsModal({
@@ -112,6 +153,12 @@ export default function PileStepsModal({
   onSaveRemarks,
   onLogMachineEvent,
   onSaveMeasurements,
+  onPauseStep,
+  onResumeStep,
+  onFinishSegment,
+  onEditSegmentTime,
+  onSetSegmentNotes,
+  onDeleteSegment,
 }: Props) {
   // Memoised on group.steps (itself stable — usePileGroups builds it in a
   // useMemo). Without this the sort produces a new array identity every
@@ -122,16 +169,6 @@ export default function PileStepsModal({
     () => [...group.steps].sort((a, b) => a.sequenceOrder - b.sequenceOrder),
     [group.steps],
   );
-  // "Current" is now a purely VISUAL hint — the accent circle and the
-  // auto-scroll target. It no longer gates which step's CARD renders a fill
-  // control: a pile's plan can cover only part of its applicable steps (see
-  // usePileGroups), so a later unplanned step would otherwise stay hidden
-  // behind a step nobody is going to fill. Every not-yet-completed step
-  // renders one, but starting it is still gated on every earlier step being
-  // done first (see earliestIncompletePredecessor below) — a pile's steps
-  // are one physical sequence regardless of what got planned. Once a step is
-  // allowed to start, the time bounds (see buildActualTimeRules) constrain
-  // which moment it lands on.
   const currentStepId = steps.find((s) => s.actualEnd === undefined)?.stepId;
   const allDone = !currentStepId;
 
@@ -163,6 +200,36 @@ export default function PileStepsModal({
     title: string;
     fields: MeasurementFieldConfig[];
   } | null>(null);
+
+  // ── Work sessions ────────────────────────────────────────────────────────
+  /** The step whose finish time has been picked and validated, waiting on the
+   * "complete or paused?" answer. */
+  const [finishFor, setFinishFor] = useState<{ step: ActualEntry; stoppedAtIso: string } | null>(null);
+  const [resumeFor, setResumeFor] = useState<ActualEntry | null>(null);
+  const [savingSegment, setSavingSegment] = useState(false);
+
+  /** Runs after StepTimeControl has already validated the time against this
+   * step's bounds and the machine/pile conflict checks — so the sheet only
+   * ever has to ask what it cannot derive. */
+  const openFinishSheet = (step: ActualEntry, minutes: number, explicitDate?: Date) => {
+    const date =
+      explicitDate ??
+      resolveOvernightDate(step.endAnchorIso ?? checklist?.planStartTime ?? toLocalIsoString(new Date()), minutes);
+    setFinishFor({ step, stoppedAtIso: toLocalIsoString(date) });
+  };
+
+  const runSegmentAction = async (fn: () => Promise<void>, failure: string) => {
+    setSavingSegment(true);
+    try {
+      await fn();
+      setFinishFor(null);
+      setResumeFor(null);
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : failure, { title: 'Failed to save' });
+    } finally {
+      setSavingSegment(false);
+    }
+  };
 
   // Wraps onSetActualTime: once the actual start/end for this step is
   // recorded, checks whether that (stepName, field) pair is one of the five
@@ -394,7 +461,19 @@ export default function PileStepsModal({
       )}
 
       {steps.map((step) => {
-        const isDone = step.actualEnd !== undefined;
+        // Falls back to the timestamps for a row with no derived status —
+        // historical rows, and anything built outside usePileGroups. Same
+        // reading as before segments existed.
+        const status = step.status ?? (step.actualEnd !== undefined
+          ? 'DONE'
+          : step.actualStart !== undefined
+            ? 'RUNNING'
+            : 'NOT_STARTED');
+        const isDone = status === 'DONE';
+        const isPaused = status === 'PAUSED';
+        const hasSegments = !!step.segments?.length;
+        // Still "has work been recorded against this step", which is what
+        // every downstream use of it means — a paused step counts.
         const isStarted = step.actualStart !== undefined;
         const isCurrent = step.stepId === currentStepId;
         const isHistorical = !!step.isHistorical;
@@ -595,7 +674,11 @@ export default function PileStepsModal({
                       </View>
                       <View style={modalStyles.actualRowBottom}>
                         <Text style={modalStyles.actualRowValue}>{formatTimeWithDay(step.actualStartIso)}</Text>
-                        {!isHistorical && (
+                        {/* Hidden once the step has work sessions: this row is
+                            then DERIVED from them, so editing it here would be
+                            reverted by the next recompute. Per-session edits
+                            live in SegmentList below instead. */}
+                        {!isHistorical && !hasSegments && (
                           <View style={modalStyles.fieldActions}>
                             <EditTimeButton
                               {...rules.forStep(step.stepId, 'start')}
@@ -629,7 +712,7 @@ export default function PileStepsModal({
                           <Text style={[modalStyles.actualRowValue, isLate && modalStyles.lateText]}>
                             {formatTimeWithDay(step.actualEndIso)}
                           </Text>
-                          {!isHistorical && (
+                          {!isHistorical && !hasSegments && (
                             <View style={modalStyles.fieldActions}>
                               <EditTimeButton
                                 {...rules.forStep(step.stepId, 'finish')}
@@ -648,6 +731,45 @@ export default function PileStepsModal({
                       </View>
                     )}
                   </View>
+
+                  {/* Only for a step actually split between machines. The two
+                      rows above can express one span; they cannot express
+                      "R-1 until 10:30, then R-3 from 14:00", and collapsing
+                      that into one span is what mis-credits the machine that
+                      left. An ordinary step renders nothing here. */}
+                  {!!step.segments?.length && (
+                    <SegmentList
+                      step={step}
+                      rules={rules}
+                      onEditSegmentTime={
+                        isHistorical
+                          ? undefined
+                          : (segmentId, field, minutes, explicitDate) =>
+                              runSegmentAction(
+                                () => onEditSegmentTime(step.stepId, segmentId, field, minutes, explicitDate),
+                                'Could not update the work session.',
+                              )
+                      }
+                      onSetSegmentNotes={
+                        isHistorical
+                          ? undefined
+                          : (segmentId, notes) =>
+                              runSegmentAction(
+                                () => onSetSegmentNotes(step.stepId, segmentId, notes),
+                                'Could not save remarks.',
+                              )
+                      }
+                      onDeleteSegment={
+                        isHistorical
+                          ? undefined
+                          : (segmentId) =>
+                              runSegmentAction(
+                                () => onDeleteSegment(step.stepId, segmentId),
+                                'Could not remove the work session.',
+                              )
+                      }
+                    />
+                  )}
 
                   {/* Rendered for any finished step, planned or not — the
                       actual duration is real either way. Only the two
@@ -781,19 +903,6 @@ export default function PileStepsModal({
               </View>
             )}
 
-            {/* Any not-yet-completed step is fillable — not just the pile's
-                first unfinished one, so an unplanned step later in the
-                sequence isn't stuck waiting behind a step nobody is going to
-                fill. But it can only actually be STARTED once every earlier
-                step is done — a pile's steps are one physical sequence, so
-                BORING cannot begin before CASING is finished regardless of
-                whether either was planned. While blockingPredecessor is set,
-                the "Fill start time" control is hidden entirely rather than
-                shown disabled or tappable-with-a-toast: there is nothing to
-                resolve from THIS card, so a live control would just invite a
-                wasted tap. Once a step IS allowed to start, the time bounds
-                from its rules (latest earlier actual end / earliest later
-                actual start) constrain which moment it lands on. */}
             {!isHistorical && !isStarted && !blockingPredecessor && (
               <StepTimeControl
                 {...rules.forStep(step.stepId, 'start')}
@@ -805,12 +914,28 @@ export default function PileStepsModal({
               />
             )}
 
-            {!isHistorical && isStarted && !isDone && (
+            {!isHistorical && status === 'RUNNING' && (
               <StepTimeControl
                 {...rules.forStep(step.stepId, 'finish')}
                 mode="finish"
-                onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
+                label="Stop work"
+                onConfirm={(mins, explicitDate) => openFinishSheet(step, mins, explicitDate)}
                 blocked={blockedNotice}
+              />
+            )}
+
+            {!isHistorical && isPaused && (
+              <Button
+                label="Resume work"
+                icon={Play}
+                variant="warning"
+                onPress={() => {
+                  if (blockedNotice) {
+                    notify.error(blockedNotice.message, { title: blockedNotice.title });
+                    return;
+                  }
+                  setResumeFor(step);
+                }}
               />
             )}
           </View>
@@ -847,6 +972,77 @@ export default function PileStepsModal({
           contractors={contractors}
           onClose={() => setMeasurementModal(null)}
           onSave={onSaveMeasurements}
+        />
+      )}
+
+      {finishFor && (
+        <StepFinishSheet
+          visible
+          step={finishFor.step}
+          stoppedAtIso={finishFor.stoppedAtIso}
+          isSaving={savingSegment}
+          onClose={() => setFinishFor(null)}
+          onCompleted={(notes) =>
+            runSegmentAction(async () => {
+              // A step with sessions finishes by closing the open one; one
+              // without has no session to close, so the plain roll-up write
+              // still applies. Routing both through here keeps the finish
+              // gesture identical for the supervisor either way.
+              if (finishFor.step.segments?.length) {
+                await onFinishSegment(finishFor.step.stepId, {
+                  endedAtIso: finishFor.stoppedAtIso,
+                  notes,
+                });
+              } else {
+                await handleSetActualTime(
+                  finishFor.step,
+                  'actualEnd',
+                  minutesOfDay(finishFor.stoppedAtIso),
+                  new Date(finishFor.stoppedAtIso),
+                );
+                // No sessions to hang the note on, so it goes to the step's
+                // own remarks — the same place the remark control writes.
+                await onSaveRemarks(finishFor.step.stepId, notes);
+              }
+            }, 'Could not save the finish time.')
+          }
+          onPaused={(input) =>
+            runSegmentAction(
+              () =>
+                onPauseStep(finishFor.step.stepId, {
+                  notes: input.notes,
+                  stoppedAtIso: finishFor.stoppedAtIso,
+                  // Both needed to back-fill a baseline session for a step
+                  // that was already in progress before it was ever split.
+                  machineId: finishFor.step.assignedMachineId,
+                  actualStartIso: finishFor.step.actualStartIso,
+                }),
+              'Could not pause the step.',
+            )
+          }
+        />
+      )}
+
+      {resumeFor && (
+        <ResumeWorkSheet
+          visible
+          step={resumeFor}
+          machines={machines.filter((m) => m.type === resumeFor.track)}
+          defaultMachineId={
+            resumeFor.segments?.filter((s) => !s.endedAt).slice(-1)[0]?.assignedMachineId ??
+            resumeFor.assignedMachineId
+          }
+          minBoundIso={resumeFor.segments?.filter((s) => s.endedAt).slice(-1)[0]?.endedAt}
+          planWindowMinIso={checklist?.planStartTime ?? undefined}
+          planWindowMaxIso={checklist?.planEndTime ?? undefined}
+          isSaving={savingSegment}
+          onClose={() => setResumeFor(null)}
+          onConfirm={(input) =>
+            runSegmentAction(
+              () => onResumeStep(resumeFor.stepId, input),
+              'Could not resume the step.',
+            )
+          }
         />
       )}
 

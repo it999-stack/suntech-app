@@ -38,6 +38,15 @@ function nowMinutes(): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
+/** ISO timestamp -> minutes-since-midnight, for seeding a segment's picker —
+ * ActualSegment carries only ISO strings, unlike ActualEntry's precomputed
+ * minutes-since-midnight fields. */
+function isoToMinutes(iso: string | null | undefined): number | undefined {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? undefined : d.getHours() * 60 + d.getMinutes();
+}
+
 /**
  * Everything a time picker needs for one step's one field — both the rules it
  * must satisfy and the value it should open on. Spread wholesale into
@@ -75,6 +84,12 @@ export type ActualTimeRules = {
   planWindowMinIso?: string;
   planWindowMaxIso?: string;
   forStep(stepId: string, field: 'start' | 'finish'): TimeFieldRules;
+  /** Same rules, scoped to one work session rather than the whole step — for
+   * editing a session's own start/end once a step has been split between
+   * machines. `field: 'finish'` is meaningless for a still-open session (there
+   * is nothing recorded yet to edit); callers gate that control on the
+   * session already having an end. */
+  forSegment(stepId: string, segmentId: string, field: 'start' | 'finish'): TimeFieldRules;
 };
 
 export function buildActualTimeRules(args: {
@@ -240,6 +255,94 @@ export function buildActualTimeRules(args: {
           step.plannedEnd != null && step.actualStart != null && step.plannedEnd > step.actualStart
             ? step.plannedEnd
             : nowMinutes(),
+      };
+    },
+    forSegment(stepId, segmentId, field) {
+      const step = byStepId.get(stepId);
+      if (!step) return empty;
+      const segments = step.segments ?? [];
+      const idx = segments.findIndex((s) => s.id === segmentId);
+      if (idx === -1) return empty;
+
+      const seg = segments[idx];
+      // A step's own sessions are already startedAt-ordered (see
+      // usePileGroups/segmentsRepository) — array-adjacent IS
+      // chronologically-adjacent, no separate sort needed here.
+      const prevSibling = idx > 0 ? segments[idx - 1] : undefined;
+      const nextSibling = idx < segments.length - 1 ? segments[idx + 1] : undefined;
+
+      const siblingOccupied = (label: string, startIso?: string, endIso?: string | null) =>
+        formatOccupiedNotice(pileCode, `${step.stepName} — ${label}`, startIso, endIso ?? undefined);
+
+      // A machine conflict check scoped to THIS session — excludes only its
+      // own interval (see findMachineConflict's excludeSegmentId), so a
+      // SIBLING session on the same machine still correctly conflicts rather
+      // than being excused for "being the same step".
+      const segmentMachineCheck = (from: Date | undefined, to: Date | undefined) => {
+        if (!seg.assignedMachineId) return undefined;
+        const machineId = seg.assignedMachineId;
+        return (candidate: Date): ConflictNotice | null => {
+          const conflict = findMachineConflict(
+            machineFloorIndex,
+            machineId,
+            checklistPileId,
+            stepId,
+            field === 'start' ? candidate : (from ?? candidate),
+            field === 'start' ? to : candidate,
+            seg.id,
+          );
+          return conflict
+            ? formatOccupiedNotice(conflict.pileCode, conflict.stepName, conflict.start, conflict.end)
+            : null;
+        };
+      };
+
+      if (field === 'start') {
+        // Only the FIRST session in the step falls through to the step-level
+        // cross-step bound (the same one forStep('start') uses) — any later
+        // session is bounded purely by its own previous sibling.
+        const stepBoundary = !prevSibling ? latestEarlierEnd(step) : undefined;
+        const ownEnd = seg.endedAt ? new Date(seg.endedAt) : undefined;
+        return {
+          minBoundIso: prevSibling?.endedAt ?? stepBoundary?.actualEndIso,
+          minBoundConflict: prevSibling
+            ? siblingOccupied('earlier session', prevSibling.startedAt, prevSibling.endedAt)
+            : stepBoundary
+              ? occupied(stepBoundary)
+              : undefined,
+          // Can't move a session's start past its own recorded end.
+          maxBoundIso: seg.endedAt ?? undefined,
+          maxBoundConflict: seg.endedAt ? siblingOccupied('this session', seg.startedAt, seg.endedAt) : undefined,
+          planWindowMinIso,
+          planWindowMaxIso,
+          machineConflictCheck: segmentMachineCheck(undefined, ownEnd),
+          // Deliberately the STEP-level check, unchanged — see
+          // machineFloor.ts's findPileStepConflict docstring: a pile's OTHER
+          // steps must still respect this step's whole span (pause gap
+          // included), regardless of which of its own sessions is edited.
+          pileConflictCheck: pileCheck(step, 'start'),
+          anchorIso: seg.startedAt,
+          getDefaultMinutes: () => isoToMinutes(seg.startedAt) ?? nowMinutes(),
+        };
+      }
+
+      const stepBoundary = !nextSibling ? earliestLaterStart(step) : undefined;
+      const ownStart = new Date(seg.startedAt);
+      return {
+        minBoundIso: seg.startedAt,
+        minBoundConflict: siblingOccupied('this session', seg.startedAt, seg.endedAt),
+        maxBoundIso: nextSibling?.startedAt ?? stepBoundary?.actualStartIso,
+        maxBoundConflict: nextSibling
+          ? siblingOccupied('later session', nextSibling.startedAt, nextSibling.endedAt)
+          : stepBoundary
+            ? occupied(stepBoundary)
+            : undefined,
+        planWindowMinIso,
+        planWindowMaxIso,
+        machineConflictCheck: segmentMachineCheck(ownStart, undefined),
+        pileConflictCheck: pileCheck(step, 'finish'),
+        anchorIso: seg.endedAt ?? seg.startedAt,
+        getDefaultMinutes: () => isoToMinutes(seg.endedAt) ?? nowMinutes(),
       };
     },
   };

@@ -6,6 +6,7 @@ import { initDb, db } from '@db/client';
 import {
   pilingPiles,
   pilingDimensions,
+  pilingLocations,
   pilingChecklistPiles,
   pilingDailyChecklists,
   pilePlanSteps,
@@ -134,6 +135,7 @@ export interface PileWithDimension {
   locationId: string | null;
   pileIdCode: string;
   area: string | null;
+  locationName: string | null;
   dimensionId: string;
   notes: string | null;
   syncedAt: number;
@@ -147,6 +149,7 @@ const pileWithDimensionColumns = {
   locationId: pilingPiles.locationId,
   pileIdCode: pilingPiles.pileIdCode,
   area: pilingPiles.area,
+  locationName: pilingLocations.name,
   dimensionId: pilingPiles.dimensionId,
   notes: pilingPiles.notes,
   syncedAt: pilingPiles.syncedAt,
@@ -164,6 +167,7 @@ export async function getPilesBySiteWithDimensions(siteId: string): Promise<Pile
     .select(pileWithDimensionColumns)
     .from(pilingPiles)
     .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
+    .leftJoin(pilingLocations, eq(pilingPiles.locationId, pilingLocations.id))
     .where(eq(pilingPiles.siteId, siteId));
   return rows;
 }
@@ -221,6 +225,7 @@ export async function getPilesBySiteWithDimensionsPage({
       .select(pileWithDimensionColumns)
       .from(pilingPiles)
       .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
+      .leftJoin(pilingLocations, eq(pilingPiles.locationId, pilingLocations.id))
       .where(where)
       .orderBy(pilingPiles.pileIdCode, pilingPiles.id)
       .limit(pageSize)
@@ -442,6 +447,7 @@ export async function getPilesBySiteFiltered({
       .select({ ...pileWithDimensionColumns, status: statusExpr(agg), statusDate: statusDateExpr(agg) })
       .from(pilingPiles)
       .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
+      .leftJoin(pilingLocations, eq(pilingPiles.locationId, pilingLocations.id))
       .leftJoin(agg, eq(pilingPiles.id, agg.pileId))
       .where(where)
       .orderBy(asc(pilingPiles.pileIdCode), pilingPiles.id)

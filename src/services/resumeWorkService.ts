@@ -21,16 +21,24 @@ import {
   pilingSteps,
   pilingStepDurationTemplates,
   pilingDimensions,
+  pilingMachines,
   type PilingChecklistPile,
+  type PileActualStepSegment,
 } from '@db/schema';
 import { getChecklistsBySite, getChecklistPiles } from '@repositories/checklistRepository';
 import {
   getActualStepsForChecklist,
+  getActualStepsForChecklistPile,
   getPlanStepsForChecklist,
   upsertActualStep,
   type ActualStepWithMeta,
 } from '@repositories/planRepository';
+import { getSegmentsForChecklistPiles } from '@repositories/segmentsRepository';
 import { enqueueChecklistSync } from '@repositories/syncQueueRepository';
+import {
+  closeLastLiveSegment,
+  syncActualRollupFromSegments,
+} from '@services/stepSegmentActions';
 import {
   buildTemplateMinutesMap,
   getApplicableSteps,
@@ -53,6 +61,17 @@ export interface CompletedStepInfo {
   actualEnd: string | null;
 }
 
+/** One previous-day work session on the step being resumed — enough to render
+ * it, not the full row. Machine number is resolved here so the modal doesn't
+ * need its own machine lookup. */
+export interface CarriedSegment {
+  id: string;
+  startedAt: string;
+  endedAt: string | null;
+  machineNo: string | null;
+  outcome: 'PARTIAL' | 'FINAL' | null;
+}
+
 export interface ResumeWorkInfo {
   pileId: string;
   stepId: string;
@@ -65,6 +84,13 @@ export interface ResumeWorkInfo {
   /** The historical checklist-pile id the in-progress step belongs to — needed to write remarks back. */
   pastChecklistPileId: string;
   pastActualStart: string | null;
+  /** The in-progress step's own work sessions from the previous day(s), oldest
+   * first. Empty for a step that was never split between machines — its
+   * pastActualStart alone is then the whole record. */
+  carriedSegments: CarriedSegment[];
+  /** Minutes actually worked across those sessions, EXCLUDING the gaps
+   * between them. Undefined when there are no sessions to total. */
+  workedMinutes?: number;
   /** Names of steps already completed on the pile's most recent checklist, for display context. */
   completedStepNames: string[];
   /** Same steps as completedStepNames, with plan + actual times — for Preview/Log Actuals display. */
@@ -86,6 +112,21 @@ export interface ResumeWorkInfo {
    * window was persisted; callers must treat it as "unbounded", not as zero. */
   pastPlanStartTime: string | null;
   pastPlanEndTime: string | null;
+}
+
+/** Minutes actually worked across a step's sessions, EXCLUDING the gaps
+ * between them. An open session contributes nothing — it has no settled
+ * length, and guessing one would silently inflate "work already done" and so
+ * deflate the remaining-time seed. */
+function sumCarriedMinutes(segments: CarriedSegment[]): number {
+  let total = 0;
+  for (const seg of segments) {
+    if (!seg.endedAt) continue;
+    total += Math.round(
+      (new Date(seg.endedAt).getTime() - new Date(seg.startedAt).getTime()) / 60000,
+    );
+  }
+  return total;
 }
 
 export interface ResumeWorkScanResult {
@@ -132,6 +173,16 @@ export async function findResumeWorkForPiles(
   );
 
   const checklistIds = new Set([...cpById.values()].map((cp) => cp.checklistId));
+  // Work sessions for every checklist-pile row these piles have ever had,
+  // keyed `${checklistPileId}:${stepId}` — the same key PlanContext uses, so
+  // the two never drift into disagreeing about what a session belongs to.
+  const segmentsByStepKey = new Map<string, PileActualStepSegment[]>();
+  for (const seg of await getSegmentsForChecklistPiles([...cpById.keys()])) {
+    const key = `${seg.checklistPileId}:${seg.stepId}`;
+    const list = segmentsByStepKey.get(key) ?? [];
+    list.push(seg);
+    segmentsByStepKey.set(key, list);
+  }
   const actualStepsByCpId = new Map<string, ActualStepWithMeta[]>();
   const planStepByCpAndStepId = new Map<string, Map<string, { plannedStart: string; plannedEnd: string | null }>>();
   for (const checklistId of checklistIds) {
@@ -159,6 +210,16 @@ export async function findResumeWorkForPiles(
   const pileById = new Map(pileRows.map((p) => [p.id, p]));
 
   const allSteps = await db.select().from(pilingSteps).orderBy(pilingSteps.sequenceOrder).all();
+
+  // Machine numbers for labelling the carried sessions. Loaded once for the
+  // whole scan rather than per pile — a site has a handful of machines and
+  // this runs over every pile being considered for a new plan.
+  const machineRows = await db
+    .select({ id: pilingMachines.id, machineNo: pilingMachines.machineNo })
+    .from(pilingMachines)
+    .where(eq(pilingMachines.siteId, siteId))
+    .all();
+  const machineNoById = new Map(machineRows.map((m) => [m.id, m.machineNo]));
 
   const templateRows = await db
     .select({
@@ -208,18 +269,44 @@ export async function findResumeWorkForPiles(
     }
 
     const actualStep = actualByStepId.get(firstIncomplete.id);
+
+    // The in-progress step's own work sessions from the previous day(s).
+    // Read off the checklist-pile row the step's actual record actually lives
+    // on — the same row `resolvedCp` resolves to below — because a pile that
+    // carried over more than once has several, and the sessions belong to
+    // whichever one recorded the work.
+    const carriedSegments: CarriedSegment[] = (
+      actualStep
+        ? (segmentsByStepKey.get(`${actualStep.checklistPileId}:${firstIncomplete.id}`) ?? [])
+        : []
+    ).map((seg) => ({
+      id: seg.id,
+      startedAt: seg.startedAt,
+      endedAt: seg.endedAt,
+      machineNo: (seg.assignedMachineId && machineNoById.get(seg.assignedMachineId)) || null,
+      outcome: seg.outcome ?? null,
+    }));
     // The checklist-pile row to resume into: wherever firstIncomplete's own
     // (in-progress) actual record lives, or the anchor row as a fallback
     // when the step hasn't been touched at all yet.
     const resolvedCp = (actualStep && cpById.get(actualStep.checklistPileId)) || anchorCp;
-    // Remaining duration is never derived from the historical plan/actual
-    // timestamps — only the step's canonical template duration seeds the
-    // supervisor's confirmation modal; they enter the real remaining time.
-    // The `?? 60` here is a picker SEED the supervisor immediately overwrites,
-    // not a scheduling input — unlike planScheduler, where the same default
-    // was removed outright.
-    const remainingMinutes =
+    // The step's whole expected length. Still a picker SEED the supervisor can
+    // overwrite, not a scheduling input — unlike planScheduler, where the same
+    // default was removed outright.
+    const templateMinutes =
       (dimensionId ? templateMap.get(templateKey(dimensionId, firstIncomplete.id)) : undefined) ?? 60;
+
+    // Once a step has recorded work sessions, how much was actually done is
+    // known — so the seed is what is LEFT rather than the whole step. Without
+    // this the supervisor is offered the full duration for a step that is
+    // already most of the way done, and has to correct it every time.
+    //
+    // Still only a seed: the sessions say how long the machines ran, not how
+    // much of the pile that got through. Floored at 5 because a step being
+    // resumed at all has work remaining by definition.
+    const workedMinutes = carriedSegments.length ? sumCarriedMinutes(carriedSegments) : undefined;
+    const remainingMinutes =
+      workedMinutes !== undefined ? Math.max(5, templateMinutes - workedMinutes) : templateMinutes;
 
     const completedStepNames = referenceSteps
       .filter((s) => actualByStepId.get(s.id)?.actualEnd)
@@ -268,6 +355,8 @@ export async function findResumeWorkForPiles(
       wasStarted: !!actualStep?.actualStart,
       pastChecklistPileId: resolvedCp.id,
       pastActualStart: actualStep?.actualStart ?? null,
+      carriedSegments,
+      workedMinutes,
       completedStepNames,
       completedSteps,
       nextStep,
@@ -325,12 +414,32 @@ export async function closeOutResumeStep(
   actualEnd: string,
   remarks?: string,
 ): Promise<void> {
+  const remarksValue = remarks || null;
+
+  // Once a step has recorded work sessions, its roll-up is DERIVED from them
+  // server-side and writing actual_end on the roll-up directly gets silently
+  // reverted the next time this checklist's segments sync — see
+  // services/stepSegmentActions.ts for the full explanation. Closing the
+  // step's last live session (and letting the roll-up follow from it) is
+  // what survives that recompute; a step with no sessions falls through to
+  // the plain roll-up write below, exactly as before.
+  const closedASession = await closeLastLiveSegment(pastChecklistPileId, stepId, {
+    endedAtIso: actualEnd,
+    notes: remarksValue,
+  });
+  if (closedASession) {
+    const existingRows = await getActualStepsForChecklistPile(pastChecklistPileId);
+    const existing = existingRows.find((a) => a.stepId === stepId);
+    await syncActualRollupFromSegments(pastChecklistPileId, stepId, existing, remarksValue);
+    return;
+  }
+
   await upsertActualStep({
     id: generateId(),
     checklistPileId: pastChecklistPileId,
     stepId,
     actualStart: pastActualStart,
     actualEnd,
-    remarks: remarks || null,
+    remarks: remarksValue,
   });
 }

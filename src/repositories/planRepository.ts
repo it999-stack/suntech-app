@@ -231,12 +231,21 @@ export async function reassignMachineFromStep(
  * across every pile, so matching on it alone would conflate different
  * piles' actuals for the "same" step.
  *
- * `assignedMachineId` is a PATCH field, unlike the others: omitting it (i.e.
- * leaving it `undefined`) leaves whatever is already stored untouched, where
- * passing null clears it. Callers that know the machine (the Log Actuals
- * write path) always pass it; the resume close-out, which writes a previous
- * day's finish time and has no machine context at all, deliberately omits it
- * rather than blanking a machine that was correctly recorded earlier.
+ * `actualStart`, `actualEnd`, `remarks` and `assignedMachineId` are all PATCH
+ * fields: omitting one (i.e. leaving it `undefined`) leaves whatever is
+ * already stored in THAT COLUMN untouched, where passing `null` clears it.
+ * This matters beyond convenience — a caller that wants to change only one
+ * field must never "preserve" the others by copying them in from its own
+ * in-memory snapshot (e.g. React state read at the top of a handler), because
+ * that snapshot can already be stale by the time this runs if another write
+ * to the same row happened earlier in the same handler (its state update
+ * hasn't necessarily been reflected back into that closure yet). Omitting the
+ * field here instead reads the true current value straight from the row
+ * being updated, which can never be stale. Two upsertActualStep calls in a
+ * row for the same step — e.g. "set actualEnd" immediately followed by "set
+ * remarks" from the same Stop-work action — is exactly the case this
+ * protects: each call must only touch the one field it actually means to
+ * change.
  */
 export async function upsertActualStep(
   entry: Omit<NewPileActualStep, 'createdAt' | 'updatedAt'>,
@@ -260,15 +269,16 @@ export async function upsertActualStep(
     // last-known-server version for optimistic concurrency and must only
     // ever be set by hydrateChecklistFromServer from a real server payload,
     // never from a local edit's device clock.
+    //
+    // Every field spread conditionally rather than passed through as
+    // undefined — the patch semantics above are then explicit here instead
+    // of resting on the query builder happening to drop undefined keys.
     await db
       .update(pileActualSteps)
       .set({
-        actualStart: entry.actualStart,
-        actualEnd: entry.actualEnd,
-        remarks: entry.remarks,
-        // Spread conditionally rather than passed through as undefined — the
-        // patch semantics above are then explicit here instead of resting on
-        // the query builder happening to drop undefined keys.
+        ...(entry.actualStart !== undefined ? { actualStart: entry.actualStart } : {}),
+        ...(entry.actualEnd !== undefined ? { actualEnd: entry.actualEnd } : {}),
+        ...(entry.remarks !== undefined ? { remarks: entry.remarks } : {}),
         ...(entry.assignedMachineId !== undefined
           ? { assignedMachineId: entry.assignedMachineId }
           : {}),

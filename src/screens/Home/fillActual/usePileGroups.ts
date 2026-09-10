@@ -35,6 +35,7 @@ import {
 import type { EffectivePlanWindow } from '@/services/pilingPlannerService';
 import type { CompletedStepInfo } from '@/services/resumeWorkService';
 import type { PlanStepWithMeta, ActualStepWithMeta } from '@repositories/planRepository';
+import { deriveStepStatus } from '@services/stepSegments';
 import type {
   PilingChecklistPile,
   PilingDailyChecklist,
@@ -43,8 +44,9 @@ import type {
   PilingStep,
   PilingStepDurationTemplate,
   PilPileMeasurement,
+  PileActualStepSegment,
 } from '@db/schema';
-import type { ActualEntry, PileGroup, PileMeasurementFields } from '@app-types/plan';
+import type { ActualEntry, ActualSegment, PileGroup, PileMeasurementFields } from '@app-types/plan';
 
 type Track = 'RIG' | 'CRANE' | 'COMPRESSOR';
 
@@ -77,12 +79,20 @@ function machinesOfType(
 ): { id: string; no: string }[] {
   const seen = new Set<string>();
   const result: { id: string; no: string }[] = [];
+  const add = (id: string | undefined, no: string | undefined) => {
+    if (!id || !no) return;
+    if (machineTypeById.get(id) !== type) return;
+    if (seen.has(id)) return;
+    seen.add(id);
+    result.push({ id, no });
+  };
   for (const s of steps) {
-    if (s.isHistorical || !s.assignedMachineId || !s.assignedMachineNo) continue;
-    if (machineTypeById.get(s.assignedMachineId) !== type) continue;
-    if (seen.has(s.assignedMachineId)) continue;
-    seen.add(s.assignedMachineId);
-    result.push({ id: s.assignedMachineId, no: s.assignedMachineNo });
+    if (s.isHistorical) continue;
+    // Each work session's own machine, so a step handed from one rig to
+    // another lists BOTH — s.assignedMachineId alone is only whoever holds it
+    // now, which would drop the machine that did the earlier half.
+    for (const seg of s.segments ?? []) add(seg.assignedMachineId, seg.assignedMachineNo);
+    add(s.assignedMachineId, s.assignedMachineNo);
   }
   return result;
 }
@@ -163,6 +173,10 @@ export function usePileGroups(args: {
    * displays instead of a planned range. Passed in (not queried here) to keep
    * this hook a pure function of its arguments. */
   durationTemplates: PilingStepDurationTemplate[];
+  /** Live work sessions for this checklist's piles, keyed
+   * `${checklistPileId}:${stepId}` and already oldest-first. Empty for every
+   * step that was never split — which is most of them. */
+  segmentsByStepKey: Map<string, PileActualStepSegment[]>;
 }): { pileGroups: PileGroup[] } {
   const {
     checklistPiles,
@@ -178,6 +192,7 @@ export function usePileGroups(args: {
     measurementsByPileId,
     allSteps,
     durationTemplates,
+    segmentsByStepKey,
   } = args;
 
   const machineTypeById = useMemo(() => new Map(machines.map((m) => [m.id, m.type])), [machines]);
@@ -300,6 +315,33 @@ export function usePileGroups(args: {
         };
         const planBreaks = plan ? splitStepByInternalWindows(plan, windowsByMachineId)?.breaks : undefined;
 
+        // Work sessions for this step, machine numbers resolved so the UI can
+        // badge each session without a second lookup. Left undefined rather
+        // than [] for an ordinary never-split step, so `step.segments?.length`
+        // reads as "was this step ever split" everywhere downstream.
+        const rawSegments = segmentsByStepKey.get(`${cp.id}:${stepId}`);
+        const segments: ActualSegment[] | undefined = rawSegments?.length
+          ? rawSegments.map((seg) => ({
+              id: seg.id,
+              startedAt: seg.startedAt,
+              endedAt: seg.endedAt ?? undefined,
+              assignedMachineId: seg.assignedMachineId ?? undefined,
+              assignedMachineNo: seg.assignedMachineId
+                ? machineMap.get(seg.assignedMachineId) || undefined
+                : undefined,
+              outcome: seg.outcome ?? undefined,
+              stopReason: seg.stopReason ?? undefined,
+              remainingMinutes: seg.remainingMinutes ?? undefined,
+              notes: seg.notes ?? undefined,
+              machineEventId: seg.machineEventId ?? undefined,
+            }))
+          : undefined;
+
+        const rollup = {
+          actualStartIso: actual?.actualStart ?? undefined,
+          actualEndIso: actual?.actualEnd ?? undefined,
+        };
+
         return {
           stepId,
           pileId: cp.pileId,
@@ -349,6 +391,11 @@ export function usePileGroups(args: {
             checklist?.planStartTime,
           ),
           endAnchorIso: resolveActualTimeAnchor('actualEnd', anchorStep, null, checklist?.planStartTime),
+          segments,
+          // Derived once here so every consumer reads the same answer. The
+          // timestamps above still mean exactly what they always did; this is
+          // the finer distinction they can't express — RUNNING vs PAUSED.
+          status: deriveStepStatus(segments, rollup),
         };
       });
 

@@ -1,6 +1,6 @@
 // src/components/shared/PileGridCard.tsx
 //
-// One cell of a 2-column pile grid: code, dia/depth, area, and a
+// One cell of a 2-column pile grid: code, dia/depth, location, and a
 // small "+" affordance. Purely presentational so it can be reused anywhere
 // a pile needs picking (currently AddPileModal, droppable into
 // PilesScreen.tsx later).
@@ -14,7 +14,11 @@ interface PileGridCardProps {
   code: string;
   dia: number;
   depth: number;
-  area: string | null;
+  /** pilingLocations.name for this pile — shown instead of the free-text
+   * `area` column, which is optional and left blank on most piles, so
+   * several same-coded piles from different locations were otherwise
+   * indistinguishable in this grid. */
+  location: string | null;
   onPress: () => void;
   /** Trailing badge: 'add' (default) shows the "+" pick affordance (AddPileModal); 'none' hides it (PilesScreen, where tapping opens details, not "add"). */
   badge?: 'add' | 'none';
@@ -26,7 +30,7 @@ export default function PileGridCard({
   code,
   dia,
   depth,
-  area,
+  location,
   onPress,
   badge = 'add',
   completed = false,
@@ -45,7 +49,7 @@ export default function PileGridCard({
         )}
       </View>
       <Text style={styles.meta}>Ø{dia}mm · {depth}m</Text>
-      <Text style={styles.area} numberOfLines={1}>{area || '—'}</Text>
+      <Text style={styles.area} numberOfLines={1}>{location || 'No location'}</Text>
     </Pressable>
   );
 }

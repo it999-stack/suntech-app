@@ -25,7 +25,7 @@ import { getSiteCoordinatorsBySite } from '@repositories/siteCoordinatorsReposit
 import { callPhone } from '@utils/phone';
 import type { PilSiteCoordinator } from '@db/schema';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '2.0.0';
 
 function Row({
   icon,

@@ -28,6 +28,8 @@ function toResumeWork(item: ResumeWorkInfo): ResumeWork {
     remainingTimeConfirmed: false,
     pastChecklistPileId: item.pastChecklistPileId,
     pastActualStart: item.pastActualStart,
+    carriedSegments: item.carriedSegments,
+    workedMinutes: item.workedMinutes,
     completedStepNames: item.completedStepNames,
     completedSteps: item.completedSteps,
     nextStep: item.nextStep,

@@ -68,7 +68,15 @@ export function useMachineFloor(args: { pileGroups: PileGroup[] }): {
     const map = new Map<string, { checklistPileId: string; stepId: string; pileCode: string; stepName: string }>();
     for (const group of pileGroups) {
       for (const step of group.steps) {
-        if (step.isHistorical || !step.assignedMachineId || !step.actualStartIso || step.actualEndIso) continue;
+        if (step.isHistorical || !step.assignedMachineId) continue;
+        // A PAUSED step also has a start and no end, but its machine has
+        // walked away and is genuinely free — treating it as busy would gate
+        // the machine card's Breakdown/Idle actions and stop the machine from
+        // being offered as a replacement elsewhere, both wrongly.
+        const running = step.status
+          ? step.status === 'RUNNING'
+          : !!step.actualStartIso && !step.actualEndIso;
+        if (!running) continue;
         map.set(step.assignedMachineId, {
           checklistPileId: group.checklistPileId,
           stepId: step.stepId,

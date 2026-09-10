@@ -10,6 +10,20 @@ import { toLocalIsoString, resolveOvernightDate } from '@utils/formatTime';
 import type { PilingDailyChecklist } from '@db/schema';
 import type { PileGroup, PileMeasurementFields } from '@app-types/plan';
 
+/** Everything the finish sheet gathers when a step stopped part-way. The
+ * times here are already resolved ISO strings — unlike the actual-time
+ * handlers below, which still speak minutes-since-midnight and do their own
+ * overnight resolution. */
+export type PauseStepInput = {
+  stoppedAtIso: string;
+  notes: string;
+  /** The step's currently resolved machine, and when it started — both only
+   * so a step that was already in progress before it was ever split gets a
+   * baseline session covering that earlier work. */
+  machineId?: string;
+  actualStartIso?: string;
+};
+
 export function useActualTimeActions(args: {
   openGroup: PileGroup | null;
   checklist: PilingDailyChecklist | null;
@@ -23,6 +37,26 @@ export function useActualTimeActions(args: {
   clearActualTime: (checklistPileId: string, stepId: string, field: 'actualStart' | 'actualEnd') => Promise<void>;
   setRemarks: (checklistPileId: string, stepId: string, remarks: string) => Promise<void>;
   setPileMeasurement: (pileId: string, patch: Partial<PileMeasurementFields>) => Promise<void>;
+  pauseStep: (checklistPileId: string, stepId: string, input: PauseStepInput) => Promise<void>;
+  resumeStep: (
+    checklistPileId: string,
+    stepId: string,
+    input: { startedAtIso: string; machineId?: string },
+  ) => Promise<void>;
+  finishSegment: (
+    checklistPileId: string,
+    stepId: string,
+    input: { endedAtIso: string; notes?: string },
+  ) => Promise<void>;
+  editSegmentTime: (
+    checklistPileId: string,
+    stepId: string,
+    segmentId: string,
+    field: 'start' | 'finish',
+    isoTimestamp: string,
+  ) => Promise<void>;
+  setSegmentNotes: (checklistPileId: string, stepId: string, segmentId: string, notes: string) => Promise<void>;
+  deleteSegment: (checklistPileId: string, stepId: string, segmentId: string) => Promise<void>;
 }): {
   handleSetActualTime: (
     stepId: string,
@@ -33,6 +67,21 @@ export function useActualTimeActions(args: {
   handleClearActualTime: (stepId: string, field: 'actualStart' | 'actualEnd') => Promise<void>;
   handleSaveRemarks: (stepId: string, text: string) => Promise<void>;
   handleSaveMeasurements: (patch: Partial<PileMeasurementFields>) => Promise<void>;
+  handlePauseStep: (stepId: string, input: PauseStepInput) => Promise<void>;
+  handleResumeStep: (
+    stepId: string,
+    input: { startedAtIso: string; machineId?: string },
+  ) => Promise<void>;
+  handleFinishSegment: (stepId: string, input: { endedAtIso: string; notes?: string }) => Promise<void>;
+  handleEditSegmentTime: (
+    stepId: string,
+    segmentId: string,
+    field: 'start' | 'finish',
+    minutesSinceMidnight: number,
+    explicitDate?: Date,
+  ) => Promise<void>;
+  handleSetSegmentNotes: (stepId: string, segmentId: string, notes: string) => Promise<void>;
+  handleDeleteSegment: (stepId: string, segmentId: string) => Promise<void>;
 } {
   const {
     openGroup,
@@ -41,6 +90,12 @@ export function useActualTimeActions(args: {
     clearActualTime,
     setRemarks,
     setPileMeasurement,
+    pauseStep,
+    resumeStep,
+    finishSegment,
+    editSegmentTime,
+    setSegmentNotes,
+    deleteSegment,
   } = args;
 
   // The picked value is only a time-of-day (minutes-since-midnight) unless
@@ -121,5 +176,95 @@ export function useActualTimeActions(args: {
     [openGroup, setPileMeasurement],
   );
 
-  return { handleSetActualTime, handleClearActualTime, handleSaveRemarks, handleSaveMeasurements };
+  // Straight pass-throughs of the open pile's checklistPileId. No time
+  // resolution here, unlike the handlers above: the sheets that call these
+  // work in resolved ISO timestamps, having already run the picked value
+  // through StepTimeControl's own validation and overnight handling.
+  const handlePauseStep = useCallback(
+    async (stepId: string, input: PauseStepInput) => {
+      if (!openGroup) return;
+      await pauseStep(openGroup.checklistPileId, stepId, input);
+    },
+    [openGroup, pauseStep],
+  );
+
+  const handleResumeStep = useCallback(
+    async (stepId: string, input: { startedAtIso: string; machineId?: string }) => {
+      if (!openGroup) return;
+      await resumeStep(openGroup.checklistPileId, stepId, input);
+    },
+    [openGroup, resumeStep],
+  );
+
+  const handleFinishSegment = useCallback(
+    async (stepId: string, input: { endedAtIso: string; notes?: string }) => {
+      if (!openGroup) return;
+      await finishSegment(openGroup.checklistPileId, stepId, input);
+    },
+    [openGroup, finishSegment],
+  );
+
+  // Same two-step shape as handleSetActualTime: EditTimeButton validates
+  // against its OWN resolved candidate internally, but hands back the raw
+  // minutes/explicitDate — the anchor used to resolve the final date here
+  // must be the exact same one actualTimeRules.forSegment gave the control
+  // (the session's own startedAt for 'start', endedAt-or-startedAt for
+  // 'finish'), or the picker's validation and the value actually saved could
+  // disagree about which calendar day it lands on.
+  const handleEditSegmentTime = useCallback(
+    async (
+      stepId: string,
+      segmentId: string,
+      field: 'start' | 'finish',
+      minutesSinceMidnight: number,
+      explicitDate?: Date,
+    ) => {
+      if (!openGroup) return;
+      const step = openGroup.steps.find((s) => s.stepId === stepId && !s.isHistorical);
+      const seg = step?.segments?.find((s) => s.id === segmentId);
+
+      let dt: Date;
+      if (explicitDate) {
+        dt = explicitDate;
+      } else {
+        const anchorIso =
+          (field === 'start' ? seg?.startedAt : (seg?.endedAt ?? seg?.startedAt)) ??
+          checklist?.planStartTime ??
+          toLocalIsoString(new Date());
+        dt = resolveOvernightDate(anchorIso, minutesSinceMidnight);
+      }
+
+      await editSegmentTime(openGroup.checklistPileId, stepId, segmentId, field, toLocalIsoString(dt));
+    },
+    [openGroup, checklist, editSegmentTime],
+  );
+
+  const handleSetSegmentNotes = useCallback(
+    async (stepId: string, segmentId: string, notes: string) => {
+      if (!openGroup) return;
+      await setSegmentNotes(openGroup.checklistPileId, stepId, segmentId, notes);
+    },
+    [openGroup, setSegmentNotes],
+  );
+
+  const handleDeleteSegment = useCallback(
+    async (stepId: string, segmentId: string) => {
+      if (!openGroup) return;
+      await deleteSegment(openGroup.checklistPileId, stepId, segmentId);
+    },
+    [openGroup, deleteSegment],
+  );
+
+  return {
+    handleSetActualTime,
+    handleClearActualTime,
+    handleSaveRemarks,
+    handleSaveMeasurements,
+    handlePauseStep,
+    handleResumeStep,
+    handleFinishSegment,
+    handleEditSegmentTime,
+    handleSetSegmentNotes,
+    handleDeleteSegment,
+  };
 }
