@@ -79,7 +79,7 @@ function formatSyncTime(ts: number | null): string {
 
 export default function ProfileScreen() {
   const { user, logout } = useAuthStore();
-  const { isSyncing, lastSyncedAt, pilesCount, error: syncError, loadLastSyncTime, sync } = useSyncStore();
+  const { isSyncing, lastSyncedAt, pilesCount, error: syncError, loadLastSyncTime, syncNow } = useSyncStore();
 
   const displayName = user?.name ?? 'Unknown';
   const displayEmail = user?.email ?? '';
@@ -132,12 +132,16 @@ export default function ProfileScreen() {
       notify.error('You are not assigned to any site. Contact your administrator.', { title: 'No site assigned' });
       return;
     }
+    // syncNow never rejects — a failed cycle surfaces via syncError in the
+    // modal + card. The piles reload runs either way, since a cycle can fail
+    // on the pull after a successful push.
+    await syncNow();
     try {
-      await sync(user.siteId);
       // Refresh piles after sync completes so the UI reflects new data
       await usePilesLocationsStore.getState().reload();
     } catch {
-      // error surfaced via syncError in the modal + card
+      // Local re-read failed — the sync itself still stands, and the next
+      // screen focus reloads piles anyway.
     }
   };
 

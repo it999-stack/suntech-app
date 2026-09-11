@@ -1,8 +1,6 @@
 // src/navigation/RootNavigator.tsx
 import { useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import NetInfo from '@react-native-community/netinfo';
-import { AppState, type AppStateStatus } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RootStackParamList } from '@app-types/navigation';
@@ -10,6 +8,7 @@ import { useAuthStore } from '@store/authStore';
 import { useSyncStore } from '@store/syncStore';
 import { useWorkingDateStore } from '@store/workingDateStore';
 import { getCursor } from '@repositories/syncCursorRepository';
+import { syncNow } from '@sync/SyncManager';
 import type { SyncErrorKind } from '@sync/bootstrap/syncResult';
 import { colors, spacing, typography } from '@theme/theme';
 import Button from '@components/shared/Button';
@@ -60,12 +59,6 @@ function InitialSyncErrorScreen({
   );
 }
 
-/** Fire-and-forget bootstrap sync — no-ops if one is already in flight. */
-function triggerBackgroundSync(siteId: string): void {
-  if (useSyncStore.getState().isSyncing) return;
-  void useSyncStore.getState().sync(siteId);
-}
-
 export default function RootNavigator() {
   const { token, user, isBootstrapping, bootstrap } = useAuthStore();
   const isSyncing = useSyncStore((s) => s.isSyncing);
@@ -91,8 +84,11 @@ export default function RootNavigator() {
   // reference-data step succeeds, so it's a complete "did setup finish"
   // signal that's correct even for a site whose locations have zero piles yet
   // (pile count alone would wrongly stay "unsynced" forever in that case).
-  // Steady-state logins (cursor already present) trigger a non-blocking
-  // background sync instead of gating anything.
+  // Steady-state logins (cursor already present) fire a non-blocking 'login'
+  // trigger instead of gating anything. Login is the one steady-state trigger
+  // SyncManager can't raise on its own — no AppState or connectivity change
+  // accompanies it — so it's raised here, but still through SyncManager
+  // rather than by calling runDeltaSync directly.
   const [gateChecked, setGateChecked] = useState(false);
   const [needsInitialSync, setNeedsInitialSync] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -108,11 +104,12 @@ export default function RootNavigator() {
 
       if (cursor == null) {
         // Never bootstrapped — block until we have the core reference data.
-        // Re-check getCursor after the attempt rather than trusting sync()'s
-        // own success/failure directly: bootstrapSync.ts is the source of
-        // truth for whether the cursor was actually safe to persist.
+        // Re-check getCursor after the attempt rather than trusting
+        // runBootstrap's own success/failure directly: bootstrapSync.ts is
+        // the source of truth for whether the cursor was actually safe to
+        // persist.
         try {
-          await useSyncStore.getState().sync(siteId);
+          await useSyncStore.getState().runBootstrap(siteId);
         } catch {
           // Network/unexpected failure — fall through to the re-check below,
           // which will correctly find the cursor still unset.
@@ -120,7 +117,7 @@ export default function RootNavigator() {
         if (cancelled) return;
         cursor = await getCursor(siteId).catch(() => null);
       } else {
-        triggerBackgroundSync(siteId);
+        void syncNow('login');
       }
 
       if (!cancelled) {
@@ -134,37 +131,11 @@ export default function RootNavigator() {
     };
   }, [token, siteId, isBootstrapping, retryCount]);
 
-  // ── Steady-state background sync: reconnect + foreground ──────────────
-  // Login is covered by the gate effect above; this covers "app was already
-  // open/backgrounded and connectivity or foreground state changed." No
-  // periodic timer — a full bootstrap pull hits ~6 endpoints, so
-  // reconnect/foreground is enough coverage without hammering the server.
-  useEffect(() => {
-    // Also gated on gateChecked — needsInitialSync starts false by default,
-    // before the check above has even run, so without this a reconnect
-    // event could theoretically fire during that brief ambiguous window.
-    if (!siteId || !gateChecked || needsInitialSync) return;
-
-    let wasConnected: boolean | null = null;
-    const unsubscribeNet = NetInfo.addEventListener((state) => {
-      const isConnected = !!state.isConnected;
-      if (isConnected && wasConnected === false) {
-        triggerBackgroundSync(siteId);
-      }
-      wasConnected = isConnected;
-    });
-
-    const appStateSub = AppState.addEventListener('change', (next: AppStateStatus) => {
-      if (next === 'active') {
-        triggerBackgroundSync(siteId);
-      }
-    });
-
-    return () => {
-      unsubscribeNet();
-      appStateSub.remove();
-    };
-  }, [siteId, gateChecked, needsInitialSync]);
+  // Reconnect, foreground and periodic triggers are registered once by
+  // initSyncManager() (App.tsx) and are not duplicated here — see the
+  // ownership note at the top of sync/SyncManager.ts. They need no gating on
+  // needsInitialSync either: runDeltaSync no-ops while no cursor exists,
+  // which is exactly the state that flag describes.
 
   if (isBootstrapping) {
     return <SplashScreen />;

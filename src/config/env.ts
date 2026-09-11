@@ -15,7 +15,8 @@ function resolveBaseUrl() {
   if (API_BASE_URL_OVERRIDE) return API_BASE_URL_OVERRIDE;
   if (__DEV__) {
     if (Platform.OS === 'android') {
-      return `http://${DEV_ANDROID_HOST}:8000/api`;
+      // return `http://${DEV_ANDROID_HOST}:8000/api`;
+      return STAGING_API_BASE_URL;
     }
     return 'http://localhost:8000/api';
   }
