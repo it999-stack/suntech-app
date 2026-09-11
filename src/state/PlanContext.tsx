@@ -127,6 +127,12 @@ export type EditPlanPileInput = {
   rigId: string;
   craneId?: string;
   stepTrackOverrides?: string[];
+  /** {stepId: machineId} for steps already pinned to a specific machine by a
+   * mid-day replacement. stepTrackOverrides only says "run this on the rig",
+   * which the server resolves to the PILE's rig — so without this a step
+   * handed to a different machine comes back reassigned to whichever
+   * rig/crane the pile owns, and a same-track swap is invisible entirely. */
+  stepMachineOverrides?: Record<string, string>;
 };
 
 /** What changed as a result of editPlanMidDay — shown to the user before/after
@@ -596,6 +602,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
               rig_id: p.rigId,
               crane_id: p.craneId ?? null,
               step_track_overrides: p.stepTrackOverrides ?? [],
+              step_machine_overrides: p.stepMachineOverrides ?? {},
             })),
           },
         );

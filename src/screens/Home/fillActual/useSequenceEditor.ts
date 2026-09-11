@@ -126,6 +126,30 @@ export function useSequenceEditor(args: {
       .map((s) => s.stepId);
   }
 
+  /**
+   * Steps whose work sits on a machine the pile's OWN rig/crane can't account
+   * for — i.e. a mid-day replacement moved it elsewhere. Only those get pinned:
+   * anything the pile's own machines already explain is left to the server's
+   * normal track resolution, so changing a pile's rig still moves its steps
+   * rather than being overridden by a stale pin.
+   *
+   * Completed steps are skipped — persist_final never deletes their plan rows,
+   * so their machine survives regardless (that is why a finished step kept its
+   * replacement while a paused one silently lost it).
+   */
+  function deriveStepMachineOverrides(pileId: string): Record<string, string> {
+    const group = groupByPileId.get(pileId);
+    if (!group) return {};
+    const pileOwnMachines = new Set([group.rigId, group.craneId].filter(Boolean) as string[]);
+    const pinned: Record<string, string> = {};
+    for (const s of group.steps) {
+      if (s.isHistorical || s.actualEnd !== undefined) continue;
+      const machineId = s.assignedMachineId;
+      if (machineId && !pileOwnMachines.has(machineId)) pinned[s.stepId] = machineId;
+    }
+    return pinned;
+  }
+
   function openSequenceModal() {
     setDraftRows(
       checklistPiles.map((cp) => {
@@ -135,6 +159,7 @@ export function useSequenceEditor(args: {
           rigId: group?.rigId ?? cp.rigId,
           craneId: group?.craneId ?? (cp.craneId ?? undefined),
           stepTrackOverrides: deriveStepTrackOverrides(cp.pileId),
+          stepMachineOverrides: deriveStepMachineOverrides(cp.pileId),
         };
       }),
     );
@@ -163,6 +188,11 @@ export function useSequenceEditor(args: {
       return {
         ...row,
         ...currentMachineIds(row),
+        // Re-derived rather than carried from the draft: a replacement logged
+        // while the sequence modal sat open would otherwise be sent stale.
+        // Keyed by pile, unlike stepTrackOverrides below — which machine is
+        // doing a step belongs to the pile, never to its position in the queue.
+        stepMachineOverrides: deriveStepMachineOverrides(pileId),
         ...(overridesForNewOrder.has(pileId) ? { stepTrackOverrides: overridesForNewOrder.get(pileId) } : {}),
       };
     });
