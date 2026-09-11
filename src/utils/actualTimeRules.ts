@@ -47,6 +47,106 @@ function isoToMinutes(iso: string | null | undefined): number | undefined {
   return isNaN(d.getTime()) ? undefined : d.getHours() * 60 + d.getMinutes();
 }
 
+/** Milliseconds since epoch, or NaN for a missing/unparseable timestamp. */
+function msOf(iso: string | null | undefined): number {
+  return iso ? new Date(iso).getTime() : NaN;
+}
+
+/**
+ * How long this step was expected to take, in ms.
+ *
+ * A planned step's own committed span comes first. Falling back to
+ * `templateMinutes` is what makes an UNPLANNED step work: it carries no plan
+ * row at all, and the dimension's duration template is the only estimate of
+ * its length that exists (see ActualEntry.templateMinutes — populated for
+ * exactly this case, and undefined once a step has real planned times).
+ *
+ * Deliberately excludes bufferMinutes: that's lead-in time before a step
+ * starts, not part of the work itself, so adding it here would push every
+ * seeded finish past the step's actual expected length.
+ */
+function expectedDurationMs(step: ActualEntry): number | undefined {
+  const plannedStartMs = msOf(step.plannedStartIso);
+  const plannedEndMs = msOf(step.plannedEndIso);
+  if (!Number.isNaN(plannedStartMs) && !Number.isNaN(plannedEndMs)) {
+    const span = plannedEndMs - plannedStartMs;
+    if (span > 0) return span;
+  }
+  if (step.templateMinutes != null && step.templateMinutes > 0) {
+    return step.templateMinutes * 60_000;
+  }
+  return undefined;
+}
+
+/**
+ * Where the finish picker opens, in priority order:
+ *
+ *   1. the step's own planned end, when work started before it
+ *   2. actual start + expectedDurationMs — its planned length, or the
+ *      dimension's template for a step that was never planned
+ *   3. the plan window's end, when either of those overruns it
+ *   4. never earlier than the step's own recorded start
+ *
+ * This replaced a bare `nowMinutes()` fallback that was wrong three ways for
+ * any step that overran its plan (the common case — that's *why* the planned
+ * end is unusable):
+ *
+ *   - it seeded a time BEFORE the step's own actualStart, which is the finish
+ *     field's own minBoundIso, so confirming without scrolling was rejected
+ *     outright — the picker opened on a value it would refuse;
+ *   - it read the device's wall clock even when the entry belongs to an
+ *     earlier day's checklist, so "now" meant "this time of day, but days
+ *     ago" once the day's anchor was reapplied by seedPickerDate;
+ *   - its `plannedEnd > actualStart` test compared minutes-since-midnight, so
+ *     a step running 23:50 -> 00:30 always failed it (30 > 1430 is false) and
+ *     fell through even though the planned end genuinely was later. This
+ *     file's own header warns about precisely that.
+ *
+ * Same reasoning as seedResumeCloseOutTime below: the step's expected length
+ * measured from when work really began is a far better guess for "when did
+ * this stop" than the moment the supervisor happened to open the modal.
+ *
+ * Every comparison here is on real timestamps. Only the final reduction to
+ * minutes-since-midnight is lossy, and the picker reattaches the day from
+ * `anchorIso` (see seedPickerDate) — so a seed whose natural finish crosses
+ * midnight opens at the right time on the anchor's day, and the user moves
+ * the date with the picker's own header. That's the existing contract of
+ * getDefaultMinutes, not something introduced here.
+ */
+function seedFinishMinutes(step: ActualEntry, planWindowMaxIso?: string): number {
+  const startMs = msOf(step.actualStartIso);
+  if (Number.isNaN(startMs)) {
+    // No recorded start to measure from. The finish control isn't reachable
+    // in this state today, but the plan still beats the wall clock.
+    return step.plannedEnd ?? nowMinutes();
+  }
+
+  const plannedEndMs = msOf(step.plannedEndIso);
+  let candidateMs: number;
+
+  if (!Number.isNaN(plannedEndMs) && plannedEndMs > startMs) {
+    candidateMs = plannedEndMs;
+  } else {
+    const durationMs = expectedDurationMs(step);
+    // Neither a plan nor a template: nothing better to derive from, so keep
+    // the old behaviour — but the clamp below still stops it landing before
+    // the step began, which is what actually made it unusable.
+    candidateMs = durationMs != null ? startMs + durationMs : Date.now();
+  }
+
+  const windowMaxMs = msOf(planWindowMaxIso);
+  if (!Number.isNaN(windowMaxMs) && candidateMs > windowMaxMs) {
+    candidateMs = windowMaxMs;
+  }
+
+  // Applied last, so a plan window ending before work began can't drag the
+  // seed back below the field's own lower bound.
+  if (candidateMs < startMs) candidateMs = startMs;
+
+  const d = new Date(candidateMs);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
 /**
  * Everything a time picker needs for one step's one field — both the rules it
  * must satisfy and the value it should open on. Spread wholesale into
@@ -248,13 +348,10 @@ export function buildActualTimeRules(args: {
         machineConflictCheck: machineCheck(step, 'finish'),
         pileConflictCheck: pileCheck(step, 'finish'),
         anchorIso: step.endAnchorIso,
-        // The planned end, unless the step has already run past it (or was
-        // never planned) — "now" is the better guess than a time already gone
-        // by, or than nothing at all.
-        getDefaultMinutes: () =>
-          step.plannedEnd != null && step.actualStart != null && step.plannedEnd > step.actualStart
-            ? step.plannedEnd
-            : nowMinutes(),
+        // See seedFinishMinutes — planned end, else actual start + the step's
+        // expected length, clamped to the plan window and never earlier than
+        // the step's own recorded start.
+        getDefaultMinutes: () => seedFinishMinutes(step, planWindowMaxIso),
       };
     },
     forSegment(stepId, segmentId, field) {
