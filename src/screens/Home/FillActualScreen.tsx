@@ -22,7 +22,6 @@ import MachineDownModal from '@components/plan/actual/MachineDownModal';
 import MachineIdleModal from '@components/plan/actual/MachineIdleModal';
 import SwipeableTabBar from '@components/shared/SwipeableTabBar';
 import ReorderPilesModal from '@components/plan/generate/preview/ReorderPilesModal';
-import ReplanPromptSheet from '@components/plan/actual/ReplanPromptSheet';
 import AddPileModal from '@components/plan/actual/AddPileModal';
 import EmptyState from '@components/shared/EmptyState';
 import { useModalBackGuard } from '@components/shared/ModalHost';
@@ -36,7 +35,6 @@ import { useMachineFloor } from './fillActual/useMachineFloor';
 import { useMachinePages, EMPTY_PILE_GROUPS } from './fillActual/useMachinePages';
 import { usePileModal } from './fillActual/usePileModal';
 import { useSequenceEditor } from './fillActual/useSequenceEditor';
-import { useReplanPrompt } from './fillActual/useReplanPrompt';
 import { useActualTimeActions } from './fillActual/useActualTimeActions';
 import { useMachineEventActions } from './fillActual/useMachineEventActions';
 import MachinePilesPage from './fillActual/MachinePilesPage';
@@ -179,16 +177,6 @@ export default function FillActualsScreen() {
     selectedMachineId,
     editPlanMidDay,
     previewEditPlanMidDay,
-  });
-
-  const replan = useReplanPrompt({
-    siteId,
-    checklist,
-    workingDate,
-    checklistPiles,
-    pileGroups,
-    previewEditPlanMidDay,
-    editPlanMidDay,
   });
 
   const {
@@ -338,12 +326,7 @@ export default function FillActualsScreen() {
           onSaveRemarks={handleSaveRemarks}
           onLogMachineEvent={handleLogMachineEvent}
           onSaveMeasurements={handleSaveMeasurements}
-          onPauseStep={async (stepId, input) => {
-            await handlePauseStep(stepId, input);
-            // Only after the pause is durably recorded. The prompt is a
-            // follow-up offer, never a gate on logging the time.
-            await replan.offerReplan();
-          }}
+          onPauseStep={handlePauseStep}
           onResumeStep={handleResumeStep}
           onFinishSegment={handleFinishSegment}
           onEditSegmentTime={handleEditSegmentTime}
@@ -397,15 +380,6 @@ export default function FillActualsScreen() {
         />
       )}
 
-      {replan.preview && (
-        <ReplanPromptSheet
-          visible
-          preview={replan.preview}
-          isApplying={replan.isApplying}
-          onClose={replan.dismiss}
-          onConfirm={replan.confirmReplan}
-        />
-      )}
 
       {activeMachine && checklist && lockedMachineRecord && (
         <AddPileModal

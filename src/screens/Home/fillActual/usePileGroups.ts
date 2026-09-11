@@ -329,6 +329,14 @@ export function usePileGroups(args: {
               assignedMachineNo: seg.assignedMachineId
                 ? machineMap.get(seg.assignedMachineId) || undefined
                 : undefined,
+              // Resolved per SESSION, for the same reason resolvedTrack above
+              // is resolved per step: the machine's own type is the only
+              // authority on how to badge it. The step's track is whichever
+              // machine holds the step now, so on a step split across tracks
+              // it is simply wrong for every session but the last.
+              assignedMachineTrack: seg.assignedMachineId
+                ? (machineTypeById.get(seg.assignedMachineId) as Track | undefined)
+                : undefined,
               outcome: seg.outcome ?? undefined,
               stopReason: seg.stopReason ?? undefined,
               remainingMinutes: seg.remainingMinutes ?? undefined,

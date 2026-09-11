@@ -128,9 +128,6 @@ function seedFinishMinutes(step: ActualEntry, planWindowMaxIso?: string): number
     candidateMs = plannedEndMs;
   } else {
     const durationMs = expectedDurationMs(step);
-    // Neither a plan nor a template: nothing better to derive from, so keep
-    // the old behaviour — but the clamp below still stops it landing before
-    // the step began, which is what actually made it unusable.
     candidateMs = durationMs != null ? startMs + durationMs : Date.now();
   }
 

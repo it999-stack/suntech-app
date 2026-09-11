@@ -124,7 +124,16 @@ export default function SegmentList({ step, rules, onEditSegmentTime, onSetSegme
         return (
           <View key={seg.id} style={styles.card}>
             <View style={styles.cardHeader}>
-              <MachineBadge track={step.track} label={seg.assignedMachineNo ?? '—'} />
+              {/* The SESSION's machine decides the badge, not the step's —
+                  splitting a step across a crane and a rig is the whole point
+                  of this list, and step.track is only ever the type of
+                  whichever machine holds the step now. Falls back to the step
+                  for a session with no machine recorded, which at least keeps
+                  the pill the right shape. */}
+              <MachineBadge
+                track={seg.assignedMachineTrack ?? step.track}
+                label={seg.assignedMachineNo ?? '—'}
+              />
               <Text style={[styles.durationText, open && styles.durationTextRunning]}>
                 {open ? 'Running' : durationMin != null ? formatDuration(durationMin) : '—'}
               </Text>

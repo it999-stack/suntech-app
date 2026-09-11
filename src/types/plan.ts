@@ -216,6 +216,12 @@ export type ActualSegment = {
   /** The machine that did THIS session, not the step as a whole. */
   assignedMachineId?: string;
   assignedMachineNo?: string;
+  /** That machine's OWN type — not the step's track, which is only ever the
+   * type of whichever machine is assigned to the step *now*. A step split
+   * between a crane and a rig has one session of each, and badging both from
+   * the step would paint one of them the wrong colour. Undefined when the
+   * session records no machine. */
+  assignedMachineTrack?: 'RIG' | 'CRANE' | 'COMPRESSOR';
   /** undefined while open; 'PARTIAL' = stopped with work left; 'FINAL' = the
    * step finished in this session. Only FINAL gives the step an actualEnd. */
   outcome?: 'PARTIAL' | 'FINAL';

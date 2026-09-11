@@ -112,7 +112,14 @@ export function getPileMachines(steps: ActualEntry[]): { worked: PileMachineRef[
       if (!seg.assignedMachineId || !seg.assignedMachineNo) continue;
       if (workedSeen.has(seg.assignedMachineId)) continue;
       workedSeen.add(seg.assignedMachineId);
-      worked.push({ id: seg.assignedMachineId, no: seg.assignedMachineNo, track: s.track });
+      // Same reasoning as the machine itself being read per-session: the
+      // step's track is whichever machine holds it NOW, so crediting a crane's
+      // session under the step's rig track would file it beside the rigs.
+      worked.push({
+        id: seg.assignedMachineId,
+        no: seg.assignedMachineNo,
+        track: seg.assignedMachineTrack ?? s.track,
+      });
     }
 
     if (!s.assignedMachineId || !s.assignedMachineNo) continue;

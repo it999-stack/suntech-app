@@ -32,6 +32,8 @@ import MachineReplaceModal from '@components/plan/actual/MachineReplaceModal';
 import SegmentList from '@components/plan/actual/SegmentList';
 import StepFinishSheet from '@components/plan/actual/StepFinishSheet';
 import ResumeWorkSheet from '@components/plan/actual/ResumeWorkSheet';
+import { isEligibleReplacementType } from '@components/plan/actual/machineEvents/eventLabels';
+import type { Track } from '@components/plan/actual/machineEvents/types';
 import MeasurementFieldsModal, {
   type MeasurementFieldConfig,
 } from '@components/plan/actual/MeasurementFieldsModal';
@@ -1027,7 +1029,9 @@ export default function PileStepsModal({
         <ResumeWorkSheet
           visible
           step={resumeFor}
-          machines={machines.filter((m) => m.type === resumeFor.track)}
+          machines={machines.filter((m) =>
+            isEligibleReplacementType(m.type, (resumeFor.businessTrack ?? resumeFor.track) as Track),
+          )}
           defaultMachineId={
             resumeFor.segments?.filter((s) => !s.endedAt).slice(-1)[0]?.assignedMachineId ??
             resumeFor.assignedMachineId

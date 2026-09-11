@@ -9,14 +9,21 @@
 // than stamped.
 
 import { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Play } from 'lucide-react-native';
 import AppModal from '@components/shared/AppModal';
 import Button from '@components/shared/Button';
-import MachineBadge from '@components/shared/MachineBadge';
+import TilePicker, { type TileSection } from '@components/shared/TilePicker';
+import type { TileGroupOption } from '@components/shared/TileGroup';
 import TimerSelectMenu from '@components/shared/NativeTimerSelectMenu';
 import { TimeFieldGroup, TimeFieldRow } from '@components/shared/TimeFieldRow';
-import { colors, spacing, radius, typography } from '@theme/theme';
+import { colors, spacing, typography } from '@theme/theme';
+import {
+  STATUS_META,
+  TRACK_META,
+  type MachineKind,
+  type MachineStatus,
+} from '@utils/helpers';
 import {
   formatTimeWithDay,
   resolveOvernightDate,
@@ -61,9 +68,61 @@ export default function ResumeWorkSheet({
   onClose,
   onConfirm,
 }: Props) {
-  const [machineId, setMachineId] = useState<string | undefined>(defaultMachineId);
+  // Only a machine that is actually running can be handed the work. Anything
+  // broken down, idle or out of service is shown (with its status, so the
+  // reason is visible) but cannot be picked.
+  const isSelectable = (m: PilingMachine) => m.status === 'ACTIVE';
+
+  // Not just `defaultMachineId`: that's the machine recorded when the step was
+  // paused, and the reason it was paused is often that the machine broke down.
+  // Pre-selecting it would leave a disabled tile selected — unpickable, but
+  // still what Resume would submit, which is the one outcome this disabling is
+  // meant to prevent.
+  const [machineId, setMachineId] = useState<string | undefined>(() => {
+    const preset = machines.find((m) => m.id === defaultMachineId);
+    return preset && isSelectable(preset) ? preset.id : undefined;
+  });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [startedAtIso, setStartedAtIso] = useState<string | undefined>();
+
+  // Same tile presentation as MachineReplaceModal — that sheet is the other
+  // place a machine is chosen mid-step, and the two reading differently made
+  // the same decision look like two different kinds of choice.
+  const toOption = (m: PilingMachine): TileGroupOption => {
+    const meta = TRACK_META[m.type as MachineKind];
+    const status = m.status as MachineStatus;
+    return {
+      id: m.id,
+      label: m.machineNo,
+      icon: meta.icon,
+      color: meta.color,
+      soft: meta.soft,
+      disabled: !isSelectable(m),
+      // Left visible rather than filtered out, unlike MachineReplaceModal's
+      // eligible list: "R-06 is broken down" answers the supervisor's question,
+      // where a machine silently missing from the grid just reads as a bug.
+      // Omitted for ACTIVE, which is the unremarkable case and would be noise.
+      statusBadge:
+        status && status !== 'ACTIVE'
+          ? { text: STATUS_META[status].label, color: STATUS_META[status].color, soft: STATUS_META[status].soft }
+          : undefined,
+    };
+  };
+
+  // Split by the machine's OWN type, not the step's track — a CRANE-track
+  // step's eligible list includes rigs (see isEligibleReplacementType at the
+  // call site), so they belong under "Rigs" rather than sitting mislabelled
+  // under "Cranes". TilePicker hides whichever sections come back empty, so a
+  // RIG-track step still shows exactly one group.
+  const machineSections: TileSection[] = [
+    { key: 'RIG', label: 'Rigs', options: machines.filter((m) => m.type === 'RIG').map(toOption) },
+    { key: 'CRANE', label: 'Cranes', options: machines.filter((m) => m.type === 'CRANE').map(toOption) },
+    {
+      key: 'COMPRESSOR',
+      label: 'Compressors',
+      options: machines.filter((m) => m.type === 'COMPRESSOR').map(toOption),
+    },
+  ];
 
   // Seeds on the pause, not on "now": resuming is nearly always recorded
   // relative to when work actually stopped.
@@ -103,19 +162,22 @@ export default function ResumeWorkSheet({
       scrollable
     >
       <View style={styles.body}>
-        <Text style={styles.fieldLabel}>Machine</Text>
-        <View style={styles.chipRow}>
-          {machines.map((m) => (
-            <Pressable
-              key={m.id}
-              onPress={() => setMachineId((cur) => (cur === m.id ? undefined : m.id))}
-              style={[styles.machineChip, machineId === m.id && styles.chipActive]}
-            >
-              <MachineBadge track={m.type as ActualEntry['track']} label={m.machineNo} />
-            </Pressable>
-          ))}
-          {machines.length === 0 && <Text style={styles.helpText}>No machine available.</Text>}
-        </View>
+        {machines.length === 0 ? (
+          // TilePicker drops empty sections, so with nothing eligible it would
+          // render as a silent gap rather than saying why.
+          <Text style={styles.helpText}>No machine available.</Text>
+        ) : (
+          <TilePicker
+            label="Machine"
+            sections={machineSections}
+            // valueId drives the selected look (single-select), but the press
+            // handler is onToggle so tapping the chosen tile clears it again —
+            // machineId is optional on confirm, and a supervisor who picked
+            // the wrong one needs a way back to "not specified".
+            valueId={machineId ?? null}
+            onToggle={(id) => setMachineId((cur) => (cur === id ? undefined : id))}
+          />
+        )}
 
         <TimeFieldGroup>
           {/* Shown read-only above the editable row so the two times read as
@@ -160,20 +222,5 @@ export default function ResumeWorkSheet({
 
 const styles = StyleSheet.create({
   body: { gap: spacing.sm, paddingBottom: spacing.lg },
-  fieldLabel: {
-    ...typography.smallTxt,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    marginTop: spacing.xs,
-  },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  machineChip: {
-    padding: spacing.xs,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-  },
-  chipActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   helpText: { ...typography.smallTxt, color: colors.textSecondary },
 });

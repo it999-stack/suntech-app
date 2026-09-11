@@ -17,7 +17,7 @@ import type { LogMachineEventInput } from '@state/PlanContext';
 import type { PilMachineEvent } from '@db/schema';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { toLocalIsoString } from '@utils/formatTime';
-import { TRACK_META, type MachineKind } from '@utils/helpers';
+import { STATUS_META, TRACK_META, type MachineKind, type MachineStatus } from '@utils/helpers';
 import { notify } from '@utils/notify';
 import CompactTimeRow from './machineEvents/CompactTimeRow';
 import NotesField from './machineEvents/NotesField';
@@ -64,13 +64,39 @@ export default function MachineReplaceModal({
   const [notes, setNotes] = useState('');
   const [occurredAt, setOccurredAt] = useState(() => new Date());
 
+  // Only a running machine can take the work over. Anything broken down, idle
+  // or out of service stays in the grid — disabled, with its status shown —
+  // rather than being filtered away: "R-06 is broken down" answers the
+  // supervisor's question, where a machine silently absent from the grid just
+  // reads as a bug and sends them hunting for it.
+  const isSelectable = (m: MachineEventMachine) => m.status === 'ACTIVE';
+
   const toOption = (m: MachineEventMachine): TileGroupOption => {
     const meta = TRACK_META[m.type as MachineKind];
-    return { id: m.id, label: m.machineNo, icon: meta.icon, color: meta.color, soft: meta.soft };
+    const status = m.status as MachineStatus;
+    return {
+      id: m.id,
+      label: m.machineNo,
+      icon: meta.icon,
+      color: meta.color,
+      soft: meta.soft,
+      disabled: !isSelectable(m),
+      // Omitted for ACTIVE — the unremarkable case, and a badge on every tile
+      // would just be noise.
+      statusBadge:
+        status && status !== 'ACTIVE'
+          ? { text: STATUS_META[status].label, color: STATUS_META[status].color, soft: STATUS_META[status].soft }
+          : undefined,
+    };
   };
 
+  // Status is no longer part of this filter — it's a `disabled` tile now, see
+  // above. The two conditions that remain both mean "not a candidate at all"
+  // rather than "unavailable right now": a wrong-track machine can never do
+  // this step, and the machine being replaced is the subject of the swap, not
+  // an option in it.
   const eligibleMachines = machines.filter(
-    (m) => isEligibleReplacementType(m.type, defaultTrack) && m.status === 'ACTIVE' && m.id !== currentMachineId,
+    (m) => isEligibleReplacementType(m.type, defaultTrack) && m.id !== currentMachineId,
   );
 
   // Split by the replacement's own type, not defaultTrack — a CRANE-track
