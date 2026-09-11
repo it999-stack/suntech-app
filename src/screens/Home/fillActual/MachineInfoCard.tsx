@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { ArrowDownUp, Coffee, AlertTriangle, Play, Clock3, CalendarClock } from 'lucide-react-native';
+import { ArrowDownUp, Coffee, AlertTriangle, Play, Clock3 } from 'lucide-react-native';
 import { colors, spacing, typography, radius } from '@theme/theme';
 import { formatElapsedHMS, formatTime } from '@utils/formatTime';
 import { TRACK_META } from '@utils/helpers';
@@ -99,22 +99,19 @@ export default function MachineInfoCard({
         </View>
       )}
 
-      <View style={styles.logEventHeader}>
-        <View style={styles.logEventIconWrap}>
-          <CalendarClock size={18} color={colors.accentBlue} />
-        </View>
-        <View style={styles.logEventTextWrap}>
-          <Text style={styles.logEventTitle}>Log machine event</Text>
-          <Text style={styles.logEventSubtitle}>Report an issue or set idle if required.</Text>
-        </View>
-      </View>
+      {/* A bare section label, styled like the screen's other ones ("PILE
+          SEQUENCE", "WORK SESSIONS") — the two buttons below say plainly
+          enough what the section does, so the icon and the explanatory
+          sentence were only taking vertical space. */}
+      <Text style={styles.logEventLabel}>Log machine event</Text>
+
       <View style={styles.actionRow}>
         {isDown ? (
           <MachineActionPill icon={Play} label="Resume" variant="primary" onPress={onBreakdown} />
         ) : (
           <MachineActionPill
             icon={AlertTriangle}
-            label="Report issue"
+            label="Report"
             variant="danger"
             // A machine is in exactly one of ACTIVE/IDLE/BREAKDOWN at a time
             // (pilingMachines.status is a single column, not independent
@@ -227,34 +224,13 @@ const styles = StyleSheet.create({
     color: colors.warning,
     fontVariant: ['tabular-nums'],
   },
-  logEventHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  logEventIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.md,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logEventTextWrap: {
-    flex: 1,
-  },
-  logEventTitle: {
-    ...typography.cardTitle,
-    color: colors.textPrimary,
-  },
-  logEventSubtitle: {
+  logEventLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
   },
   actionRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-start',
+    alignItems: 'center',
     gap: spacing.sm,
   },
 });
