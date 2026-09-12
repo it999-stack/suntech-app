@@ -305,9 +305,14 @@ interface PilesCardProps {
   windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
   /** Global step catalog, in sequence order — used to compute each pile's full
    * applicable-step set so a step that didn't get scheduled still shows up,
-   * faded, instead of vanishing. Omit (e.g. PlanDetailScreen) to fall back to
-   * showing only the steps that actually got scheduled, same as before. */
+   * faded, instead of vanishing. Passed by both the wizard's Preview step and
+   * PlanDetailScreen; omit it to fall back to showing only the steps that
+   * actually got scheduled. */
   allSteps?: PilingStep[];
+  /** Steps this plan covers, filtering allSteps down to the applicable set.
+   * The wizard takes it from the draft; PlanDetailScreen reconstructs it from
+   * the saved plan (see its own note — a saved checklist stores no step
+   * selection). Ignored unless allSteps is given. */
   selectedStepIds?: string[];
   resumeWorkByPileId?: Record<string, ResumeWork>;
   /** Opens the machine-reassignment panel for a pile — Preview-only, omitted on read-only

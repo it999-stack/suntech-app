@@ -29,7 +29,8 @@ import { getPilesBySiteWithDimensions } from '@repositories/pilesRepository';
 import { getMachinesByType } from '@repositories/machinesRepository';
 import { getPersonnelByIds } from '@repositories/personnelRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
-import type { PilingDailyChecklist, PilingSitePersonnel, PilingShiftType, PilingChecklistPile, PilingMachine } from '@db/schema';
+import { getSteps } from '@repositories/stepsRepository';
+import type { PilingDailyChecklist, PilingSitePersonnel, PilingShiftType, PilingChecklistPile, PilingMachine, PilingStep } from '@db/schema';
 import PilesCard from '@components/plan/generate/preview/PilesCard';
 import MachineTimelineCard from '@components/plan/generate/preview/MachineTimelineCard';
 import CoreTeamCard from '@/components/plan/generate/preview/CoreTeamCard';
@@ -52,6 +53,7 @@ export default function PlanDetailScreen() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [checklist, setChecklist] = useState<PilingDailyChecklist | null>(null);
   const [planSteps, setPlanSteps] = useState<PlanStepWithMeta[]>([]);
+  const [allSteps, setAllSteps] = useState<PilingStep[]>([]);
   const [actualSteps, setActualSteps] = useState<ActualStepWithMeta[]>([]);
   const [detailPiles, setDetailPiles] = useState<PreviewPile[]>([]);
   const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
@@ -100,8 +102,14 @@ export default function PlanDetailScreen() {
     // Load shifts
     const shiftsList = await getAllShiftTypes();
 
+    // Global step catalog, in sequence order — lets PilesCard show every step
+    // this plan covers on every pile, including ones the scheduler never got
+    // to, instead of silently dropping them. Same treatment as PreviewStep.
+    const stepCatalog = await getSteps();
+
     setChecklist(cl ?? null);
     setPlanSteps(steps);
+    setAllSteps(stepCatalog);
     setActualSteps(actuals);
     setPersonnel(personnelList);
     setChecklistPersonnelRows(personnelRows);
@@ -239,6 +247,22 @@ export default function PlanDetailScreen() {
     return map;
   }, [detailPiles]);
 
+  /**
+   * Which steps this plan covers, as PilesCard's `selectedStepIds`. The wizard
+   * reads this straight off the draft, but a saved checklist has nowhere to
+   * put it — pil_daily_checklists stores no step selection — so it's recovered
+   * as the union of every step actually scheduled anywhere in the plan.
+   *
+   * The consequence: a step is shown on a pile that lacks it only if some
+   * OTHER pile got it scheduled. A step selected for the plan but scheduled on
+   * no pile at all can't be recovered and stays hidden — nothing persisted
+   * records that it was ever chosen.
+   */
+  const selectedStepIds = useMemo(
+    () => [...new Set(planSteps.map((s) => s.stepId))],
+    [planSteps],
+  );
+
   // Both branches below render an opaque copy of the app's shared backdrop
   // gradient, not the transparent contentStyle HomeStackNavigator normally
   // relies on — this screen gets pushed on top of HomeScreen, which stays
@@ -306,7 +330,13 @@ export default function PlanDetailScreen() {
           )}
 
           {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
-          <PilesCard piles={detailPiles} planSteps={planSteps} actualSteps={actualSteps} />
+          <PilesCard
+            piles={detailPiles}
+            planSteps={planSteps}
+            actualSteps={actualSteps}
+            allSteps={allSteps}
+            selectedStepIds={selectedStepIds}
+          />
         </ScrollView>
       </View>
     </LinearGradient>
