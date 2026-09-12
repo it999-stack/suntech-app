@@ -83,6 +83,13 @@ interface PreviewStepProps {
    * button stays visible (disabled, keeping its label) so the user always
    * has a sense of what's about to happen once it clears. */
   isLoading?: boolean;
+  /** A preview recompute (machine reassignment, reorder, track override) is in
+   * flight, or the first one hasn't landed yet. Only the Machine Timeline and
+   * the Piles card read planSteps, so rather than replacing the step the way
+   * isLoading does, this dims and locks just those two — the rest of the
+   * screen (core team, plan window) is unaffected by a recompute and stays
+   * usable. */
+  isRecomputing?: boolean;
   /** Global step catalog, in sequence order — lets PilesCard show every step
    * selected for this plan, not just the ones that got a scheduled time. */
   allSteps?: PilingStep[];
@@ -112,6 +119,7 @@ export default function PreviewStep({
   onPendingTrackOverridesChange,
   planSteps,
   isLoading,
+  isRecomputing = false,
   allSteps = [],
   windowsByMachineId,
   piles,
@@ -414,6 +422,7 @@ export default function PreviewStep({
         pileLabelById={pileLabelById}
         onEditMachine={onEditMachine}
         windowsByMachineId={windowsByMachineId}
+        isRecomputing={isRecomputing}
       />
 
       {/* ── Piles (swipeable pill selector) ─────────────────────────────── */}
@@ -427,6 +436,7 @@ export default function PreviewStep({
         selectedStepIds={draft.selectedStepIds}
         resumeWorkByPileId={draft.resumeWorkByPileId}
         onPressMachineBadge={openMachinePicker}
+        isRecomputing={isRecomputing}
       />
 
       {/* ── Core Team role picker ─────────────────────────────────────────── */}

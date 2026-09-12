@@ -7,6 +7,7 @@ import GlassCard from '@components/shared/GlassCard';
 import Avatar from '@components/shared/Avatar';
 import InfoRow from '@components/shared/InfoRow';
 import SwipeableTabBar, { type SwipeableTabItem } from '@components/shared/SwipeableTabBar';
+import BusyOverlay from '@components/shared/BusyOverlay';
 import StepTimelineRow from './StepTimelineRow';
 import type { TrackChoice } from './TrackChoiceTiles';
 import {
@@ -312,6 +313,10 @@ interface PilesCardProps {
   /** Opens the machine-reassignment panel for a pile — Preview-only, omitted on read-only
    * screens (e.g. PlanDetailScreen) so the Rig/Crane rows stay non-interactive. */
   onPressMachineBadge?: (pileId: string) => void;
+  /** Dims and locks the pile selector and its pages while a plan recompute is
+   * in flight — the steps shown are the previous schedule's until it lands.
+   * Preview-only; read-only screens (e.g. PlanDetailScreen) never recompute. */
+  isRecomputing?: boolean;
 }
 
 export default function PilesCard({
@@ -325,6 +330,7 @@ export default function PilesCard({
   selectedStepIds = [],
   resumeWorkByPileId = {},
   onPressMachineBadge,
+  isRecomputing = false,
 }: PilesCardProps) {
   const [selectedPileId, setSelectedPileId] = React.useState<string | undefined>(piles[0]?.id);
 
@@ -375,29 +381,31 @@ export default function PilesCard({
       </View>
 
       <View style={styles.body}>
-        <SwipeableTabBar
-          items={items}
-          value={value}
-          onChange={setSelectedPileId}
-          scrollHint="dots"
-          renderPage={(item) => {
-            const pile = piles.find((p) => p.id === item.value) ?? piles[0];
-            return (
-              <PilePreviewPage
-                pile={pile}
-                steps={stepsByPileId.get(pile.checklistPileId) ?? EMPTY_STEPS}
-                actualSteps={actualStepsByPileId.get(pile.checklistPileId) ?? EMPTY_ACTUAL_STEPS}
-                overriddenStepIds={overriddenTrackStepIdsByPileId?.[pile.checklistPileId] ?? EMPTY_STEP_IDS}
-                onToggleTrack={onToggleTrack}
-                windowsByMachineId={windowsByMachineId}
-                allSteps={allSteps}
-                selectedStepIds={selectedStepIds}
-                resumeWork={resumeWorkByPileId[pile.id]}
-                onPressMachineBadge={onPressMachineBadge}
-              />
-            );
-          }}
-        />
+        <BusyOverlay busy={isRecomputing}>
+          <SwipeableTabBar
+            items={items}
+            value={value}
+            onChange={setSelectedPileId}
+            scrollHint="dots"
+            renderPage={(item) => {
+              const pile = piles.find((p) => p.id === item.value) ?? piles[0];
+              return (
+                <PilePreviewPage
+                  pile={pile}
+                  steps={stepsByPileId.get(pile.checklistPileId) ?? EMPTY_STEPS}
+                  actualSteps={actualStepsByPileId.get(pile.checklistPileId) ?? EMPTY_ACTUAL_STEPS}
+                  overriddenStepIds={overriddenTrackStepIdsByPileId?.[pile.checklistPileId] ?? EMPTY_STEP_IDS}
+                  onToggleTrack={onToggleTrack}
+                  windowsByMachineId={windowsByMachineId}
+                  allSteps={allSteps}
+                  selectedStepIds={selectedStepIds}
+                  resumeWork={resumeWorkByPileId[pile.id]}
+                  onPressMachineBadge={onPressMachineBadge}
+                />
+              );
+            }}
+          />
+        </BusyOverlay>
       </View>
     </GlassCard>
   );

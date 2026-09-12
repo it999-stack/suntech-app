@@ -14,6 +14,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Clock } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import MachineStopTimeline from '@components/shared/timeline/MachineStopTimeline';
+import BusyOverlay from '@components/shared/BusyOverlay';
 import { buildMachineStops } from '@/utils/timeline';
 import { type MachineInfo, type TimelineSourceItem, type TimelineStop } from '@/types/timeline';
 import { colors, spacing, typography } from '@/theme/theme';
@@ -41,6 +42,9 @@ interface MachineTimelineCardProps {
   windowsByMachineId?: Record<string, EffectivePlanWindow[]>;
   /** Shows a pencil icon next to the machine label when provided, e.g. to open a reorder overlay. */
   onEditMachine?: (machineId: string) => void;
+  /** Dims and locks the timeline while a plan recompute is in flight. The
+   * header stays live, so the card keeps its height and its identity. */
+  isRecomputing?: boolean;
 }
 
 export default function MachineTimelineCard({
@@ -52,6 +56,7 @@ export default function MachineTimelineCard({
   pileLabelById,
   windowsByMachineId,
   onEditMachine,
+  isRecomputing = false,
 }: MachineTimelineCardProps) {
   const machines = useMemo<MachineInfo[]>(() => [...activeRigs, ...activeCranes], [activeRigs, activeCranes]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | undefined>(machines[0]?.id);
@@ -107,13 +112,15 @@ export default function MachineTimelineCard({
       </View>
 
       <View style={styles.body}>
-        <MachineStopTimeline
-          machines={machines}
-          stopsByMachineId={stopsByMachineId}
-          selectedMachineId={selectedMachineId}
-          onSelectMachine={setSelectedMachineId}
-          onEditMachine={onEditMachine}
-        />
+        <BusyOverlay busy={isRecomputing}>
+          <MachineStopTimeline
+            machines={machines}
+            stopsByMachineId={stopsByMachineId}
+            selectedMachineId={selectedMachineId}
+            onSelectMachine={setSelectedMachineId}
+            onEditMachine={onEditMachine}
+          />
+        </BusyOverlay>
       </View>
     </GlassCard>
   );

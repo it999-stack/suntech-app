@@ -503,7 +503,15 @@ export default function GeneratePlanScreen() {
                 pendingTrackOverrides={preview.pendingTrackOverrides}
                 onPendingTrackOverridesChange={setPendingTrackOverrides}
                 planSteps={preview.steps}
-                isLoading={preview.isRecomputing || (isGenerating && !isEditMode)}
+                // Full-screen spinner is now reserved for the final submit —
+                // the whole step really is going away then. A preview
+                // recompute only changes the timeline and the piles, so it
+                // spins inside those two cards instead (isRecomputing below).
+                isLoading={isGenerating && !isEditMode}
+                // Also covers first arrival: steps are empty until the initial
+                // compute settles, and hasComputed is what distinguishes that
+                // from a recompute that finished with nothing.
+                isRecomputing={preview.isRecomputing || !preview.hasComputed}
                 allSteps={steps}
                 windowsByMachineId={preview.windowsByMachineId}
                 piles={preview.previewPiles}

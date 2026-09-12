@@ -37,6 +37,11 @@ export type PlanResult = {
   windowsByMachineId: Record<string, EffectivePlanWindow[]>;
   isRecomputing: boolean;
   isLoading: boolean;
+  /** False until the first updatePreview() has settled (success, error, or the
+   * nothing-to-schedule branch). Lets the preview step show its in-card
+   * spinners on arrival — `steps` is still empty at that point, but so is it
+   * after a failed recompute, and only this tells the two apart. */
+  hasComputed: boolean;
   referenceData: { templateRows: PlanTemplateRow[]; rawWindows: PlanRawWindow[] } | null;
   pendingTrackOverrides: PlanDraft['stepTrackOverrides'];
   previewPiles: PreviewPile[];
@@ -108,6 +113,10 @@ export function usePlanPreview(args: {
     Record<string, EffectivePlanWindow[]>
   >({});
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Deliberately NOT initialised to true: previewLoading also drives the
+  // step-select footer button (see GeneratePlanScreen), which would then open
+  // disabled with a spinner before the user has done anything.
+  const [hasComputed, setHasComputed] = useState(false);
 
   // True from the instant a tile tap creates a pending change all the way through to the
   // recompute actually landing — drives both the footer button's spinner/disabled state and
@@ -155,6 +164,9 @@ export function usePlanPreview(args: {
       setPreviewWarningPileIds([]);
       setPreviewWindowsByMachineId({});
       scheduleCacheRef.current = null;
+      // Nothing to schedule is a settled outcome too — without this the
+      // preview would sit on its in-card spinners forever.
+      setHasComputed(true);
       return;
     }
 
@@ -235,6 +247,10 @@ export function usePlanPreview(args: {
     } finally {
       if (requestId !== previewRequestIdRef.current) return;
       setPreviewLoading(false);
+      // Set on the error path as well as the success one — a failed recompute
+      // leaves `steps` empty, and spinning on that forever would just hide the
+      // failure behind something that looks like progress.
+      setHasComputed(true);
     }
   }
 
@@ -251,8 +267,26 @@ export function usePlanPreview(args: {
       }
       updatePreview();
     }
+    // Depends on the individual scheduling inputs rather than `draft` as a
+    // whole. Every draft action returns a fresh object, so keying off `draft`
+    // meant a core-team edit (planTeamActions only ever replaces
+    // checklistPersonnel, which the scheduler never reads) re-ran the entire
+    // schedule to produce an identical result — and blanked the screen while
+    // it did. These keys are all identity-stable across such an edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, draft, piles, siteId, config.noNewStepCutoffMinutes]);
+  }, [
+    step,
+    piles,
+    siteId,
+    config.noNewStepCutoffMinutes,
+    draft.selectedPileIds,
+    draft.assignments,
+    draft.stepTrackOverrides,
+    draft.resumeWorkByPileId,
+    draft.planStartTime,
+    draft.shiftTypeId,
+    draft.selectedStepIds,
+  ]);
 
   async function precomputePreview() {
     skipNextAutoRecomputeRef.current = true;
@@ -270,6 +304,7 @@ export function usePlanPreview(args: {
     windowsByMachineId: previewWindowsByMachineId,
     isRecomputing: previewRecomputing,
     isLoading: previewLoading,
+    hasComputed,
     referenceData: planReferenceData,
     pendingTrackOverrides,
     previewPiles: builtPreviewPiles,

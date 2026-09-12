@@ -84,6 +84,7 @@ export default function BulkAssignBar({
         title="Assign machines"
         subtitle={`${selectedCount} ${selectedCount === 1 ? 'pile' : 'piles'} selected`}
         position="bottom"
+        showCloseButton={false}
       >
         <MachineAssignPanel
           rigs={rigs}
