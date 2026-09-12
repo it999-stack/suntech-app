@@ -1,6 +1,6 @@
 // src/screens/HomeScreen.tsx
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks, Eye, Trash2 } from 'lucide-react-native';
@@ -19,6 +19,9 @@ import { useWorkingDate } from '@store/workingDateStore';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getChecklistPersonnel } from '@repositories/checklistRepository';
 import { getMachinesBySite } from '@repositories/machinesRepository';
+import { getPileStatusStatsForSite, type PileStatusStats } from '@repositories/pilesRepository';
+import { onBootstrapCompleted } from '@sync/bootstrap/bootstrapSync';
+import { onDeltaSyncComplete } from '@sync/delta/runDeltaSync';
 import { formatTime } from '@utils/formatTime';
 import { derivePileStatus } from '@utils/helpers';
 import type { PilingSitePersonnel, PilingChecklistPersonnel, PilingMachine } from '@db/schema';
@@ -261,6 +264,51 @@ export default function HomeScreen() {
     }
   }, [user?.siteId]);
 
+  /**
+   * Site-wide pile completion — deliberately NOT scoped to the working date,
+   * unlike everything else on this screen (which comes from usePlan()). The
+   * rollup covers every day a pile has ever appeared on, so `completed` is
+   * cumulative site progress: once a pile is done it stays done, and the count
+   * only ever climbs. That's why it won't agree with the plan card's progress
+   * ring above, which is today-only by design.
+   */
+  const [pileStats, setPileStats] = useState<PileStatusStats>({
+    total: 0,
+    completed: 0,
+    inProgress: 0,
+    notStarted: 0,
+  });
+
+  // siteId is read into a local first so the callback's inferred dependency is
+  // the id itself rather than the whole `user` object — otherwise React
+  // Compiler can't preserve the memoization and skips optimizing this screen.
+  const siteId = user?.siteId;
+  const loadPileStats = useCallback(() => {
+    if (!siteId) return;
+    getPileStatusStatsForSite({ siteId }).then(setPileStats).catch(() => {});
+  }, [siteId]);
+
+  // Re-read on every focus, not just once per site: actuals are written to
+  // local SQLite immediately and only pushed later, so on a site with no
+  // signal a pile finished an hour ago would otherwise keep showing as
+  // outstanding here until a sync finally lands.
+  useEffect(() => {
+    if (!isFocused) return;
+    loadPileStats();
+  }, [isFocused, loadPileStats]);
+
+  // And again when a sync brings in another device's progress while this
+  // screen is already open — focus alone never fires in that case. Mirrors
+  // StepsScreen's use of the same two hooks.
+  useEffect(() => {
+    const unsubscribeBootstrap = onBootstrapCompleted(loadPileStats);
+    const unsubscribeDelta = onDeltaSyncComplete(loadPileStats);
+    return () => {
+      unsubscribeBootstrap();
+      unsubscribeDelta();
+    };
+  }, [loadPileStats]);
+
   const [checklistPersonnel, setChecklistPersonnel] = useState<PilingChecklistPersonnel[]>([]);
   useEffect(() => {
     if (checklist) {
@@ -350,15 +398,6 @@ export default function HomeScreen() {
     }).length;
   }, [planStatus, checklistPiles, planSteps, actualSteps]);
 
-  const completedPilesCount = useMemo(() => {
-    if (planStatus === 'none') return 0;
-    return checklistPiles.filter((cp) => {
-      const pileSteps = planSteps.filter((s) => s.checklistPileId === cp.id);
-      const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
-      return derivePileStatus(pileSteps.length, pileActuals) === 'completed';
-    }).length;
-  }, [planStatus, checklistPiles, planSteps, actualSteps]);
-
   // Distinct rig/crane ids actually assigned to today's checklist piles —
   // "planned" as in "in use by today's plan", not the site's full fleet.
   const plannedMachinesCount = useMemo(() => {
@@ -444,8 +483,8 @@ export default function HomeScreen() {
           <SiteSnapshotRow
             plannedMachines={plannedMachinesCount}
             totalMachines={machines.length}
-            completedPiles={completedPilesCount}
-            totalPiles={checklistPiles.length}
+            completedPiles={pileStats.completed}
+            totalPiles={pileStats.total}
           />
         </ScrollView>
       </View>
