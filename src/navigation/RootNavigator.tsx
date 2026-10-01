@@ -18,13 +18,42 @@ import AuthStackNavigator from '@navigation/AuthStackNavigator';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function SplashScreen({ message }: { message?: string }) {
+  const [messageIndex, setMessageIndex] = useState(0);
+
+  const messages = [
+    'Setting up your workspace…',
+    'Syncing site information…',
+    'Loading piles and dimensions…',
+    'Preparing machines and personnel…',
+    'Syncing checklist and actual records…',
+    'Finalizing your site data…',
+    'Almost ready…',
+  ];
+
+  useEffect(() => {
+    if (!message) return;
+
+    const interval = setInterval(() => {
+      setMessageIndex((current) =>
+        Math.min(current + 1, messages.length - 1)
+      );
+    }, 7000);
+
+    return () => clearInterval(interval);
+  }, [message]);
+
   return (
     <LinearGradient
       colors={[colors.backdropStart, colors.backdropMid, colors.backdropEnd]}
       style={styles.splash}
     >
       <ActivityIndicator size="large" color={colors.accent} />
-      {message && <Text style={styles.splashText}>{message}</Text>}
+
+      {message && (
+        <Text style={styles.splashText}>
+          {messages[messageIndex]}
+        </Text>
+      )}
     </LinearGradient>
   );
 }
@@ -48,10 +77,6 @@ function InitialSyncErrorScreen({
       <Text style={styles.splashText}>
         {isNetwork
           ? 'Connect to the internet to set up your data. This only happens once per device.'
-          // TODO(user-friendly-errors): showing the raw error string here for
-          // debugging (e.g. from a field screenshot). Replace with friendly,
-          // errorKind-driven copy before this is relied on by non-technical
-          // field users.
           : `Setup couldn't complete: ${reason}`}
       </Text>
       <Button label="Retry" onPress={onRetry} style={styles.retryBtn} />
@@ -84,11 +109,14 @@ export default function RootNavigator() {
   // reference-data step succeeds, so it's a complete "did setup finish"
   // signal that's correct even for a site whose locations have zero piles yet
   // (pile count alone would wrongly stay "unsynced" forever in that case).
-  // Steady-state logins (cursor already present) fire a non-blocking 'login'
-  // trigger instead of gating anything. Login is the one steady-state trigger
-  // SyncManager can't raise on its own — no AppState or connectivity change
-  // accompanies it — so it's raised here, but still through SyncManager
-  // rather than by calling runDeltaSync directly.
+  // Once a cursor exists — whether it was already there (steady-state login)
+  // or bootstrap just set it (fresh install) — a non-blocking 'login' trigger
+  // fires instead of gating anything, so the first delta pull (which is what
+  // actually populates site_config/target piles; bootstrap itself doesn't)
+  // lands as soon as possible either way. Login is the one steady-state
+  // trigger SyncManager can't raise on its own — no AppState or connectivity
+  // change accompanies it — so it's raised here, but still through
+  // SyncManager rather than by calling runDeltaSync directly.
   const [gateChecked, setGateChecked] = useState(false);
   const [needsInitialSync, setNeedsInitialSync] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -116,7 +144,17 @@ export default function RootNavigator() {
         }
         if (cancelled) return;
         cursor = await getCursor(siteId).catch(() => null);
-      } else {
+      }
+
+      // Centralized: one 'login' trigger for both paths above, not one per
+      // branch. Bootstrap never fetches site_config (target/completed piles
+      // — that's delta-pull's job, see deltaPull.ts's saveSiteTargets), so a
+      // fresh install needs this exactly as much as a returning login does —
+      // without it, pil_sites stays empty locally and SiteTargetCard falls
+      // back to raw pile-derived totals until whatever sync trigger happens
+      // next. Non-blocking: this only fires once a cursor exists, so it never
+      // gates the initial-sync screen below.
+      if (cursor != null) {
         void syncNow('login');
       }
 

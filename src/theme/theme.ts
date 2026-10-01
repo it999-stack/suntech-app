@@ -34,11 +34,12 @@ export const colors = {
   textInverse: '#FFFFFF',
 
   // Accent — indigo for primary actions, pink as a secondary badge accent
-  accent: '#14141F',
+  accent: '#0284C7',
   accentPink: '#E8467C',
   accentBlue: '#66b5da',
   accentBlueSoft: 'rgba(102,181,218,0.14)',
-  accentSoft: 'rgba(177, 179, 245, 0.1)',
+  accentSoft: 'rgba(184, 230, 254, 0.1)',
+
   accentPinkSoft: 'rgba(232,70,124,0.10)',
 
   // Status
@@ -52,6 +53,7 @@ export const colors = {
   // Base
   white: '#FFFFFF',
   black: '#000000',
+  info: '#0284C7',
   fade: '#EEEEEE',
   transparent: 'transparent',
 

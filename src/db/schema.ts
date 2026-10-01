@@ -217,6 +217,27 @@ export const pilSiteCoordinators = sqliteTable('pil_site_coordinators', {
   syncedAt: integer('synced_at').notNull(),
 });
 
+/**
+ * The site's pile target / completed counters — server-owned, overwritten on
+ * every pull. One row per site; a null target means the site has no cap.
+ */
+export interface SiteConfig {
+  targetPiles: number | null;
+  completedPiles: number;
+  weeklyTargetPiles: number | null;
+  weeklyCompletedPiles: number;
+  monthlyTargetPiles: number | null;
+  monthlyCompletedPiles: number;
+}
+
+export const pilSites = sqliteTable('pil_sites', {
+  id: text('id').primaryKey(),
+  siteConfig: text('site_config', { mode: 'json' }).notNull().$type<SiteConfig>(),
+});
+
+export type PilSite = typeof pilSites.$inferSelect;
+export type NewPilSite = typeof pilSites.$inferInsert;
+
 export type PilSiteCoordinator = typeof pilSiteCoordinators.$inferSelect;
 export type NewPilSiteCoordinator = typeof pilSiteCoordinators.$inferInsert;
 

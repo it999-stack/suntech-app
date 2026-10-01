@@ -10,7 +10,6 @@ export type Step =
   | 'start'
   | 'machines'
   | 'team'
-  | 'teamNight'
   | 'piles'
   | 'resume'
   | 'steps'
@@ -21,7 +20,6 @@ export const STEP_ORDER: Step[] = [
   'location',
   'machines',
   'team',
-  'teamNight',
   'piles',
   'resume',
   'steps',
@@ -32,8 +30,7 @@ export const STEP_LABEL: Record<Step, string> = {
   location: 'Location & Piles',
   start: 'Start Time',
   machines: 'Machines',
-  team: 'Team (Day)',
-  teamNight: 'Team (Night)',
+  team: 'Team Assignment',
   piles: 'Piles & Assign',
   resume: 'Planned Piles',
   steps: 'Steps',

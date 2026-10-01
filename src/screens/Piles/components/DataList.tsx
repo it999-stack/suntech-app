@@ -41,6 +41,8 @@ export default function DataList({ items, error, totalPilesSynced, onPressItem, 
       <FlatList
         style={styles.list}
         data={items}
+        numColumns={2}
+        columnWrapperStyle={styles.row}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <DataListItem pile={item} onPress={() => onPressItem(item)} />}
         contentContainerStyle={styles.listContent}
@@ -74,6 +76,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
     gap: spacing.sm,
   },
+  row: { justifyContent: 'space-between' },
   errorText: {
     ...typography.body,
     color: colors.warning,

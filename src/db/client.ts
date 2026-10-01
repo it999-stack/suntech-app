@@ -50,6 +50,7 @@ export async function initDb() {
       DROP TABLE IF EXISTS pil_step_duration_templates;
       DROP TABLE IF EXISTS pil_steps;
       DROP TABLE IF EXISTS pil_site_coordinators;
+      DROP TABLE IF EXISTS pil_sites;
       DROP TABLE IF EXISTS pil_site_personnel;
       DROP TABLE IF EXISTS pil_contractors;
       DROP TABLE IF EXISTS pil_machines;
@@ -201,6 +202,13 @@ export async function initDb() {
       synced_at     INTEGER NOT NULL,
       updated_at    INTEGER,
       deleted_at    INTEGER
+    );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_sites (
+      id          TEXT PRIMARY KEY NOT NULL,
+      site_config TEXT NOT NULL DEFAULT '{}'
     );
   `);
 
@@ -471,6 +479,34 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_actual_step_segments_step
       ON pil_actual_step_segments (checklist_pile_id, step_id, started_at);
   `);
+
+  // Migration: consolidate pil_sites' target_piles/completed_piles columns
+  // into one site_config JSON column (matches the backend's site_config
+  // consolidation — see suntech-core's PilingSite.site_config). Same
+  // rename/recreate/copy/drop pattern as the other migrations here.
+  const pilSitesHasOldColumns = await sqlite.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM pragma_table_info('pil_sites') WHERE name = 'target_piles';`,
+  );
+  if (pilSitesHasOldColumns && pilSitesHasOldColumns.cnt > 0) {
+    await sqlite.execAsync(`
+      ALTER TABLE pil_sites RENAME TO pil_sites_pre_site_config;
+      CREATE TABLE pil_sites (
+        id          TEXT PRIMARY KEY NOT NULL,
+        site_config TEXT NOT NULL DEFAULT '{}'
+      );
+      INSERT INTO pil_sites (id, site_config)
+      SELECT id, json_object(
+        'targetPiles', target_piles,
+        'completedPiles', completed_piles,
+        'weeklyTargetPiles', NULL,
+        'weeklyCompletedPiles', 0,
+        'monthlyTargetPiles', NULL,
+        'monthlyCompletedPiles', 0
+      )
+      FROM pil_sites_pre_site_config;
+      DROP TABLE pil_sites_pre_site_config;
+    `);
+  }
 
   // Migration: relax checklist_id/pile_id to nullable (a fleet-level
   // breakdown/resume reported from the Machines screen has neither — see

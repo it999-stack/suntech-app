@@ -2,10 +2,11 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ChevronRight } from 'lucide-react-native';
+import { ChevronRight, MapPin, Box } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import Badge from '@components/shared/Badge';
 import MachineBadge from '@components/shared/MachineBadge';
+import Divider from '@components/shared/Divider';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { formatTime } from '@utils/formatTime';
 import { ActualEntry } from '@app-types/plan';
@@ -14,17 +15,15 @@ import { getPileProgress, getPileMachines, PILE_CARD_STATUS_META } from './pileP
 interface Props {
   index: number;
   pileCode: string;
+  locationName?: string;
+  dimensionLabel?: string;
   steps: ActualEntry[];
-  /** 'upNext' = this machine's front-of-queue pile (filled green badge);
-   * 'rail' = every other pile (hollow badge outlined in the machine's own
-   * track color). Unrelated to per-pile status — a pile can be "up next"
-   * and still Not started, or mid-queue and already In progress. */
   circleVariant: 'upNext' | 'rail';
   railColor: string;
   onPress: () => void;
 }
 
-export default function PileSequenceRow({ index, pileCode, steps, circleVariant, railColor, onPress }: Props) {
+export default function PileSequenceRow({ index, pileCode, locationName, dimensionLabel, steps, circleVariant, railColor, onPress }: Props) {
   const { total, doneCount, pct, status, inProgressStep, pausedStep, nextStep } = getPileProgress(steps);
   const { worked } = getPileMachines(steps);
   const meta = PILE_CARD_STATUS_META[status];
@@ -58,6 +57,26 @@ export default function PileSequenceRow({ index, pileCode, steps, circleVariant,
           <View style={styles.topRowRight}>
             <Badge text={meta.label} textColor={meta.color} bgColor={meta.soft} uppercase={false} />
             <ChevronRight size={20} color={colors.textSecondary} />
+          </View>
+        </View>
+
+        <Divider style={{ marginVertical: spacing.xs }} />
+
+        <View style={styles.pileInfoRow}>
+          <View style={styles.pileInfoCol}>
+            <MapPin size={18} color={colors.textPrimary} />
+            <View style={styles.pileInfoText}>
+              <Text style={styles.pileInfoValue} numberOfLines={1}>{locationName ?? '—'}</Text>
+              <Text style={styles.pileInfoLabel}>Location</Text>
+            </View>
+          </View>
+          <Divider vertical marginVertical={0} />
+          <View style={styles.pileInfoCol}>
+            <Box size={18} color={colors.textPrimary} />
+            <View style={styles.pileInfoText}>
+              <Text style={styles.pileInfoValue} numberOfLines={1}>{dimensionLabel ?? '—'}</Text>
+              <Text style={styles.pileInfoLabel}>Dimension</Text>
+            </View>
           </View>
         </View>
 
@@ -139,7 +158,13 @@ export default function PileSequenceRow({ index, pileCode, steps, circleVariant,
 
 const SEQ_BADGE_SIZE = 24;
 
+
 const styles = StyleSheet.create({
+  pileInfoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  pileInfoCol: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  pileInfoText: { flex: 1 },
+  pileInfoValue: { ...typography.body, fontWeight: '600', color: colors.textPrimary },
+  pileInfoLabel: { ...typography.caption, color: colors.textSecondary },
   cardWrap: {
     paddingBottom: spacing.md,
   },

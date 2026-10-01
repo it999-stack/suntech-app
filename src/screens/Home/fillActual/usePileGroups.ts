@@ -151,6 +151,8 @@ export function usePileGroups(args: {
   planSteps: PlanStepWithMeta[];
   actualSteps: ActualStepWithMeta[];
   pileMap: Map<string, PilingPile>;
+  locationNameById: Map<string, string>;
+  dimensionLabelById: Map<string, string>;
   /** Site-wide machine list — used to look up each assigned machine's REAL
    * type (RIG/CRANE), since neither a plan row's resolved execution track
    * nor the checklist-pile's live rigId/craneId fallback can be trusted once
@@ -183,6 +185,8 @@ export function usePileGroups(args: {
     planSteps,
     actualSteps,
     pileMap,
+    locationNameById,
+    dimensionLabelById,
     machines,
     machineMap,
     machineStatusById,
@@ -471,9 +475,11 @@ export function usePileGroups(args: {
         hasBreakdownWarning,
         isBlockedByIdle,
         measurements,
+        locationName: pile?.locationId ? locationNameById.get(pile.locationId) : undefined,
+        dimensionLabel: dimensionId ? dimensionLabelById.get(dimensionId) : undefined,
       };
     });
-  }, [checklistPiles, planSteps, actualSteps, pileMap, machineMap, machineTypeById, machineStatusById, checklist?.planStartTime, windowsByMachineId, completedStepsByPileId, measurementsByPileId, allSteps, durationTemplates]);
+  }, [checklistPiles, planSteps, actualSteps, pileMap, locationNameById, dimensionLabelById, machineMap, machineTypeById, machineStatusById, checklist?.planStartTime, windowsByMachineId, completedStepsByPileId, measurementsByPileId, allSteps, durationTemplates]);
 
   return { pileGroups };
 }

@@ -192,6 +192,8 @@ export type MissingTeamField =
   | { role: 'ENGINEER'; machineId: string }
   | { role: 'MACHINE_OPERATOR'; machineId: string };
 
+export type MissingPlanTeamField = MissingTeamField & { slot: 1 | 2 };
+
 /**
  * The first still-unfilled mandatory role in a shift's team, in the same
  * order the Team step displays them (Engineers → Rig Operators → Crane
@@ -212,6 +214,25 @@ export function findFirstMissingTeamField(
   }
   for (const machineId of [...activeRigIds, ...activeCraneIds]) {
     if (!team.operatorByMachineId[machineId]) return { role: 'MACHINE_OPERATOR', machineId };
+  }
+  return null;
+}
+
+/**
+ * First unfilled mandatory role across BOTH shifts, in on-screen order: machine by
+ * machine (rigs, then cranes), Day before Night within each machine.
+ */
+export function findFirstMissingPlanTeamField(
+  cp: ChecklistPersonnelAssignment,
+  activeRigIds: string[],
+  activeCraneIds: string[],
+): MissingPlanTeamField | null {
+  for (const machineId of [...activeRigIds, ...activeCraneIds]) {
+    const isRig = activeRigIds.includes(machineId);
+    for (const [slot, team] of [[1, cp.shift1], [2, cp.shift2]] as const) {
+      if (isRig && !team.engineerByMachineId[machineId]) return { role: 'ENGINEER', machineId, slot };
+      if (!team.operatorByMachineId[machineId]) return { role: 'MACHINE_OPERATOR', machineId, slot };
+    }
   }
   return null;
 }

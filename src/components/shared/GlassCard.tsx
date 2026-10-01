@@ -3,7 +3,7 @@
 import React from 'react';
 import { View, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { colors, radius, shadow } from '@theme/theme';
+import { colors, radius as radiusTokens, shadow } from '@theme/theme';
 
 interface Props {
   children: React.ReactNode;
@@ -12,6 +12,8 @@ interface Props {
   /** Applied to the inner content view — use for padding overrides. */
   innerStyle?: StyleProp<ViewStyle>;
   borderless?: boolean;
+  /** Corner radius for the whole card — defaults to radius.xl. */
+  radius?: number;
 }
 
 /**
@@ -25,10 +27,10 @@ interface Props {
  * wash rather than a saturated gradient, so heavier blur just flattens the
  * card into the page instead of reading as "frosted over light".
  */
-export default function GlassCard({ children, style, innerStyle, borderless = false }: Props) {
+export default function GlassCard({ children, style, innerStyle, borderless = false, radius = radiusTokens.xl }: Props) {
   return (
-    <View style={[styles.shadowWrap, style]}>
-      <BlurView intensity={25} tint="light" style={[styles.blur, borderless && styles.borderless]}>
+    <View style={[styles.shadowWrap, { borderRadius: radius }, style]}>
+      <BlurView intensity={25} tint="light" style={[styles.blur, { borderRadius: radius }, borderless && styles.borderless]}>
         <View style={[styles.inner, innerStyle]}>{children}</View>
       </BlurView>
     </View>
@@ -38,12 +40,10 @@ export default function GlassCard({ children, style, innerStyle, borderless = fa
 const styles = StyleSheet.create({
   shadowWrap: {
     alignSelf: 'stretch',
-    borderRadius: radius.xl,
     backgroundColor: colors.white,
     ...shadow.glass,
   },
   blur: {
-    borderRadius: radius.xl,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: colors.glassBorder,

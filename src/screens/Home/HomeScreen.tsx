@@ -3,10 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
-import { NotebookPen, Sparkles, Cylinder, Truck, Layers, PencilLine, ListChecks, Eye, Trash2 } from 'lucide-react-native';
+import { NotebookPen, Cylinder, Truck, Layers, PencilLine, ListChecks, Eye, Trash2 } from 'lucide-react-native';
 import GlassCard from '@components/shared/GlassCard';
 import ProgressRing from '@components/shared/ProgressRing';
-import GradientTile from '@components/shared/GradientTile';
 import Button from '@components/shared/Button';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import { usePlan } from '@state/PlanContext';
@@ -21,7 +20,16 @@ import { getChecklistPersonnel } from '@repositories/checklistRepository';
 import { getMachinesBySite } from '@repositories/machinesRepository';
 import { formatTime } from '@utils/formatTime';
 import { derivePileStatus } from '@utils/helpers';
+import { getApplicableSteps } from '@/services/pileApplicableSteps';
+import { useApplicableStepCounts } from './hooks/useApplicableStepCounts';
+import HomeHero from './components/HomeHero';
+import SiteTargetCard from './components/SiteTargetCard';
+import QuickAccessTile from './components/QuickAccessTile';
+import RecentPlanActivity from './components/RecentPlanActivity';
+import { useSiteStats } from './hooks/useSiteStats';
+import { useRecentPlans } from './hooks/useRecentPlans';
 import type { PilingSitePersonnel, PilingChecklistPersonnel, PilingMachine } from '@db/schema';
+import Avatar from '@/components/shared/Avatar';
 
 function getDateParts(dateStr: string): { day: string; month: string } {
   const d = new Date(`${dateStr}T00:00:00`);
@@ -66,12 +74,12 @@ function HeaderArea({
   return (
     <View style={styles.headerRow}>
       <View style={styles.greetingRow}>
-        <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{getInitials(userName)}</Text>
-        </View>
+        <Avatar name={getInitials(userName)} backgroundColor={colors.info} size={42} />
         <View style={styles.greetingBlock}>
-          <Text style={styles.helloText}>Hello, {userName}</Text>
-          <Text style={styles.siteText}>{siteName}</Text>
+          <Text style={styles.helloText}>Hello, {userName} 👋</Text>
+           <Text style={styles.siteNameText} numberOfLines={1}>
+            {siteName}
+          </Text>
         </View>
       </View>
 
@@ -84,21 +92,6 @@ function HeaderArea({
         </Pressable>
       </View>
     </View>
-  );
-}
-
-function NoPlanCard({ onGenerate }: { onGenerate: () => void }) {
-  return (
-    <GlassCard style={styles.planCard} innerStyle={styles.noPlanPad}>
-      <View style={styles.noPlanHeaderRow}>
-        <Text style={styles.noPlanTitle}>No plan generated yet</Text>
-        <Sparkles size={20} color={colors.accent} />
-      </View>
-      <Text style={styles.noPlanBody}>
-        Pick your piles, assign a rig and crane, choose a supervisor, and set a start time.
-      </Text>
-      <Button label="Generate today's plan" icon={Sparkles} onPress={onGenerate} />
-    </GlassCard>
   );
 }
 
@@ -180,48 +173,6 @@ function ActivePlanCard({
   );
 }
 
-function SiteSnapshotRow({
-  plannedMachines,
-  totalMachines,
-  completedPiles,
-  totalPiles,
-}: {
-  plannedMachines: number;
-  totalMachines: number;
-  completedPiles: number;
-  totalPiles: number;
-}) {
-  return (
-    <View style={styles.snapshotSection}>
-      <Text style={styles.sectionLabel}>Site snapshot</Text>
-      <View style={styles.snapshotRow}>
-        <View style={styles.snapshotCard}>
-          <View style={[styles.snapshotIconCircle, { backgroundColor: colors.accent }]}>
-            <Truck size={15} color={colors.white} />
-          </View>
-          <View>
-            <Text style={styles.snapshotValue}>
-              {plannedMachines}/{totalMachines}
-            </Text>
-            <Text style={styles.snapshotLabel}>Machines</Text>
-          </View>
-        </View>
-        <View style={styles.snapshotCard}>
-          <View style={[styles.snapshotIconCircle, { backgroundColor: colors.accentPink }]}>
-            <Layers size={15} color={colors.white} />
-          </View>
-          <View>
-            <Text style={styles.snapshotValue}>
-              {completedPiles}/{totalPiles}
-            </Text>
-            <Text style={styles.snapshotLabel}>Piles</Text>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
-}
-
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const isFocused = useIsFocused();
@@ -239,6 +190,7 @@ export default function HomeScreen() {
     isLoading,
   } = usePlan();
   const workingDate = useWorkingDate();
+  const applicableSteps = useApplicableStepCounts(user?.siteId, isFocused);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
 
   useEffect(() => {
@@ -309,8 +261,6 @@ export default function HomeScreen() {
     );
 
     if (measuredPiles > 0) {
-      // Measurements are one row per physical pile for its whole lifetime, so
-      // this can reach back past today. The user has to know that.
       parts.push(
         `It also removes recorded measurements for ${measuredPiles} ${measuredPiles === 1 ? 'pile' : 'piles'}. Some of those values may have been recorded on earlier days — measurements are stored once per pile, not per day.`,
       );
@@ -319,19 +269,12 @@ export default function HomeScreen() {
     if (loggedEntries === 0 && measuredPiles === 0) {
       parts.push('Nothing has been logged against it yet.');
     } else {
-      // The single most likely way to lose work here: delete + regenerate does
-      // NOT carry actuals over, because regenerating creates fresh
-      // checklist-pile rows with no actual steps attached.
       parts.push(
         'Logged progress won’t carry over to a new plan — use Edit Plan instead if you want to keep it.',
       );
     }
 
     if (machinesNeedingAttention > 0) {
-      // A BREAKDOWN/IDLE event permanently flips the machine's status and
-      // deleting the plan doesn't revert it, while plan generation rejects
-      // those machines — so a blocked regenerate would otherwise read as
-      // "delete broke the app".
       parts.push(
         'One or more machines are marked broken down or idle — you’ll need to mark them active again before they can be used in a new plan.',
       );
@@ -341,23 +284,35 @@ export default function HomeScreen() {
     return parts.join('\n\n');
   }, [actualSteps, checklistPiles, pileMeasurementsByPileId, machines, workingDate]);
 
+  const applicableStepCountByPileId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const pileId of applicableSteps.dimensionByPileId.keys()) {
+      const dimensionId = applicableSteps.dimensionByPileId.get(pileId);
+      counts.set(
+        pileId,
+        getApplicableSteps(applicableSteps.allSteps, dimensionId, applicableSteps.templateMinutes).length,
+      );
+    }
+    return counts;
+  }, [applicableSteps]);
+
   const pilesInProgressCount = useMemo(() => {
     if (planStatus === 'none') return 0;
     return checklistPiles.filter((cp) => {
-      const pileSteps = planSteps.filter((s) => s.checklistPileId === cp.id);
+      const pileStepCount = applicableStepCountByPileId.get(cp.pileId) ?? 0;
       const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
-      return derivePileStatus(pileSteps.length, pileActuals) === 'in_progress';
+      return derivePileStatus(pileStepCount, pileActuals) === 'in_progress';
     }).length;
-  }, [planStatus, checklistPiles, planSteps, actualSteps]);
+  }, [planStatus, checklistPiles, applicableStepCountByPileId, actualSteps]);
 
   const completedPilesCount = useMemo(() => {
     if (planStatus === 'none') return 0;
     return checklistPiles.filter((cp) => {
-      const pileSteps = planSteps.filter((s) => s.checklistPileId === cp.id);
+      const pileStepCount = applicableStepCountByPileId.get(cp.pileId) ?? 0;
       const pileActuals = actualSteps.filter((a) => a.checklistPileId === cp.id);
-      return derivePileStatus(pileSteps.length, pileActuals) === 'completed';
+      return derivePileStatus(pileStepCount, pileActuals) === 'completed';
     }).length;
-  }, [planStatus, checklistPiles, planSteps, actualSteps]);
+  }, [planStatus, checklistPiles, applicableStepCountByPileId, actualSteps]);
 
   // Distinct rig/crane ids actually assigned to today's checklist piles —
   // "planned" as in "in use by today's plan", not the site's full fleet.
@@ -370,6 +325,9 @@ export default function HomeScreen() {
     return ids.size;
   }, [checklistPiles]);
 
+  // Refetch on regaining focus so counts reflect work done on other tabs.
+  const siteStats = useSiteStats(user?.siteId, isFocused);
+  const recentPlans = useRecentPlans(user?.siteId, isFocused && planStatus);
   const userName = user?.name ?? 'User';
   const siteName = user?.siteName ?? 'Your Site';
 
@@ -402,7 +360,7 @@ export default function HomeScreen() {
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {planStatus === 'none' ? (
-            <NoPlanCard onGenerate={() => setCalendarSheetVisible(true)} />
+            <HomeHero onGenerate={() => setCalendarSheetVisible(true)} />
           ) : (
             <ActivePlanCard
               onView={() => navigation.navigate('FillActuals', { date: workingDate })}
@@ -418,35 +376,45 @@ export default function HomeScreen() {
             />
           )}
 
-          <Text style={styles.sectionLabel}>Quick access</Text>
-          <View style={styles.quickRow}>
-            <GradientTile
+          <SiteTargetCard stats={siteStats} />
+
+          <Text style={styles.sectionHeading}>Quick Access</Text>
+          <View style={styles.quickGrid}>
+            <QuickAccessTile
               style={styles.quickCard}
-              gradientColors={colors.backdropGradient}
-              icon={<NotebookPen size={16} color={colors.white} />}
-              iconBg={colors.textPrimary}
+              image={require('../../../assets/plan-history-stat.png')}
+              icon={<NotebookPen size={20} color={colors.accentBlue} />}
               title="Plan history"
               subtitle="Past 12 days"
               onPress={() => navigation.navigate('PlanHistory')}
             />
-            <GradientTile
+            <QuickAccessTile
               style={styles.quickCard}
-              gradientColors={colors.creamGradient}
-              icon={<Cylinder  size={16} color={colors.white} />}
-              iconBg={colors.accentPink}
-              title={'Piles in progress'}
+              image={require('../../../assets/piles-progress-stat.png')}
+              icon={<Cylinder size={20} color={colors.warning} />}
+              title="Piles in progress"
               subtitle={`${pilesInProgressCount} active`}
               onPress={() => navigation.navigate('FillActuals', { date: workingDate })}
-              iconAlign="right"
+            />
+            <QuickAccessTile
+              style={styles.quickCard}
+              image={require('../../../assets/machines-stat.png')}
+              icon={<Truck size={20} color={colors.success} />}
+              title="Machines"
+              subtitle={`${plannedMachinesCount}/${machines.length}`}
+              onPress={() => navigation.navigate('SiteTab')}
+            />
+            <QuickAccessTile
+              style={styles.quickCard}
+              image={require('../../../assets/piles-stat.png')}
+              icon={<Layers size={20} color={colors.accentPink} />}
+              title="Piles"
+              subtitle={`${siteStats.overall.completed}/${siteStats.overall.total}`}
+              onPress={() => navigation.navigate('PilesTab')}
             />
           </View>
 
-          <SiteSnapshotRow
-            plannedMachines={plannedMachinesCount}
-            totalMachines={machines.length}
-            completedPiles={completedPilesCount}
-            totalPiles={checklistPiles.length}
-          />
+          <RecentPlanActivity plans={recentPlans} onViewAll={() => navigation.navigate('PlanHistory')} />
         </ScrollView>
       </View>
 
@@ -516,20 +484,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     flexShrink: 1,
   },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.pill,
-    backgroundColor: colors.textPrimary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  avatarText: {
-    color: colors.white,
-    fontSize: 14,
-    fontWeight: '700',
-  },
   headerRightCol: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -568,39 +522,21 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
   },
 
-  greetingBlock: { flexShrink: 1 },
+  greetingBlock: {
+    flex: 1,
+    flexShrink: 1,
+    gap: 1,
+  },
+  siteNameText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+  },
   helloText: {
     ...typography.h1,
     color: colors.textPrimary,
   },
-  siteText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
 
   planCard: {},
-  noPlanPad: {
-    padding: spacing.lg,
-    alignItems: 'flex-start',
-  },
-  noPlanHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    width: '100%',
-    marginBottom: spacing.xs,
-  },
-  noPlanTitle: {
-    ...typography.h2,
-    color: colors.textPrimary,
-  },
-  noPlanBody: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginBottom: spacing.lg,
-  },
-
   planHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -656,54 +592,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
 
-  sectionLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: spacing.sm,
-    marginTop: -spacing.xs,
-  },
-
-  quickRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  quickCard: { flex: 1 },
-
-  snapshotSection: {},
-  snapshotRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  snapshotCard: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.white,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    padding: spacing.md,
-    ...shadow.soft,
-  },
-  snapshotIconCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  snapshotValue: {
-    fontSize: 18,
-    fontWeight: '700',
+  sectionHeading: {
+    ...typography.h2,
     color: colors.textPrimary,
-    lineHeight: 20,
+    marginBottom: -spacing.xs,
   },
-  snapshotLabel: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    marginTop: 1,
+  quickGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
   },
+  quickCard: { width: '47.5%', flexGrow: 1 },
 });

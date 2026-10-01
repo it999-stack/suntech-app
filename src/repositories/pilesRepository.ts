@@ -1,6 +1,7 @@
 // src/repositories/pilesRepository.ts
 // Local SQLite access for cached piling_piles data.
 
+import { compareNatural } from '@utils/naturalSort';
 import { and, asc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';
 import { initDb, db } from '@db/client';
 import {
@@ -9,8 +10,8 @@ import {
   pilingLocations,
   pilingChecklistPiles,
   pilingDailyChecklists,
-  pilePlanSteps,
   pileActualSteps,
+  pilingStepDurationTemplates,
   type NewPilingPile,
   type PilingPile,
   type PilingDimension,
@@ -160,6 +161,7 @@ const pileWithDimensionColumns = {
 /**
  * Get all piles for a site with dia/depth from the dimensions table.
  * This replaces direct access to pilingPiles.dia/pilingPiles.depth which no longer exist.
+ * Sorted by pile code in natural order (A-1, A-2 … A-10).
  */
 export async function getPilesBySiteWithDimensions(siteId: string): Promise<PileWithDimension[]> {
   const database = await initDb();
@@ -169,7 +171,8 @@ export async function getPilesBySiteWithDimensions(siteId: string): Promise<Pile
     .innerJoin(pilingDimensions, eq(pilingPiles.dimensionId, pilingDimensions.id))
     .leftJoin(pilingLocations, eq(pilingPiles.locationId, pilingLocations.id))
     .where(eq(pilingPiles.siteId, siteId));
-  return rows;
+  // Natural order in JS — SQLite has no built-in numeric-aware collation.
+  return rows.sort((a, b) => compareNatural(a.pileIdCode, b.pileIdCode) || a.id.localeCompare(b.id));
 }
 
 export interface PilesPageParams {
@@ -292,16 +295,22 @@ export type PileStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
 
 type Db = Awaited<ReturnType<typeof initDb>>;
 
-/** Per checklist-pile: how many steps were planned for it. */
-function planStepCountSubquery(database: Db) {
+/** Per dimension: how many distinct steps have a duration template configured
+ * for it, scoped to the site — the applicable step count a pile of that
+ * dimension must finish to be COMPLETED (catalog ∩ templates, same rule as
+ * getApplicableSteps in services/pileApplicableSteps.ts; a step with no
+ * template for a dimension is not applicable to a pile of that dimension). */
+function applicableStepCountSubquery(database: Db, siteId: string) {
   return database
     .select({
-      checklistPileId: pilePlanSteps.checklistPileId,
-      planCount: sql<number>`count(*)`.as('plan_count'),
+      dimensionId: pilingStepDurationTemplates.dimensionId,
+      applicableCount: sql<number>`count(distinct ${pilingStepDurationTemplates.stepId})`.as('applicable_count'),
     })
-    .from(pilePlanSteps)
-    .groupBy(pilePlanSteps.checklistPileId)
-    .as('plan_count_agg');
+    .from(pilingStepDurationTemplates)
+    .innerJoin(pilingDimensions, eq(pilingStepDurationTemplates.dimensionId, pilingDimensions.id))
+    .where(eq(pilingDimensions.siteId, siteId))
+    .groupBy(pilingStepDurationTemplates.dimensionId)
+    .as('applicable_count_agg');
 }
 
 /** Per checklist-pile: how many of its steps have a recorded finish, and whether any is currently open (started, not finished). */
@@ -320,25 +329,28 @@ function actualStepAggSubquery(database: Db) {
 /**
  * Per (pile, checklist day): that day's status, derived from actual step
  * completion — exactly derivePileStatus()'s logic (open step wins over
- * completed; completed requires every planned step finished), just run in
+ * completed; completed requires every one of the pile's APPLICABLE steps
+ * finished, not just its planned ones — a pile planned for only part of its
+ * real steps must not read COMPLETED once just those are done), just run in
  * SQL against every day at once instead of one in-memory day via PlanContext.
  */
 function dayStatusSubquery(database: Db, siteId: string) {
-  const planAgg = planStepCountSubquery(database);
   const actualAgg = actualStepAggSubquery(database);
+  const applicableAgg = applicableStepCountSubquery(database, siteId);
   return database
     .select({
       pileId: pilingChecklistPiles.pileId,
       date: pilingDailyChecklists.date,
       dayStatus: sql<PileStatus>`case
         when coalesce(${actualAgg.hasOpen}, 0) = 1 then 'IN_PROGRESS'
-        when coalesce(${planAgg.planCount}, 0) > 0 and coalesce(${actualAgg.finishedCount}, 0) = ${planAgg.planCount} then 'COMPLETED'
+        when coalesce(${applicableAgg.applicableCount}, 0) > 0 and coalesce(${actualAgg.finishedCount}, 0) >= ${applicableAgg.applicableCount} then 'COMPLETED'
         else 'NOT_STARTED'
       end`.as('day_status'),
     })
     .from(pilingChecklistPiles)
     .innerJoin(pilingDailyChecklists, eq(pilingChecklistPiles.checklistId, pilingDailyChecklists.id))
-    .leftJoin(planAgg, eq(pilingChecklistPiles.id, planAgg.checklistPileId))
+    .innerJoin(pilingPiles, eq(pilingChecklistPiles.pileId, pilingPiles.id))
+    .leftJoin(applicableAgg, eq(pilingPiles.dimensionId, applicableAgg.dimensionId))
     .leftJoin(actualAgg, eq(pilingChecklistPiles.id, actualAgg.checklistPileId))
     .where(eq(pilingDailyChecklists.siteId, siteId))
     .as('day_status_agg');

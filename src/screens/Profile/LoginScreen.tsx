@@ -24,7 +24,7 @@ export default function LoginScreen() {
   const { login, isLoggingIn, error } = useAuthStore();
 
   const handleLogin = () => {
-    login(email, password).catch(() => {
+    login(email.trim(), password.trim()).catch(() => {
       // error is already captured in the store and shown below
     });
   };

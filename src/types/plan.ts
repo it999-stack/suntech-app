@@ -371,6 +371,10 @@ export type PileGroup = {
    * pile, or null if nothing has been recorded yet — see
    * MeasurementFieldsModal.tsx / pileMeasurementTriggers.ts. */
   measurements: PileMeasurementFields | null;
+  /** Display name of the pile's location, e.g. "Tower A - Grid 1B". */
+  locationName?: string;
+  /** Formatted dimension, e.g. "Ø760mm × 28m". */
+  dimensionLabel?: string;
 };
 
 /**

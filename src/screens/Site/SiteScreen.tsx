@@ -5,7 +5,6 @@
 // and the backdrop come from App.tsx's AppShell — this screen adds neither.
 
 import { View } from 'react-native';
-import { colors } from '@theme/theme';
 
 import TopTabs from '@components/shared/TopTabs';
 import MachinesScreen from '@/screens/Site/Tabs/MachinesScreen';
@@ -15,7 +14,7 @@ import StepsScreen from '@/screens/Site/Tabs/StepsScreen';
 
 export default function SiteScreen() {
   return (
-    <View style={{ flex: 1, backgroundColor: colors.white }}>
+    <View style={{ flex: 1 }}>
       <TopTabs
         tabs={[
           { name: 'Machines', title: 'Machines', component: MachinesScreen },

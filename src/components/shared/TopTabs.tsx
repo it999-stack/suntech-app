@@ -26,10 +26,10 @@ export default function TopTabs({ tabs, initialRouteName, screenOptions }: TopTa
       screenOptions={{
         swipeEnabled: true,
         tabBarScrollEnabled: true,
-        tabBarActiveTintColor: colors.accent,
+        tabBarActiveTintColor: colors.black,
         tabBarInactiveTintColor: colors.textSecondary,
         tabBarIndicatorStyle: {
-          backgroundColor: colors.accent,
+          backgroundColor: colors.black,
           height: 3,
           borderRadius: 2,
         },
@@ -40,6 +40,7 @@ export default function TopTabs({ tabs, initialRouteName, screenOptions }: TopTa
           shadowOpacity: 0,
         },
         tabBarItemStyle: { width: 'auto', paddingHorizontal: 16 },
+        sceneStyle: { backgroundColor: colors.transparent },
         ...screenOptions,
       }}
     >

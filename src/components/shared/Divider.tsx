@@ -11,6 +11,8 @@ export interface DividerProps {
   inset?: number;
   /** Override line color; defaults to colors.divider (or the fallback below). */
   color?: string;
+  /** Renders a 1px-wide line that stretches to the height of a row parent. */
+  vertical?: boolean;
   style?: ViewStyle;
 }
 
@@ -18,11 +20,11 @@ export interface DividerProps {
 // theme doesn't (yet) define a dedicated divider color token.
 const DEFAULT_DIVIDER_COLOR = colors.border ?? 'rgba(28,28,46,0.06)';
 
-export default function Divider({ marginVertical, inset, color, style }: DividerProps) {
+export default function Divider({ marginVertical, inset, color, vertical, style }: DividerProps) {
   return (
     <View
       style={[
-        styles.divider,
+        vertical ? styles.vertical : styles.divider,
         {
           backgroundColor: color ?? DEFAULT_DIVIDER_COLOR,
           marginVertical: marginVertical ?? spacing.xs,
@@ -37,5 +39,9 @@ export default function Divider({ marginVertical, inset, color, style }: Divider
 const styles = StyleSheet.create({
   divider: {
     height: 1,
+  },
+  vertical: {
+    width: 1,
+    alignSelf: 'stretch',
   },
 });

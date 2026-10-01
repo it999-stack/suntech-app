@@ -13,7 +13,6 @@ import { View, Text, Pressable, ScrollView, StyleSheet, LayoutAnimation, Platfor
 import { Server, ChevronRight } from 'lucide-react-native';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import type { PlanDraft } from '@/types/plan';
-import IndexTable from '@components/shared/IndexTable';
 import Pager from '@components/shared/Pager';
 import AppModal from '@components/shared/AppModal';
 import MachineBadge from '@components/shared/MachineBadge';
@@ -22,7 +21,7 @@ import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 
 import PileListToolbar, { type LocationFilterOption } from './pile-assign/PileListToolbar';
 import BulkAssignBar from './pile-assign/BulkAssignBar';
-import { buildColumns } from './pile-assign/pileTableColumns';
+import PileGridTable from './pile-assign/PileGridTable';
 import { PileGroupCard, PileGroupRow } from './pile-assign/PileGroupCard';
 import { ALL_LOCATIONS_ID, type EligiblePile, type MachineKind, type PileFilter, type SimpleMachine } from './pile-assign/types';
 
@@ -86,7 +85,6 @@ export default function PileAssignStep({
 
   useEffect(() => {
     onSelectionChange?.(selectedIds.size > 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds]);
 
   function machineLabel(kind: MachineKind, machineId: string): string {
@@ -96,8 +94,6 @@ export default function PileAssignStep({
     return locations.find((l) => l.id === locationId)?.name ?? null;
   }
   function isPileFullyAssigned(pileId: string): boolean {
-    // Crane is optional — a rig can perform any CRANE-track step, never the
-    // reverse — so a pile only needs a rig to count as "assigned".
     const a = draft.assignments[pileId];
     return !!a?.rig;
   }
@@ -132,9 +128,10 @@ export default function PileAssignStep({
         }
         return true;
       })
-      .sort((a, b) => a.code.localeCompare(b.code));
+      // Checked piles float to the top; Array.sort is stable, so each group keeps its natural code order.
+      .sort((a, b) => Number(selectedIds.has(b.id)) - Number(selectedIds.has(a.id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [piles, search, filter, activeLocationId, draft.assignments]);
+  }, [piles, search, filter, activeLocationId, draft.assignments, selectedIds]);
 
   // Search/filter/location narrow the result set, so a page index from
   // before the change can point past the end of the new one.
@@ -154,12 +151,6 @@ export default function PileAssignStep({
   const completedCount = piles.filter((p) => p.completed).length;
 
   const allAssignedPiles = useMemo(() => {
-    // draft.selectedPileIds is the plan's actual pile sequence — the same
-    // array the Preview step's machine timeline schedules from (see
-    // planScheduler's "first in original order wins" tie-break) and that
-    // ReorderPilesModal edits directly. Sorting by each pile's position in
-    // it (instead of by code) means what's numbered here matches what will
-    // actually run first on that rig.
     const sequenceIndex = new Map(draft.selectedPileIds.map((id, idx) => [id, idx]));
     return piles
       .filter((p) => isPileFullyAssigned(p.id))
@@ -178,12 +169,6 @@ export default function PileAssignStep({
       .sort((a, b) => (sequenceIndex.get(a.id) ?? 0) - (sequenceIndex.get(b.id) ?? 0));
   }, [piles, draft.assignments, draft.selectedPileIds, activeRigs, activeCranes]);
 
-  // "Assigned Piles" modal groups by rig — every pile under R-1, then every
-  // pile under R-2, etc. — instead of one flat sequence-ordered list, in the
-  // same order the Machines step lists rigs. A rig that's since dropped out of
-  // activeRigs (shouldn't happen — removing a machine clears its
-  // assignments) still gets a fallback group so its piles are never silently
-  // hidden here.
   const assignedPilesByRig = useMemo(() => {
     const byRigId = new Map<string, typeof allAssignedPiles>();
     allAssignedPiles.forEach((p) => {
@@ -205,15 +190,12 @@ export default function PileAssignStep({
   }, [allAssignedPiles, activeRigs]);
 
   const selectedCodesLabel = useMemo(() => {
-    const codes = piles.filter((p) => selectedIds.has(p.id)).map((p) => p.code).sort();
+    const codes = piles.filter((p) => selectedIds.has(p.id)).map((p) => p.code);
     const limit = 4;
     return codes.length <= limit
       ? codes.join(', ')
       : `${codes.slice(0, limit).join(', ')} +${codes.length - limit} more`;
   }, [piles, selectedIds]);
-  // "Select all" applies to the current page only, matching Pager's per-page scope.
-  const selectableVisiblePiles = useMemo(() => pagedPiles.filter((p) => !p.completed), [pagedPiles]);
-  const allVisibleSelected = selectableVisiblePiles.length > 0 && selectableVisiblePiles.every((p) => selectedIds.has(p.id));
   const anySelectedAssigned = useMemo(
     () => [...selectedIds].some((id) => isPileFullyAssigned(id)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -228,14 +210,6 @@ export default function PileAssignStep({
       return next;
     });
   }
-  function toggleSelectAllVisible(): void {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      selectableVisiblePiles.forEach((p) => (allVisibleSelected ? next.delete(p.id) : next.add(p.id)));
-      return next;
-    });
-  }
-
   function handleFilterChange(next: PileFilter): void {
     setFilter(next);
   }
@@ -243,18 +217,6 @@ export default function PileAssignStep({
   function handlePageChange(next: number): void {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setPage(next);
-  }
-
-  // Deliberately bypass handlePageChange's LayoutAnimation here — IndexTable
-  // is already driving its own Reanimated slide for a swipe-triggered page
-  // change, and LayoutAnimation's native layout-commit animation fighting
-  // over the same frame is what left the table stuck mid-slide instead of
-  // resetting to center.
-  function swipeToNextPage(): void {
-    if (currentPage < totalPages) setPage(currentPage + 1);
-  }
-  function swipeToPrevPage(): void {
-    if (currentPage > 1) setPage(currentPage - 1);
   }
 
   function clearSelection(): void {
@@ -289,16 +251,6 @@ export default function PileAssignStep({
     setSelectedIds(new Set());
     setBulkOpen(false);
   }
-
-  const columns = useMemo(
-    () => buildColumns({
-      assignments: draft.assignments,
-      machineLabel,
-      locationLabel,
-      showAreaBadge: activeLocationId === ALL_LOCATIONS_ID,
-    }),
-    [draft.assignments, activeRigs, activeCranes, locations, activeLocationId],
-  );
 
   return (
     <View style={styles.root}>
@@ -335,19 +287,15 @@ export default function PileAssignStep({
       </Pressable>
 
       <View style={styles.listSection}>
-        <IndexTable
+        <PileGridTable
           data={pagedPiles}
-          columns={columns}
-          selectable
+          assignments={draft.assignments}
+          machineLabel={machineLabel}
+          locationLabel={locationLabel}
           selectedIds={selectedIds}
           onToggleRow={toggleRow}
-          onToggleAll={toggleSelectAllVisible}
-          allSelected={allVisibleSelected}
-          isRowDisabled={(p) => !!p.completed}
           emptyText={piles.length === 0 ? 'No piles found for this site.' : 'No piles match this view.'}
-          footer={<Pager page={currentPage} totalPages={totalPages} onPageChange={handlePageChange} />}
-          onSwipeNextPage={currentPage < totalPages ? swipeToNextPage : undefined}
-          onSwipePrevPage={currentPage > 1 ? swipeToPrevPage : undefined}
+          footer={<Pager page={currentPage} totalPages={totalPages} onPageChange={handlePageChange} compact />}
         />
       </View>
 

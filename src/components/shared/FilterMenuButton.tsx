@@ -18,6 +18,7 @@ interface FilterMenuButtonProps<T extends string = string> {
   value: T;
   onChange: (value: T) => void;
   iconSize?: number;
+  title?: string;
 }
 
 const MENU_WIDTH = 230;
@@ -27,6 +28,7 @@ export default function FilterMenuButton<T extends string = string>({
   value,
   onChange,
   iconSize = 20,
+  title = 'Filter by status',
 }: FilterMenuButtonProps<T>) {
   const triggerRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
@@ -69,7 +71,7 @@ export default function FilterMenuButton<T extends string = string>({
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
           {anchor ? (
             <View style={[styles.menu, { position: 'absolute', top: anchor.top, left: anchor.left }]}>
-              <Text style={styles.menuHeader}>Filter by status</Text>
+              <Text style={styles.menuHeader}>{title}</Text>
               {options.map((opt, idx) => {
                 const selected = opt.value === value;
                 return (

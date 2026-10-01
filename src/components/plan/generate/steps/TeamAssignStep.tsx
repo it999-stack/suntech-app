@@ -1,15 +1,19 @@
 // src/components/plan/generate/steps/TeamAssignStep.tsx
+//
+// Single Team Assignment step covering BOTH shifts: one card per machine with a
+// Day and a Night column side by side (plus a Shift Incharge card). A person
+// already holding a role — this one or its complementary one (Engineer <->
+// Supervisor) — in EITHER shift is shown faded, not selectable: moving them to
+// the other shift means unassigning them there first, then picking them here.
+// Completeness of both shifts is checked only when Next is pressed
+// (focusFirstMissing).
 
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { Drill, Forklift, Users } from 'lucide-react-native';
-import GlassCard from '@components/shared/GlassCard';
+import { Text, ScrollView, StyleSheet } from 'react-native';
 import AppModal from '@components/shared/AppModal';
-import AssigneeChip from '@components/shared/AssigneeChip';
 import PersonnelPickerList, { type SimplePersonnel } from '@components/shared/PersonnelPickerList';
-import RequiredMark from '@components/shared/RequiredMark';
-import { colors, spacing, radius, typography } from '@/theme/theme';
-import type { PlanDraft } from '@/types/plan';
+import { colors, spacing, typography } from '@/theme/theme';
+import type { PlanDraft, ShiftTeamAssignment } from '@/types/plan';
 import type { PlanDraftActions } from '@screens/Home/generatePlan/usePlanDraft';
 import {
   matchesRoleDesignation,
@@ -19,11 +23,13 @@ import {
   getCrossRoleDisabledIds,
   getShiftInchargeDisabledIds,
   formatAssignmentLocation,
-  findFirstMissingTeamField,
+  findFirstMissingPlanTeamField,
   type SimpleMachine,
   type DisabledAssignmentInfo,
 } from '@/utils/personnelRoles';
 import { useScrollToField } from '@hooks/useScrollToField';
+import MachineTeamCard, { ShiftColumn } from './team-assign/MachineTeamCard';
+import TeamRoleRow from './team-assign/TeamRoleRow';
 
 export interface SimpleShift {
   id: string;
@@ -39,8 +45,6 @@ export interface TeamAssignStepHandle {
 interface TeamAssignStepProps {
   draft: PlanDraft;
   actions: Pick<PlanDraftActions, 'setShiftIncharge' | 'setMachineRole'>;
-  /** Which shift's roster this instance edits — GeneratePlanScreen mounts one per shift. */
-  shiftSlot: 1 | 2;
   activeRigs: SimpleMachine[];
   activeCranes: SimpleMachine[];
   personnel: SimplePersonnel[];
@@ -49,54 +53,26 @@ interface TeamAssignStepProps {
   scrollYRef: React.RefObject<number>;
 }
 
+type MachineRole = 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR';
+type Slot = 1 | 2;
+
 type PickerTarget =
-  | { role: 'SHIFT_INCHARGE' }
-  | { role: 'ENGINEER'; machineId: string }
-  | { role: 'SUPERVISOR'; machineId: string }
-  | { role: 'MACHINE_OPERATOR'; machineId: string; type: 'RIG' | 'CRANE' };
+  | { slot: Slot; role: 'SHIFT_INCHARGE' }
+  | { slot: Slot; role: MachineRole; machineId: string; type: 'RIG' | 'CRANE' };
 
-function TeamRow({
-  icon,
-  label,
-  assigneeName,
-  onPress,
-  rowRef,
-  highlighted,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  assigneeName: string | null;
-  onPress: () => void;
-  rowRef?: (el: View | null) => void;
-  highlighted?: boolean;
-}) {
-  return (
-    <Pressable
-      ref={rowRef}
-      style={[styles.machineTeamRow, highlighted && styles.machineTeamRowHighlighted]}
-      onPress={onPress}
-    >
-      <View style={styles.machineTeamTopRow}>
-        <View style={styles.machineIcon}>{icon}</View>
-        <Text style={styles.machineTeamNo} numberOfLines={1}>
-          {label}
-        </Text>
-      </View>
-      <View style={styles.machineTeamBottomRow}>
-        <AssigneeChip name={assigneeName} onPress={onPress} />
-      </View>
-    </Pressable>
-  );
-}
+const ROLE_MAP_KEY = {
+  ENGINEER: 'engineerByMachineId',
+  SUPERVISOR: 'supervisorByMachineId',
+  MACHINE_OPERATOR: 'operatorByMachineId',
+} as const;
 
-function fieldKey(role: 'ENGINEER' | 'SUPERVISOR' | 'MACHINE_OPERATOR', machineId: string): string {
-  return `${role}:${machineId}`;
+function fieldKey(slot: Slot, role: MachineRole, machineId: string): string {
+  return `${slot}:${role}:${machineId}`;
 }
 
 const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(function TeamAssignStep({
   draft,
   actions,
-  shiftSlot,
   activeRigs,
   activeCranes,
   personnel,
@@ -106,263 +82,164 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
 }, ref) {
   const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
-
   const { registerField, scrollToField } = useScrollToField(scrollViewRef, scrollYRef);
 
-  const shift1 = shifts[0];
-  const shift2 = shifts[1];
-  const tab1Label = shift1 ? `${shift1.name}` : 'Shift 1 (Day)';
-  const tab2Label = shift2 ? `${shift2.name}` : 'Shift 2 (Night)';
-  const currentShiftLabel = shiftSlot === 1 ? tab1Label : tab2Label;
-  const otherShiftLabel = shiftSlot === 1 ? tab2Label : tab1Label;
+  const shiftLabel = (slot: Slot): string => shifts[slot - 1]?.name ?? (slot === 1 ? 'Day Shift' : 'Night Shift');
+  const teamFor = (slot: Slot): ShiftTeamAssignment =>
+    slot === 1 ? draft.checklistPersonnel.shift1 : draft.checklistPersonnel.shift2;
+  const nameOf = (id: string | null | undefined): string | null => personnel.find((p) => p.id === id)?.name ?? null;
 
   const machineNoFor = useMemo(() => {
     const map = new Map([...activeRigs, ...activeCranes].map((m) => [m.id, m.machineNo]));
     return (machineId: string) => map.get(machineId) ?? '';
   }, [activeRigs, activeCranes]);
 
-  function toDisabledDetails(info: Map<string, DisabledAssignmentInfo>): Map<string, string> {
-    return new Map(
-      [...info].map(([id, entry]) => [
-        id,
-        formatAssignmentLocation(entry, machineNoFor, (s) => (s === 'current' ? currentShiftLabel : otherShiftLabel)),
-      ]),
-    );
-  }
-
   const shiftIncharges = useMemo(
     () => personnel.filter((p) => matchesRoleDesignation('SHIFT_INCHARGE', p.designation)),
     [personnel],
   );
-  // Engineer and Supervisor share one candidate pool — either designation can cover either
-  // role (see getEngineerOrSupervisorCandidates).
-  const engineerOrSupervisorCandidates = useMemo(
-    () => getEngineerOrSupervisorCandidates(personnel),
-    [personnel],
-  );
-
-  const team = shiftSlot === 1 ? draft.checklistPersonnel.shift1 : draft.checklistPersonnel.shift2;
-  // The shift NOT currently being edited — used to disable (not hide) anyone already
-  // assigned to the same role there, since nobody can work both shifts.
-  const otherTeam = shiftSlot === 1 ? draft.checklistPersonnel.shift2 : draft.checklistPersonnel.shift1;
+  // Engineer and Supervisor share one candidate pool (see getEngineerOrSupervisorCandidates).
+  const engineerOrSupervisorCandidates = useMemo(() => getEngineerOrSupervisorCandidates(personnel), [personnel]);
 
   // Clear the highlight the moment the field it points at gets filled in.
   useEffect(() => {
     if (!highlightKey) return;
-    const [role, machineId] = highlightKey.split(':') as [PickerTarget['role'], string];
-    const filled =
-      role === 'ENGINEER' ? !!team.engineerByMachineId[machineId]
-      : role === 'SUPERVISOR' ? !!team.supervisorByMachineId[machineId]
-      : role === 'MACHINE_OPERATOR' ? !!team.operatorByMachineId[machineId]
-      : false;
-    if (filled) setHighlightKey(null);
-  }, [team, highlightKey]);
+    const [slot, role, machineId] = highlightKey.split(':') as [string, MachineRole, string];
+    if (teamFor(Number(slot) as Slot)[ROLE_MAP_KEY[role]][machineId]) setHighlightKey(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.checklistPersonnel, highlightKey]);
 
   useImperativeHandle(ref, () => ({
     focusFirstMissing() {
-      const rigIds = activeRigs.map((r) => r.id);
-      const craneIds = activeCranes.map((c) => c.id);
-      const missing = findFirstMissingTeamField(team, rigIds, craneIds);
-
+      const missing = findFirstMissingPlanTeamField(
+        draft.checklistPersonnel,
+        activeRigs.map((r) => r.id),
+        activeCranes.map((c) => c.id),
+      );
       if (!missing) {
         setHighlightKey(null);
         return true;
       }
-
-      const key = fieldKey(missing.role, missing.machineId);
+      const key = fieldKey(missing.slot, missing.role, missing.machineId);
       setHighlightKey(key);
       requestAnimationFrame(() => scrollToField(key));
       return false;
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [activeRigs, activeCranes, team, scrollToField]);
+  }), [draft.checklistPersonnel, activeRigs, activeCranes, scrollToField]);
 
-  const operatorCandidates = useMemo(() => {
-    if (!pickerTarget || pickerTarget.role !== 'MACHINE_OPERATOR') return [];
-    return getOperatorMachineCandidates(pickerTarget.type, personnel);
-  }, [pickerTarget, personnel]);
-
-  // ── Picker modal config, derived from whichever role/machine was tapped ──
+  // ── Picker config for whichever slot/role/machine was tapped ─────────────
   const pickerConfig = useMemo(() => {
     if (!pickerTarget) return null;
-    switch (pickerTarget.role) {
-      case 'SHIFT_INCHARGE':
-        return {
-          title: 'Assign Shift Incharge',
-          personnel: shiftIncharges,
-          selectedId: team.shiftInchargeId,
-          allowNone: true,
-          emptyLabel: 'No matching shift incharges synced for this site.',
-          disabledDetails: toDisabledDetails(getShiftInchargeDisabledIds(otherTeam.shiftInchargeId)),
-          onSelect: (id: string | null) => actions.setShiftIncharge(shiftSlot, id),
-        };
-      case 'ENGINEER':
-        return {
-          title: 'Assign Engineer',
-          personnel: engineerOrSupervisorCandidates,
-          selectedId: team.engineerByMachineId[pickerTarget.machineId] ?? null,
-          allowNone: true,
-          emptyLabel: 'No matching engineers synced for this site.',
-          disabledDetails: toDisabledDetails(
-            new Map([
-              ...getMachineRoleDisabledIds(
-                pickerTarget.machineId,
-                team.engineerByMachineId,
-                otherTeam.engineerByMachineId,
-                { excludeSameShiftOtherMachines: false },
-              ),
-              ...getCrossRoleDisabledIds(team.supervisorByMachineId),
-            ]),
-          ),
-          onSelect: (id: string | null) => actions.setMachineRole(shiftSlot, 'ENGINEER', pickerTarget.machineId, id),
-        };
-      case 'SUPERVISOR':
-        return {
-          title: 'Assign Supervisor',
-          personnel: engineerOrSupervisorCandidates,
-          selectedId: team.supervisorByMachineId[pickerTarget.machineId] ?? null,
-          allowNone: true,
-          emptyLabel: 'No matching supervisors synced for this site.',
-          disabledDetails: toDisabledDetails(
-            new Map([
-              ...getMachineRoleDisabledIds(
-                pickerTarget.machineId,
-                team.supervisorByMachineId,
-                otherTeam.supervisorByMachineId,
-                { excludeSameShiftOtherMachines: false },
-              ),
-              ...getCrossRoleDisabledIds(team.engineerByMachineId),
-            ]),
-          ),
-          onSelect: (id: string | null) => actions.setMachineRole(shiftSlot, 'SUPERVISOR', pickerTarget.machineId, id),
-        };
-      case 'MACHINE_OPERATOR':
-        return {
-          title: 'Assign Operator',
-          personnel: operatorCandidates,
-          selectedId: team.operatorByMachineId[pickerTarget.machineId] ?? null,
-          allowNone: true,
-          emptyLabel: 'No matching machine operators synced for this site.',
-          disabledDetails: toDisabledDetails(
-            getMachineRoleDisabledIds(
-              pickerTarget.machineId,
-              team.operatorByMachineId,
-              otherTeam.operatorByMachineId,
-              { excludeSameShiftOtherMachines: true },
-            ),
-          ),
-          onSelect: (id: string | null) => actions.setMachineRole(shiftSlot, 'MACHINE_OPERATOR', pickerTarget.machineId, id),
-        };
+    const { slot } = pickerTarget;
+    const team = teamFor(slot);
+    const other = teamFor(slot === 1 ? 2 : 1);
+    const otherLabel = shiftLabel(slot === 1 ? 2 : 1);
+
+    const toDisabledDetails = (info: Map<string, DisabledAssignmentInfo>) =>
+      new Map(
+        [...info].map(([id, entry]) => [
+          id,
+          formatAssignmentLocation(entry, machineNoFor, (s) => (s === 'current' ? shiftLabel(slot) : otherLabel)),
+        ]),
+      );
+
+    if (pickerTarget.role === 'SHIFT_INCHARGE') {
+      return {
+        title: `Shift Incharge · ${shiftLabel(slot)}`,
+        personnel: shiftIncharges,
+        selectedId: team.shiftInchargeId,
+        emptyLabel: 'No matching shift incharges synced for this site.',
+        disabledDetails: toDisabledDetails(getShiftInchargeDisabledIds(other.shiftInchargeId)),
+        onSelect: (id: string | null) => actions.setShiftIncharge(slot, id),
+      };
     }
-  }, [
-    pickerTarget,
-    shiftIncharges,
-    engineerOrSupervisorCandidates,
-    operatorCandidates,
-    team,
-    otherTeam,
-    machineNoFor,
-    currentShiftLabel,
-    otherShiftLabel,
-    actions,
-    shiftSlot,
-  ]);
+
+    const { role, machineId, type } = pickerTarget;
+    const mapKey = ROLE_MAP_KEY[role];
+    const complementaryMapKey = role === 'ENGINEER' ? 'supervisorByMachineId' : role === 'SUPERVISOR' ? 'engineerByMachineId' : null;
+    const disabled = new Map<string, DisabledAssignmentInfo>([
+      ...getMachineRoleDisabledIds(machineId, team[mapKey], other[mapKey], {
+        excludeSameShiftOtherMachines: role === 'MACHINE_OPERATOR',
+      }),
+      // Engineer <-> Supervisor: can't hold the complementary role, this shift or the other.
+      ...(complementaryMapKey
+        ? [
+            ...getCrossRoleDisabledIds(team[complementaryMapKey]),
+            ...[...getCrossRoleDisabledIds(other[complementaryMapKey])].map(
+              ([id, info]): [string, DisabledAssignmentInfo] => [id, { ...info, shift: 'other' }],
+            ),
+          ]
+        : []),
+    ]);
+
+    return {
+      title: `${role === 'ENGINEER' ? 'Engineer' : role === 'SUPERVISOR' ? 'Supervisor' : 'Operator'} · ${machineNoFor(machineId)} · ${shiftLabel(slot)}`,
+      personnel: role === 'MACHINE_OPERATOR' ? getOperatorMachineCandidates(type, personnel) : engineerOrSupervisorCandidates,
+      selectedId: team[mapKey][machineId] ?? null,
+      emptyLabel: 'No matching personnel synced for this site.',
+      disabledDetails: toDisabledDetails(disabled),
+      onSelect: (id: string | null) => actions.setMachineRole(slot, role, machineId, id),
+    };
+  }, [pickerTarget, draft.checklistPersonnel, personnel, shiftIncharges, engineerOrSupervisorCandidates, machineNoFor, shifts, actions]);
+
+  function roleRow(slot: Slot, role: MachineRole, machine: SimpleMachine, type: 'RIG' | 'CRANE', label: string, required: boolean, isLast: boolean) {
+    const key = fieldKey(slot, role, machine.id);
+    return (
+      <TeamRoleRow
+        key={key}
+        rowRef={registerField(key)}
+        highlighted={highlightKey === key}
+        label={label}
+        required={required}
+        isLast={isLast}
+        assigneeName={nameOf(teamFor(slot)[ROLE_MAP_KEY[role]][machine.id])}
+        onPress={() => setPickerTarget({ slot, role, machineId: machine.id, type })}
+      />
+    );
+  }
+
+  const slots: Slot[] = [1, 2];
 
   return (
     <>
-      <View style={styles.shiftHeadingRow}>
-        <Text style={styles.shiftHeadingText} numberOfLines={1}>
-          {currentShiftLabel}
-        </Text>
-      </View>
+      {activeRigs.length === 0 && activeCranes.length === 0 && (
+        <Text style={styles.emptyText}>No active machines. Go back and activate at least one rig or crane.</Text>
+      )}
 
-      <GlassCard style={styles.cardOuter}>
-        <View style={styles.group}>
-          <Text style={styles.sectionLabel}>Shift Incharge</Text>
-          <TeamRow
-            icon={<Users size={16} color={colors.accent} />}
-            label="Shift Incharge"
-            assigneeName={personnel.find((p) => p.id === team.shiftInchargeId)?.name ?? null}
-            onPress={() => setPickerTarget({ role: 'SHIFT_INCHARGE' })}
-          />
-        </View>
+      <MachineTeamCard title="Shift Incharge">
+        {slots.map((slot) => (
+          <ShiftColumn key={slot} slot={slot} title={shiftLabel(slot)}>
+            <TeamRoleRow
+              label="Incharge"
+              isLast
+              assigneeName={nameOf(teamFor(slot).shiftInchargeId)}
+              onPress={() => setPickerTarget({ slot, role: 'SHIFT_INCHARGE' })}
+            />
+          </ShiftColumn>
+        ))}
+      </MachineTeamCard>
 
-        <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Engineers<RequiredMark /></Text>
-          {activeRigs.length === 0 ? (
-            <Text style={styles.emptyText}>No active rigs — go back and activate at least one rig.</Text>
-          ) : (
-            activeRigs.map((r) => (
-              <TeamRow
-                key={r.id}
-                rowRef={registerField(fieldKey('ENGINEER', r.id))}
-                highlighted={highlightKey === fieldKey('ENGINEER', r.id)}
-                icon={<Drill size={16} color={colors.accent} />}
-                label={r.machineNo}
-                assigneeName={personnel.find((p) => p.id === team.engineerByMachineId[r.id])?.name ?? null}
-                onPress={() => setPickerTarget({ role: 'ENGINEER', machineId: r.id })}
-              />
-            ))
-          )}
-        </View>
+      {activeRigs.map((rig) => (
+        <MachineTeamCard key={rig.id} title={rig.machineNo} track="RIG">
+          {slots.map((slot) => (
+            <ShiftColumn key={slot} slot={slot} title={shiftLabel(slot)}>
+              {roleRow(slot, 'ENGINEER', rig, 'RIG', 'Engineer', true, false)}
+              {roleRow(slot, 'SUPERVISOR', rig, 'RIG', 'Supervisor', false, false)}
+              {roleRow(slot, 'MACHINE_OPERATOR', rig, 'RIG', 'Rig Operator', true, true)}
+            </ShiftColumn>
+          ))}
+        </MachineTeamCard>
+      ))}
 
-        <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Supervisors</Text>
-          {activeRigs.length === 0 ? (
-            <Text style={styles.emptyText}>No active rigs — go back and activate at least one rig.</Text>
-          ) : (
-            activeRigs.map((r) => (
-              <TeamRow
-                key={r.id}
-                rowRef={registerField(fieldKey('SUPERVISOR', r.id))}
-                highlighted={highlightKey === fieldKey('SUPERVISOR', r.id)}
-                icon={<Drill size={16} color={colors.accent} />}
-                label={r.machineNo}
-                assigneeName={personnel.find((p) => p.id === team.supervisorByMachineId[r.id])?.name ?? null}
-                onPress={() => setPickerTarget({ role: 'SUPERVISOR', machineId: r.id })}
-              />
-            ))
-          )}
-        </View>
-
-        <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Rig Operators<RequiredMark /></Text>
-          {activeRigs.length === 0 ? (
-            <Text style={styles.emptyText}>No active rigs — go back and activate at least one rig.</Text>
-          ) : (
-            activeRigs.map((r) => (
-              <TeamRow
-                key={r.id}
-                rowRef={registerField(fieldKey('MACHINE_OPERATOR', r.id))}
-                highlighted={highlightKey === fieldKey('MACHINE_OPERATOR', r.id)}
-                icon={<Drill size={16} color={colors.accent} />}
-                label={r.machineNo}
-                assigneeName={personnel.find((p) => p.id === team.operatorByMachineId[r.id])?.name ?? null}
-                onPress={() => setPickerTarget({ role: 'MACHINE_OPERATOR', machineId: r.id, type: 'RIG' })}
-              />
-            ))
-          )}
-        </View>
-
-        <View style={[styles.group, styles.groupDivider]}>
-          <Text style={styles.sectionLabel}>Crane Operators<RequiredMark /></Text>
-          {activeCranes.length === 0 ? (
-            <Text style={styles.emptyText}>No active cranes — go back and activate at least one crane.</Text>
-          ) : (
-            activeCranes.map((c) => (
-              <TeamRow
-                key={c.id}
-                rowRef={registerField(fieldKey('MACHINE_OPERATOR', c.id))}
-                highlighted={highlightKey === fieldKey('MACHINE_OPERATOR', c.id)}
-                icon={<Forklift size={16} color={colors.accent} />}
-                label={c.machineNo}
-                assigneeName={personnel.find((p) => p.id === team.operatorByMachineId[c.id])?.name ?? null}
-                onPress={() => setPickerTarget({ role: 'MACHINE_OPERATOR', machineId: c.id, type: 'CRANE' })}
-              />
-            ))
-          )}
-        </View>
-      </GlassCard>
+      {activeCranes.map((crane) => (
+        <MachineTeamCard key={crane.id} title={crane.machineNo} track="CRANE">
+          {slots.map((slot) => (
+            <ShiftColumn key={slot} slot={slot} title={shiftLabel(slot)}>
+              {roleRow(slot, 'MACHINE_OPERATOR', crane, 'CRANE', 'Crane Operator', true, true)}
+            </ShiftColumn>
+          ))}
+        </MachineTeamCard>
+      ))}
 
       <AppModal
         visible={!!pickerTarget}
@@ -374,7 +251,7 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
           <PersonnelPickerList
             personnel={pickerConfig.personnel}
             selectedId={pickerConfig.selectedId}
-            allowNone={pickerConfig.allowNone}
+            allowNone
             emptyLabel={pickerConfig.emptyLabel}
             disabledDetails={pickerConfig.disabledDetails}
             onSelect={(id) => {
@@ -391,63 +268,10 @@ const TeamAssignStep = forwardRef<TeamAssignStepHandle, TeamAssignStepProps>(fun
 export default TeamAssignStep;
 
 const styles = StyleSheet.create({
-  shiftHeadingRow: {
-    marginBottom: spacing.md,
-  },
-  shiftHeadingText: {
-    ...typography.body,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  cardOuter: { marginBottom: spacing.sm },
-  group: { marginBottom: spacing.sm },
-  groupDivider: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(28,28,46,0.08)',
-    paddingTop: spacing.md,
-    marginTop: spacing.xs,
-  },
-  sectionLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    color: colors.accent,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: spacing.sm,
-  },
   emptyText: {
     ...typography.caption,
     color: colors.textSecondary,
     fontStyle: 'italic',
-    paddingVertical: spacing.sm,
-  },
-  machineTeamRow: {
-    gap: spacing.sm,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: 'rgba(28,28,46,0.04)',
-    marginBottom: spacing.xs,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-  },
-  machineTeamRowHighlighted: {
-    borderColor: colors.danger,
-  },
-  machineTeamTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  machineTeamBottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  machineIcon: { width: 24, alignItems: 'center' },
-  machineTeamNo: {
-    ...typography.body,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    flexShrink: 1,
+    marginBottom: spacing.md,
   },
 });

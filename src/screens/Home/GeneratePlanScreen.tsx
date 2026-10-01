@@ -156,7 +156,7 @@ export default function GeneratePlanScreen() {
   const { scrollViewRef, scrollYRef, onScroll, scrollEventThrottle } = useTrackedScrollView();
 
   async function goNext() {
-    if (step === 'team' || step === 'teamNight') {
+    if (step === 'team') {
       const teamComplete = teamStepRef.current ? teamStepRef.current.focusFirstMissing() : canContinue;
       if (!teamComplete) return;
     }
@@ -262,11 +262,10 @@ export default function GeneratePlanScreen() {
       }
       case 'team': {
         if ([...draft.activeRigIds, ...draft.activeCraneIds].length === 0) return false;
-        return isShiftTeamComplete(draft.checklistPersonnel.shift1, draft.activeRigIds, draft.activeCraneIds);
-      }
-      case 'teamNight': {
-        if ([...draft.activeRigIds, ...draft.activeCraneIds].length === 0) return false;
-        return isShiftTeamComplete(draft.checklistPersonnel.shift2, draft.activeRigIds, draft.activeCraneIds);
+        return (
+          isShiftTeamComplete(draft.checklistPersonnel.shift1, draft.activeRigIds, draft.activeCraneIds) &&
+          isShiftTeamComplete(draft.checklistPersonnel.shift2, draft.activeRigIds, draft.activeCraneIds)
+        );
       }
       case 'piles':
         // Crane is optional — a rig can perform any CRANE-track step, never
@@ -429,6 +428,7 @@ export default function GeneratePlanScreen() {
                 draft={draft}
                 actions={actions}
                 piles={assignablePiles}
+                locations={selectedLocations.map((l) => ({ id: l.id, name: l.name }))}
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
                 effectiveDayStart={effectiveDayStart}
@@ -466,12 +466,11 @@ export default function GeneratePlanScreen() {
               />
             )}
 
-            {(step === 'team' || step === 'teamNight') && (
+            {step === 'team' && (
               <TeamAssignStep
                 ref={teamStepRef}
                 draft={draft}
                 actions={actions}
-                shiftSlot={step === 'team' ? 1 : 2}
                 activeRigs={activeRigs}
                 activeCranes={activeCranes}
                 personnel={simplePersonnel}
@@ -536,7 +535,7 @@ export default function GeneratePlanScreen() {
         {step !== 'preview' && !(step === 'piles' && pilesHasSelection) && (
           <NextStepFab
             onPress={goNext}
-            disabled={(step === 'team' || step === 'teamNight' || step === 'resume') ? isGenerating : (!canContinue || isGenerating || (step === 'steps' && preview.isLoading))}
+            disabled={(step === 'team' || step === 'resume') ? isGenerating : (!canContinue || isGenerating || (step === 'steps' && preview.isLoading))}
             loading={step === 'steps' && preview.isLoading}
           />
         )}

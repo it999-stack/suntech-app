@@ -15,6 +15,8 @@ interface PagerProps {
   page: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  /** Smaller buttons (28px instead of 36px), for footers that share the screen with a dense grid. */
+  compact?: boolean;
 }
 
 // 0 siblings keeps the collapsed form as tight as possible on a phone-width
@@ -49,20 +51,20 @@ function buildPageList(page: number, totalPages: number, siblingCount = SIBLING_
   return [1, 'ellipsis', ...range(left, right), 'ellipsis', totalPages];
 }
 
-export default function Pager({ page, totalPages, onPageChange }: PagerProps) {
+export default function Pager({ page, totalPages, onPageChange, compact = false }: PagerProps) {
   const entries = useMemo(() => buildPageList(page, totalPages), [page, totalPages]);
 
   if (totalPages <= 1) return null;
 
   return (
-    <View style={styles.row}>
+    <View style={[styles.row, compact && styles.rowCompact]}>
       <Pressable
-        style={[styles.navBtn, page <= 1 && styles.navBtnDisabled]}
+        style={[styles.navBtn, compact && styles.navBtnCompact, page <= 1 && styles.navBtnDisabled]}
         disabled={page <= 1}
         onPress={() => onPageChange(page - 1)}
         hitSlop={spacing.xs}
       >
-        <ChevronLeft size={16} color={colors.textSecondary} />
+        <ChevronLeft size={compact ? 14 : 16} color={colors.textSecondary} />
       </Pressable>
 
       {entries.map((entry, index) =>
@@ -73,22 +75,22 @@ export default function Pager({ page, totalPages, onPageChange }: PagerProps) {
         ) : (
           <Pressable
             key={entry}
-            style={[styles.pageBtn, entry === page && styles.pageBtnActive]}
+            style={[styles.pageBtn, compact && styles.pageBtnCompact, entry === page && styles.pageBtnActive]}
             onPress={() => onPageChange(entry)}
             hitSlop={spacing.xs}
           >
-            <Text style={[styles.pageText, entry === page && styles.pageTextActive]}>{entry}</Text>
+            <Text style={[styles.pageText, compact && styles.pageTextCompact, entry === page && styles.pageTextActive]}>{entry}</Text>
           </Pressable>
         ),
       )}
 
       <Pressable
-        style={[styles.navBtn, page >= totalPages && styles.navBtnDisabled]}
+        style={[styles.navBtn, compact && styles.navBtnCompact, page >= totalPages && styles.navBtnDisabled]}
         disabled={page >= totalPages}
         onPress={() => onPageChange(page + 1)}
         hitSlop={spacing.xs}
       >
-        <ChevronRight size={16} color={colors.textSecondary} />
+        <ChevronRight size={compact ? 14 : 16} color={colors.textSecondary} />
       </Pressable>
     </View>
   );
@@ -102,6 +104,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 6,
   },
+  rowCompact: { gap: 4 },
   navBtn: {
     width: 36,
     height: 36,
@@ -112,6 +115,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  navBtnCompact: { width: 28, height: 28 },
   navBtnDisabled: { opacity: 0.4 },
   pageBtn: {
     minWidth: 36,
@@ -124,8 +128,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  pageBtnCompact: { minWidth: 28, height: 28, paddingHorizontal: spacing.xs + 2 },
   pageBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   pageText: { ...typography.caption, color: colors.textSecondary },
+  pageTextCompact: { fontSize: 12 },
   pageTextActive: { color: colors.textInverse, fontWeight: '700' },
   ellipsis: { ...typography.caption, color: colors.textSecondary, paddingHorizontal: 2 },
 });

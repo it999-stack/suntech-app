@@ -24,8 +24,9 @@ import { onQueueChanged } from '@sync/SyncManager';
 import { getSiteCoordinatorsBySite } from '@repositories/siteCoordinatorsRepository';
 import { callPhone } from '@utils/phone';
 import type { PilSiteCoordinator } from '@db/schema';
+import Avatar from '@/components/shared/Avatar';
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '3.0.0';
 
 function Row({
   icon,
@@ -83,11 +84,6 @@ export default function ProfileScreen() {
 
   const displayName = user?.name ?? 'Unknown';
   const displayEmail = user?.email ?? '';
-  const initials = displayName
-    .split(' ')
-    .map((n: string) => n[0])
-    .join('')
-    .toUpperCase();
 
   const [pendingCount, setPendingCount] = useState(0);
   const [supportContacts, setSupportContacts] = useState<PilSiteCoordinator[]>([]);
@@ -132,16 +128,19 @@ export default function ProfileScreen() {
       notify.error('You are not assigned to any site. Contact your administrator.', { title: 'No site assigned' });
       return;
     }
-    // syncNow never rejects — a failed cycle surfaces via syncError in the
-    // modal + card. The piles reload runs either way, since a cycle can fail
-    // on the pull after a successful push.
     await syncNow();
+    // syncNow() never rejects — a failed cycle resolves into the store's
+    // error/errorKind instead of throwing (see syncStore.ts). Log it here
+    // since nothing else does; remove once the underlying failure is found.
+    const { error, errorKind } = useSyncStore.getState();
+    if (error) console.error('Sync failed:', errorKind, error);
     try {
       // Refresh piles after sync completes so the UI reflects new data
       await usePilesLocationsStore.getState().reload();
-    } catch {
+    } catch (err) {
       // Local re-read failed — the sync itself still stands, and the next
       // screen focus reloads piles anyway.
+      console.error('Failed to reload piles after sync:', err);
     }
   };
 
@@ -171,9 +170,7 @@ export default function ProfileScreen() {
           {/* Identity card */}
           <GlassCard style={{ marginTop: spacing.lg }}>
             <View style={styles.identityRow}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{initials}</Text>
-              </View>
+              <Avatar name={user?.name ?? null} backgroundColor={colors.info} size={48} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.userName}>{displayName}</Text>
                 <Text style={styles.userRole}>{displayEmail}</Text>
@@ -291,18 +288,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    ...typography.h2,
-    color: colors.accent,
   },
   userName: {
     ...typography.h2,

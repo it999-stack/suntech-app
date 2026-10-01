@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getMachinesBySite } from '@repositories/machinesRepository';
 import { getPilesBySite } from '@repositories/pilesRepository';
+import { getLocationsBySite } from '@repositories/locationsRepository';
+import { getDimensionsBySite } from '@repositories/dimensionsRepository';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { getContractorsBySite } from '@repositories/contractorsRepository';
 import { getSteps } from '@repositories/stepsRepository';
@@ -24,6 +26,10 @@ export function useLookups(args: { siteId: string }): {
   machines: PilingMachine[];
   machineMap: Map<string, string>;
   pileMap: Map<string, PilingPile>;
+  /** location id -> display name, for the pile cards' Location line. */
+  locationNameById: Map<string, string>;
+  /** dimension id -> "Ø760mm × 28m", for the pile cards' Dimension line. */
+  dimensionLabelById: Map<string, string>;
   personnelMap: Map<string, PilingSitePersonnel>;
   /** Site-scoped contractor master list — backs the "Name of Pile
    * Contractor" / "Name of Cage Contractor" fields on the one-time pile
@@ -45,6 +51,8 @@ export function useLookups(args: { siteId: string }): {
   const [machines, setMachines] = useState<PilingMachine[]>([]);
   const [machineMap, setMachineMap] = useState<Map<string, string>>(new Map());
   const [pileMap, setPileMap] = useState<Map<string, PilingPile>>(new Map());
+  const [locationNameById, setLocationNameById] = useState<Map<string, string>>(new Map());
+  const [dimensionLabelById, setDimensionLabelById] = useState<Map<string, string>>(new Map());
   const [personnelMap, setPersonnelMap] = useState<Map<string, PilingSitePersonnel>>(new Map());
   const [contractors, setContractors] = useState<PilContractor[]>([]);
   const [allSteps, setAllSteps] = useState<PilingStep[]>([]);
@@ -55,17 +63,21 @@ export function useLookups(args: { siteId: string }): {
     if (!siteId) return;
     setLookupsLoading(true);
     (async () => {
-      const [fetchedMachines, piles, personnel, fetchedContractors, steps, templates] = await Promise.all([
+      const [fetchedMachines, piles, personnel, fetchedContractors, steps, templates, locations, dimensions] = await Promise.all([
         getMachinesBySite(siteId),
         getPilesBySite(siteId),
         getPersonnelBySite(siteId),
         getContractorsBySite(siteId),
         getSteps(),
         getAllDurationTemplates(siteId),
+        getLocationsBySite(siteId),
+        getDimensionsBySite(siteId),
       ]);
       setMachines(fetchedMachines);
       setMachineMap(new Map(fetchedMachines.map((m) => [m.id, m.machineNo])));
       setPileMap(new Map(piles.map((p) => [p.id, p])));
+      setLocationNameById(new Map(locations.map((l) => [l.id, l.name])));
+      setDimensionLabelById(new Map(dimensions.map((d) => [d.id, `Ø${d.dia}mm × ${d.depth}m`])));
       setPersonnelMap(new Map(personnel.map((p) => [p.id, p])));
       setContractors(fetchedContractors);
       setAllSteps(steps);
@@ -90,6 +102,8 @@ export function useLookups(args: { siteId: string }): {
     machines,
     machineMap,
     pileMap,
+    locationNameById,
+    dimensionLabelById,
     personnelMap,
     contractors,
     allSteps,

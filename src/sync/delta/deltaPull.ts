@@ -20,6 +20,7 @@ import {
   deleteShiftTypesByIds,
   deleteNonWorkingWindowsByIds,
 } from '@repositories/shiftsRepository';
+import { saveSiteTargets } from '@repositories/siteRepository';
 import { saveDurationTemplates } from '@repositories/durationTemplatesRepository';
 import { saveSteps } from '@repositories/stepsRepository';
 import {
@@ -185,7 +186,28 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
   }));
   await replaceSiteCoordinators(siteId, coordinatorRows);
 
+  // The server owns these counters (manual seed + app-counted completions);
+  // always sent in full, so a plain overwrite is correct.
+  if (data.site) {
+    await saveSiteTargets({
+      id: siteId,
+      siteConfig: {
+        targetPiles: data.site.target_piles ?? null,
+        completedPiles: data.site.completed_piles ?? 0,
+        weeklyTargetPiles: data.site.weekly_target_piles ?? null,
+        weeklyCompletedPiles: data.site.weekly_completed_piles ?? 0,
+        monthlyTargetPiles: data.site.monthly_target_piles ?? null,
+        monthlyCompletedPiles: data.site.monthly_completed_piles ?? 0,
+      },
+    });
+  }
+
   const checklists = (data.checklists as any[]) ?? [];
+
+  const deletedChecklistIds = (data.deleted_checklist_ids as string[]) ?? [];
+  await dequeueChecklistSync(deletedChecklistIds);
+  await purgeChecklistsByIds(deletedChecklistIds);
+
   // Skip checklists that still have unsynced local edits (e.g. an actual time
   // entered while a push for this same checklist was still in flight) — the
   // server's copy here predates that edit, and wholesale-replacing local data
@@ -197,18 +219,6 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
     await hydrateChecklistFromServer(checklist);
   }
   await purgeChecklistPilesByIds((data.deleted_checklist_pile_ids as string[]) ?? []);
-
-  // Deliberately NOT dirty-filtered, unlike the hydrate skip above. A
-  // server-side delete outranks an unsynced local edit: the checklist those
-  // edits target no longer exists, and the push that ran moments ago in this
-  // same cycle already reported them as dropped (see the server's
-  // dropped_checklists). Filtering here instead would pin the local copy in
-  // place permanently — the queue row keeps it dirty, and dirty keeps it from
-  // ever being purged. Dequeue first so no later trigger can rebuild a push
-  // from rows that are about to disappear.
-  const deletedChecklistIds = (data.deleted_checklist_ids as string[]) ?? [];
-  await dequeueChecklistSync(deletedChecklistIds);
-  await purgeChecklistsByIds(deletedChecklistIds);
 
   // Same guard as the checklist skip above, one hop further: pile
   // measurements are keyed by pileId rather than checklistId, so resolve the

@@ -1,7 +1,7 @@
 // src/screens/Profile/site-settings/PersonnelScreen.tsx
 // Displays the list of working personnel synced for the current site.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,39 +9,36 @@ import {
   FlatList,
   ActivityIndicator,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { UserCircle2 } from 'lucide-react-native';
+import { Phone } from 'lucide-react-native';
 
 import { colors, spacing, radius, typography } from '@theme/theme';
 import GlassCard from '@components/shared/GlassCard';
+import Avatar from '@components/shared/Avatar';
+import SearchInput from '@components/shared/SearchInput';
+import FilterMenuButton, { type FilterMenuOption } from '@components/shared/FilterMenuButton';
 import { getPersonnelBySite } from '@repositories/personnelRepository';
 import { useAuthStore } from '@store/authStore';
 import type { PilingSitePersonnel } from '@db/schema';
 import { formatDesignation } from '@/utils/personnelRoles';
 
+const ALL_DESIGNATIONS = 'ALL';
+
 function PersonnelCard({ person }: { person: PilingSitePersonnel }) {
   const isActive = person.isActive;
 
   return (
-    <GlassCard innerStyle={styles.card}>
-      {/* Left: avatar icon */}
-      <LinearGradient
-        colors={isActive ? ['#2b5f8a', '#1e3a5f'] : ['#3a3a4a', '#22222e']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.iconAvatar}
-      >
-        <UserCircle2 color="#ffffff" size={28} strokeWidth={1.75} />
-      </LinearGradient>
+    <GlassCard style={styles.cardAccent} innerStyle={styles.card} radius={radius.lg}>
+      <Avatar name={person.name} size={42} backgroundColor={colors.accentSoft} textColor={colors.accent} borderColor={colors.info} />
 
       {/* Right: details */}
       <View style={styles.cardBody}>
-        <Text style={styles.personName} numberOfLines={1}>
-          {person.name}
-        </Text>
-
-        <View style={[styles.badge, { backgroundColor: colors.accentSoft }]}>
-          <Text style={styles.badgeText}>{formatDesignation(person.designation)}</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.personName} numberOfLines={1}>
+            {person.name}
+          </Text>
+          <View style={[styles.badge, { backgroundColor: colors.accentSoft }]}>
+            <Text style={styles.badgeText}>{formatDesignation(person.designation)}</Text>
+          </View>
         </View>
 
         <View style={styles.statusRow}>
@@ -50,10 +47,20 @@ function PersonnelCard({ person }: { person: PilingSitePersonnel }) {
             {isActive ? 'Active' : 'Inactive'}
           </Text>
           {person.phone ? (
-            <Text style={styles.phoneText} numberOfLines={1}>
-              · {person.phone}
-            </Text>
-          ) : null}
+            <>
+              <View style={styles.statusDivider} />
+              <Phone size={12} color={colors.textSecondary} />
+              <Text style={styles.phoneText} numberOfLines={1}>
+                {person.phone}
+              </Text>
+            </>
+          ) : <>
+              <View style={styles.statusDivider} />
+              <Phone size={12} color={colors.textSecondary} />
+              <Text style={styles.phoneText} numberOfLines={1}>
+                Not provided
+              </Text>
+            </>}
         </View>
       </View>
     </GlassCard>
@@ -64,6 +71,8 @@ export default function PersonnelScreen() {
   const siteId = useAuthStore((s) => s.user?.siteId);
   const [personnel, setPersonnel] = useState<PilingSitePersonnel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [designationFilter, setDesignationFilter] = useState(ALL_DESIGNATIONS);
 
   useEffect(() => {
     if (!siteId) { setLoading(false); return; }
@@ -73,6 +82,23 @@ export default function PersonnelScreen() {
       .finally(() => setLoading(false));
   }, [siteId]);
 
+  const designationOptions = useMemo<FilterMenuOption[]>(() => {
+    const raw = Array.from(new Set(personnel.map((p) => p.designation)));
+    return [
+      { label: 'All', value: ALL_DESIGNATIONS },
+      ...raw.map((d) => ({ label: formatDesignation(d), value: d })),
+    ];
+  }, [personnel]);
+
+  const filteredPersonnel = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return personnel.filter((p) => {
+      if (designationFilter !== ALL_DESIGNATIONS && p.designation !== designationFilter) return false;
+      if (!query) return true;
+      return p.name.toLowerCase().includes(query) || (p.phone ?? '').toLowerCase().includes(query);
+    });
+  }, [personnel, search, designationFilter]);
+
   return (
     <View style={styles.flex}>
       <View style={styles.flex}>
@@ -81,6 +107,18 @@ export default function PersonnelScreen() {
           <Text style={styles.pageSubtitle}>
             {personnel.length} person{personnel.length === 1 ? '' : 's'} on site
           </Text>
+
+          <View style={styles.searchRow}>
+            <View style={styles.searchFlex}>
+              <SearchInput value={search} onChangeText={setSearch} placeholder="Search name or phone number…" />
+            </View>
+            <FilterMenuButton
+              options={designationOptions}
+              value={designationFilter}
+              onChange={setDesignationFilter}
+              title="Filter by designation"
+            />
+          </View>
         </View>
 
         {loading ? (
@@ -94,9 +132,14 @@ export default function PersonnelScreen() {
             <Text style={styles.emptyText}>No personnel synced yet.</Text>
             <Text style={styles.emptyHint}>Pull a fresh sync from the home screen.</Text>
           </View>
+        ) : filteredPersonnel.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No matches found.</Text>
+            <Text style={styles.emptyHint}>Try a different search or filter.</Text>
+          </View>
         ) : (
           <FlatList
-            data={personnel}
+            data={filteredPersonnel}
             keyExtractor={(p) => p.id}
             renderItem={({ item }) => <PersonnelCard person={item} />}
             contentContainerStyle={styles.list}
@@ -125,10 +168,23 @@ const styles = StyleSheet.create({
     marginTop: 2,
     marginBottom: spacing.md,
   },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  // SearchInput sizes to its own content, so it needs an explicit flex parent
+  // to take the width the filter button doesn't.
+  searchFlex: { flex: 1 },
   list: {
     paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
     paddingBottom: spacing.xxxl,
     gap: spacing.md,
+  },
+  cardAccent: {
+    borderLeftWidth: 4,
+    borderLeftColor: colors.info,
   },
   card: {
     flexDirection: 'row',
@@ -137,26 +193,26 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     width: '100%',
   },
-  iconAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
   cardBody: {
     flex: 1,
     gap: spacing.xs,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
   },
   personName: {
     ...typography.body,
     fontWeight: '700',
     fontSize: 16,
     color: colors.textPrimary,
+    flexShrink: 1,
   },
   badge: {
     alignSelf: 'flex-start',
+    flexShrink: 0,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
     borderRadius: radius.pill,
@@ -190,6 +246,11 @@ const styles = StyleSheet.create({
   },
   statusTextActive: { color: '#4ade80' },
   statusTextInactive: { color: '#f87171' },
+  statusDivider: {
+    width: 1,
+    height: 10,
+    backgroundColor: 'rgba(28,28,46,0.12)',
+  },
   phoneText: {
     ...typography.caption,
     fontSize: 12,

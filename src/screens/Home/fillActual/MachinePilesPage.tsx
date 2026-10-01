@@ -68,6 +68,8 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
                 key={group.checklistPileId}
                 index={i + 1}
                 pileCode={group.pileCode}
+                locationName={group.locationName}
+                dimensionLabel={group.dimensionLabel}
                 steps={group.steps}
                 circleVariant={group.checklistPileId === frontPileId ? 'upNext' : 'rail'}
                 railColor={railColor}

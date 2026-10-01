@@ -27,8 +27,10 @@ import { useScrollToField } from '@hooks/useScrollToField';
 import { useTrackedScrollView } from '@hooks/useTrackedScrollView';
 import ResumeTimeConfirmModal from './resume-confirm/ResumeTimeConfirmModal';
 import { useResumeConfirmQueue, pileNeedsResumeConfirm } from './resume-confirm/useResumeConfirmQueue';
-import { PileGroupCard, PileGroupRow } from './pile-assign/PileGroupCard';
+import { PileGroupCard } from './pile-assign/PileGroupCard';
+import PileCard from './pile-assign/PileCard';
 import type { EligiblePile, MachineKind, SimpleMachine } from './pile-assign/types';
+import type { LocationFilterOption } from './pile-assign/PileListToolbar';
 
 // Solid form of colors.accentSoft's base rgb — same indigo, full opacity, for the
 // confirmed status pill's icon/text (accentSoft alone is too faint at text weight).
@@ -46,6 +48,7 @@ interface ResumeConfirmStepProps {
   draft: PlanDraft;
   actions: Pick<PlanDraftActions, 'confirmResume'>;
   piles?: EligiblePile[];
+  locations?: LocationFilterOption[];
   activeRigs?: SimpleMachine[];
   activeCranes?: SimpleMachine[];
   /** Where a resume step effectively starts in the new plan — see
@@ -58,7 +61,7 @@ interface ResumeConfirmStepProps {
 }
 
 const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepProps>(function ResumeConfirmStep({
-  draft, actions, piles = [], activeRigs = [], activeCranes = [],
+  draft, actions, piles = [], locations = [], activeRigs = [], activeCranes = [],
   effectiveDayStart, allSteps = [],
 }, ref) {
   const resumeConfirm = useResumeConfirmQueue(draft, actions.confirmResume, allSteps);
@@ -67,6 +70,10 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
 
   function machineLabel(kind: MachineKind, machineId: string): string {
     return (kind === 'rig' ? activeRigs : activeCranes).find((m) => m.id === machineId)?.machineNo ?? '—';
+  }
+
+  function locationLabel(locationId: string | null): string | null {
+    return locations.find((l) => l.id === locationId)?.name ?? null;
   }
 
   const flaggedPileIds = useMemo(
@@ -169,27 +176,29 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
                 rigLabel={group.rigLabel}
                 countLabel={`${group.piles.length} ${group.piles.length === 1 ? 'pile' : 'piles'}`}
               >
-                {group.piles.map((p, idx) => {
-                  const asgn = draft.assignments[p.id];
-                  const craneLabel = asgn?.crane ? machineLabel('crane', asgn.crane) : null;
-                  const needsConfirm = pileNeedsResumeConfirm(draft.resumeWorkByPileId, p.id);
-                  const resumeWork = draft.resumeWorkByPileId[p.id];
-                  const isConfirmed = !needsConfirm && !!resumeWork?.wasStarted;
-                  // Only the small status icon carries color now (outlined-pill
-                  // design) — border color follows via statusPillConfirmed/
-                  // statusPillPending, text and the edit pencil stay neutral.
-                  const iconColor = isConfirmed ? ACCENT_SOLID : colors.warning;
+                <View style={styles.pileGrid}>
+                  {group.piles.map((p) => {
+                    const asgn = draft.assignments[p.id];
+                    const craneLabel = asgn?.crane ? machineLabel('crane', asgn.crane) : null;
+                    const needsConfirm = pileNeedsResumeConfirm(draft.resumeWorkByPileId, p.id);
+                    const resumeWork = draft.resumeWorkByPileId[p.id];
+                    const isConfirmed = !needsConfirm && !!resumeWork?.wasStarted;
+                    // Only the small status icon carries color now (outlined-pill
+                    // design) — border color follows via statusPillConfirmed/
+                    // statusPillPending, text and the edit pencil stay neutral.
+                    const iconColor = isConfirmed ? ACCENT_SOLID : colors.warning;
 
-                  return (
-                    <PileGroupRow
-                      key={p.id}
-                      rowRef={registerField(p.id)}
-                      index={idx + 1}
-                      title={p.code}
-                      subtitle={`Ø${p.dia}mm · ${p.depth}m`}
-                      isLast={idx === group.piles.length - 1}
-                      right={craneLabel && <MachineBadge track="CRANE" label={craneLabel} />}
-                      below={(needsConfirm || isConfirmed || resumeWork?.lastConfirmedFull) && (
+                    return (
+                      <PileCard
+                        key={p.id}
+                        cardRef={registerField(p.id)}
+                        pile={p}
+                        location={locationLabel(p.locationId)}
+                        style={styles.gridCard}
+                        footer={
+                          <>
+                            {craneLabel && <MachineBadge track="CRANE" label={craneLabel} />}
+                            {(needsConfirm || isConfirmed || resumeWork?.lastConfirmedFull) && (
                         <View style={styles.pillStack}>
                           {(needsConfirm || isConfirmed) && (
                             <Pressable
@@ -199,7 +208,7 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
                               <Clock size={16} color={iconColor} style={styles.statusPillIcon} />
                               {isConfirmed ? (
                                 <View style={styles.statusPillTextWrap}>
-                                  <Text style={styles.statusPillText} numberOfLines={1}>
+                                  <Text style={styles.statusPillText} numberOfLines={2}>
                                     {resumeWork!.stepName ?? 'Step'}
                                   </Text>
                                   <Text style={styles.statusPillDetailText} numberOfLines={1}>
@@ -207,7 +216,7 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
                                   </Text>
                                 </View>
                               ) : (
-                                <Text style={styles.statusPillText} numberOfLines={1}>
+                                <Text style={styles.statusPillText} numberOfLines={2}>
                                   Ready to set finish time
                                 </Text>
                               )}
@@ -223,7 +232,7 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
                             >
                               <CheckCircle2 size={16} color={colors.success} style={styles.statusPillIcon} />
                               <View style={styles.statusPillTextWrap}>
-                                <Text style={styles.statusPillText} numberOfLines={1}>
+                                <Text style={styles.statusPillText} numberOfLines={2}>
                                   {resumeWork.lastConfirmedFull.stepName}
                                 </Text>
                                 <Text style={styles.statusPillDetailText} numberOfLines={1}>
@@ -237,9 +246,12 @@ const ResumeConfirmStep = forwardRef<ResumeConfirmStepHandle, ResumeConfirmStepP
                           )}
                         </View>
                       )}
-                    />
-                  );
-                })}
+                          </>
+                        }
+                      />
+                    );
+                  })}
+                </View>
               </PileGroupCard>
             ))
           )}
@@ -327,7 +339,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     borderWidth: 1,
   },
-  pillStack: { gap: spacing.xs, marginTop: spacing.sm },
+  // Two pile cards per row inside a rig's group card.
+  pileGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: spacing.sm, padding: spacing.sm },
+  gridCard: { width: '48.5%' },
+  pillStack: { gap: spacing.xs },
   statusPillPending: { borderColor: colors.warning },
   statusPillConfirmed: { borderColor: ACCENT_SOLID },
   statusPillCompleted: { borderColor: colors.success },
