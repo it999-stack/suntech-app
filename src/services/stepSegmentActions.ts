@@ -43,7 +43,7 @@ import { generateId } from '@utils/helpers';
 export async function closeLastLiveSegment(
   checklistPileId: string,
   stepId: string,
-  args: { endedAtIso: string; notes?: string | null },
+  args: { endedAtIso: string; notes?: string | null; filledBy?: string | null },
 ): Promise<boolean> {
   const live = await getSegmentsForStep(checklistPileId, stepId);
   const target = live.find((s) => !s.endedAt) ?? live[live.length - 1];
@@ -61,6 +61,7 @@ export async function closeLastLiveSegment(
     // say", which should fall through to whatever this session's note
     // already was (e.g. why it was originally paused) rather than blank it.
     notes: args.notes ?? target.notes ?? null,
+    ...(args.filledBy !== undefined ? { filledBy: args.filledBy } : {}),
   });
   return true;
 }

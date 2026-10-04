@@ -41,9 +41,21 @@ const DISMISS_VELOCITY = 800;
 
 let modalIdCounter = 0;
 
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /** Fires once the close tween has genuinely finished (backdrop tap, X
+   * button, hardware back, or a swipe-dismiss that's already settled) — the
+   * only point it's safe for the caller to actually stop rendering this
+   * AppModal. A caller that instead unmounts synchronously from `onClose`
+   * tears the sheet out of the tree before any close animation can play;
+   * see PileStepsModal/usePileModal for the pattern that keeps it mounted
+   * (with `visible={false}`) until this fires. Optional — a caller that
+   * doesn't need an animated close (or already keeps itself mounted some
+   * other way) can ignore it. */
+  onClosed?: () => void;
   title?: string;
   subtitle?: string;
   children: React.ReactNode;
@@ -66,6 +78,13 @@ interface Props {
    * alongside the close button when both are present; most callers pairing
    * this with showCloseButton={false} to use that slot exclusively. */
   headerRight?: React.ReactNode;
+  /** Fixes the sheet at 85% of screen height instead of shrinking to fit its
+   * content. Needed when `children` is itself a scrollable (e.g. a FlatList
+   * passed with scrollable={false}) — a flex:1 child can't claim space from
+   * a parent whose own height is "auto" (determined by content), so the
+   * child resolves to zero height instead. Defaults to false so every
+   * existing "shrink to fit" consumer is unaffected. */
+  fillHeight?: boolean;
 }
 
 /** Renders nothing itself — registers its sheet content into the single
@@ -78,6 +97,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
   {
     visible,
     onClose,
+    onClosed,
     title,
     subtitle,
     children,
@@ -89,6 +109,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
     showCloseButton = true,
     closeDisabled = false,
     headerRight,
+    fillHeight = false,
   },
   scrollRef,
 ) {
@@ -103,13 +124,23 @@ export default forwardRef<ScrollView, Props>(function AppModal(
 
   const translateY = useSharedValue(hiddenValue);
   const centerProgress = useSharedValue(0);
+  const backdropOpacity = useSharedValue(0);
 
   const [isClosing, setIsClosing] = useState(false);
   const wasVisible = useRef(visible);
 
+  // Combined so the worklets below have one JS-side function to runOnJS,
+  // rather than conditionally calling onClosed inside a worklet (not valid —
+  // runOnJS must wrap an actual function reference).
+  const handleCloseAnimEnd = () => {
+    setIsClosing(false);
+    onClosed?.();
+  };
+
   useEffect(() => {
     if (visible) {
       setIsClosing(false);
+      backdropOpacity.value = withTiming(1, { duration: 220 });
       if (isCenter) {
         centerProgress.value = withTiming(1, { duration: 220 });
       } else {
@@ -117,18 +148,20 @@ export default forwardRef<ScrollView, Props>(function AppModal(
       }
     } else if (wasVisible.current) {
       setIsClosing(true);
+      backdropOpacity.value = withTiming(0, { duration: 220 });
       if (isCenter) {
         centerProgress.value = withTiming(0, { duration: 220 }, (finished) => {
-          if (finished) runOnJS(setIsClosing)(false);
+          if (finished) runOnJS(handleCloseAnimEnd)();
         });
       } else {
         translateY.value = withTiming(hiddenValue, { duration: 260 }, (finished) => {
-          if (finished) runOnJS(setIsClosing)(false);
+          if (finished) runOnJS(handleCloseAnimEnd)();
         });
       }
     }
     wasVisible.current = visible;
-  }, [visible, hiddenValue, isCenter, centerProgress, translateY]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleCloseAnimEnd is a fresh closure every render by design (always reads the latest onClosed); listing it would refire this effect every render.
+  }, [visible, hiddenValue, isCenter, centerProgress, translateY, backdropOpacity]);
 
   const dragGesture = Gesture.Pan()
     .enabled(!isTop && !isCenter && !closeDisabled)
@@ -140,6 +173,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
     .onEnd((e) => {
       const shouldDismiss = e.translationY > DISMISS_DISTANCE || e.velocityY > DISMISS_VELOCITY;
       if (shouldDismiss) {
+        backdropOpacity.value = withTiming(0, { duration: 220 });
         translateY.value = withTiming(hiddenValue, { duration: 220 }, (finished) => {
           if (finished) runOnJS(requestClose)();
         });
@@ -158,13 +192,15 @@ export default forwardRef<ScrollView, Props>(function AppModal(
     return { transform: [{ translateY: translateY.value }] };
   });
 
+  const backdropAnimatedStyle = useAnimatedStyle(() => ({ opacity: backdropOpacity.value }));
+
   const content = (
     <KeyboardAvoidingView
       style={styles.flexContainer}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       enabled={avoidKeyboard}
     >
-      <Pressable style={styles.backdrop} onPress={requestClose} />
+      <AnimatedPressable style={[styles.backdrop, backdropAnimatedStyle]} onPress={requestClose} />
 
       <View
         style={isCenter ? styles.centerWrap : styles.flexContainer}
@@ -173,6 +209,7 @@ export default forwardRef<ScrollView, Props>(function AppModal(
         <Animated.View
           style={[
             styles.sheet,
+            fillHeight && styles.sheetFillHeight,
             isCenter ? styles.sheetCenter : isTop ? [styles.sheetTop, { top: topOffset }] : styles.sheetBottom,
             sheetAnimatedStyle,
           ]}
@@ -208,7 +245,9 @@ export default forwardRef<ScrollView, Props>(function AppModal(
               {children}
             </ScrollView>
           ) : (
-            <View style={[styles.scrollContent, contentContainerStyle]}>{children}</View>
+            <View style={[styles.scrollContent, fillHeight && styles.flexFill, contentContainerStyle]}>
+              {children}
+            </View>
           )}
 
           {isTop && <View style={styles.grabberTop} />}
@@ -273,6 +312,8 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     ...shadow.soft,
   },
+  sheetFillHeight: { height: '85%' },
+  flexFill: { flex: 1 },
   sheetBottom: {
     position: 'absolute',
     left: 0,

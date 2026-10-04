@@ -151,7 +151,7 @@ export default function FillActualsScreen() {
     setSelectedMachineId,
   } = useMachinePages({ checklistPiles, machines, machineMap, pileGroups, frontPileIdByMachineId });
 
-  const { setOpenCpId, openGroup } = usePileModal({ pileGroups });
+  const { setOpenCpId, openGroup, isPileModalVisible, handlePileModalClosed } = usePileModal({ pileGroups });
 
   const {
     rigs,
@@ -304,9 +304,7 @@ export default function FillActualsScreen() {
                     openIdle={idleSessionByMachineId.get(item.value)}
                     hasActiveStep={currentStepByMachineId.has(machine.id)}
                     onOpenPile={setOpenCpId}
-                    onBreakdown={() => handleOpenMachineEvent(machine.id, machine.type, 'BREAKDOWN')}
-                    onStartIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_START')}
-                    onEndIdle={() => handleOpenMachineEvent(machine.id, machine.type, 'IDLE_END')}
+                    onMachineEvent={handleOpenMachineEvent}
                     onEditSequence={openSequenceModal}
                   />
                 );
@@ -324,7 +322,9 @@ export default function FillActualsScreen() {
           inProgressStepByMachineId={inProgressStepByMachineId}
           contractors={contractors}
           checklist={checklist}
+          visible={isPileModalVisible}
           onClose={() => setOpenCpId(null)}
+          onClosed={handlePileModalClosed}
           onSetActualTime={handleSetActualTime}
           onClearActualTime={handleClearActualTime}
           onSaveRemarks={handleSaveRemarks}

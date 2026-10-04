@@ -423,6 +423,7 @@ export async function initDb() {
       actual_end          TEXT,
       remarks             TEXT,
       assigned_machine_id TEXT,
+      filled_by           TEXT,
       created_at          INTEGER NOT NULL,
       updated_at          INTEGER NOT NULL,
       server_updated_at   TEXT
@@ -448,6 +449,11 @@ export async function initDb() {
   if (!actualStepColumns.some((c) => c.name === 'assigned_machine_id')) {
     await sqlite.execAsync(`ALTER TABLE pil_actual_steps ADD COLUMN assigned_machine_id TEXT;`);
   }
+  // Migration: add filled_by (who entered this value) to an already-installed
+  // DB, same idempotent-ADD-COLUMN treatment as assigned_machine_id above.
+  if (!actualStepColumns.some((c) => c.name === 'filled_by')) {
+    await sqlite.execAsync(`ALTER TABLE pil_actual_steps ADD COLUMN filled_by TEXT;`);
+  }
 
   // One row per work session on a step — see pileActualStepSegments in
   // schema.ts. Deliberately NO unique index: there is no natural key to build
@@ -461,6 +467,7 @@ export async function initDb() {
       started_at          TEXT NOT NULL,
       ended_at            TEXT,
       assigned_machine_id TEXT,
+      filled_by           TEXT,
       outcome             TEXT,
       stop_reason         TEXT,
       remaining_minutes   INTEGER,
@@ -479,6 +486,14 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_actual_step_segments_step
       ON pil_actual_step_segments (checklist_pile_id, step_id, started_at);
   `);
+
+  // Migration: add filled_by (who recorded this session) to an already-installed DB, same idempotent-ADD-COLUMN treatment as assigned_machine_id above.
+  const actualStepSegmentColumns = await sqlite.getAllAsync<{ name: string }>(
+    `SELECT name FROM pragma_table_info('pil_actual_step_segments');`,
+  );
+  if (!actualStepSegmentColumns.some((c) => c.name === 'filled_by')) {
+    await sqlite.execAsync(`ALTER TABLE pil_actual_step_segments ADD COLUMN filled_by TEXT;`);
+  }
 
   // Migration: consolidate pil_sites' target_piles/completed_piles columns
   // into one site_config JSON column (matches the backend's site_config

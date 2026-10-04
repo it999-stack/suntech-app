@@ -116,20 +116,21 @@ export default function PileAssignStep({
     // Hyphens stripped from both sides so "P07"/"p07" still matches a code
     // like "P-07" — the user shouldn't have to type the separator.
     const q = search.trim().toLowerCase().replace(/-/g, '');
-    return piles
-      .filter((p) => {
-        // While searching, match across every area or status
-        if (!q && activeLocationId !== ALL_LOCATIONS_ID && p.locationId !== activeLocationId) return false;
-        if (q && !p.code.toLowerCase().replace(/-/g, '').includes(q)) return false;
-        if (!q) {
-          if (filter === 'pending' && (p.completed || isPileFullyAssigned(p.id))) return false;
-          if (filter === 'assigned' && (p.completed || !isPileFullyAssigned(p.id))) return false;
-          if (filter === 'completed' && !p.completed) return false;
-        }
-        return true;
-      })
-      // Checked piles float to the top; Array.sort is stable, so each group keeps its natural code order.
-      .sort((a, b) => Number(selectedIds.has(b.id)) - Number(selectedIds.has(a.id)));
+    return piles.filter((p) => {
+      // While searching, match across every area or status
+      if (!q && activeLocationId !== ALL_LOCATIONS_ID && p.locationId !== activeLocationId) return false;
+      if (q && !p.code.toLowerCase().replace(/-/g, '').includes(q)) return false;
+      // Unlike the status filters below, Selected stays in effect even while
+      // searching — it's a reviewed subset the user opted into, not a status
+      // category search is meant to cut across.
+      if (filter === 'selected' && !selectedIds.has(p.id)) return false;
+      if (!q) {
+        if (filter === 'pending' && (p.completed || isPileFullyAssigned(p.id))) return false;
+        if (filter === 'assigned' && (p.completed || !isPileFullyAssigned(p.id))) return false;
+        if (filter === 'completed' && !p.completed) return false;
+      }
+      return true;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [piles, search, filter, activeLocationId, draft.assignments, selectedIds]);
 
@@ -264,6 +265,7 @@ export default function PileAssignStep({
           pendingCount={pendingCount}
           assignedCount={assignedCount}
           completedCount={completedCount}
+          selectedCount={selectedIds.size}
           locations={locations}
           pileCountByLocationId={pileCountByLocationId}
           activeLocationId={activeLocationId}

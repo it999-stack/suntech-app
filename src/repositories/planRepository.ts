@@ -165,52 +165,51 @@ export async function getPlanStepsForChecklist(
 }
 
 /**
- * Reassign the machine for every step currently on `currentMachineId`, whose step
- * definition's nominal track is `businessTrack`, from `fromSequenceOrder` onward
- * (inclusive) — the "applies to this step onward" scope of a machine swap. Steps
- * before fromSequenceOrder (already done) are never touched, preserving their
- * historical assignedMachineId.
+ * Reassign the machine for exactly ONE step — the one the swap was performed on.
+ * Deliberately does NOT cascade to any other step: a swap is a correction/decision
+ * about this step alone, and every later step keeps whatever machine its own plan
+ * row already names until someone explicitly changes it too.
  *
- * Both conditions matter together: matching on `currentMachineId` alone would also
- * sweep along any *other* business track that machine happens to be covering on this
- * same pile (e.g. a Rig doing its own Casing/Boring steps *and* temporarily covering
- * a broken Crane's step) — replacing the borrowed crane work would then wrongly move
- * the Rig's own steps too. Matching on `businessTrack` alone would miss the step
- * being replaced the moment it's no longer on its nominal track's machine type (e.g.
- * re-replacing a Crane-track step that's currently running on a Rig after an earlier
- * swap) — see MachineReplaceModal.tsx / eventLabels.ts's isEligibleReplacementType.
+ * Patches both sides of this one step: the PLAN row (if any — an unplanned step
+ * has none), and the ACTUAL row (if one is already recorded — already finished or
+ * paused, not currently running). Without the latter, a swap on an already-logged
+ * step would move the PLAN row to the new machine while the ACTUAL row — what the
+ * server and every report trust as "who really did it" — silently kept crediting
+ * the departing machine. The currently running step is left alone here: its
+ * handover already goes through segments (pauseStep + syncActualRollupFromSegments,
+ * called by the caller before this), which already moves its roll-up to
+ * `newMachineId`.
  */
 export async function reassignMachineFromStep(
   checklistPileId: string,
-  currentMachineId: string | null | undefined,
-  businessTrack: string,
-  fromSequenceOrder: number,
+  stepId: string,
   newMachineId: string,
+  filledBy?: string | null,
 ): Promise<void> {
   const db = await initDb();
-  const rows = await db
-    .select({
-      id: pilePlanSteps.id,
-      sequenceOrder: pilingSteps.sequenceOrder,
-      assignedMachineId: pilePlanSteps.assignedMachineId,
-      track: pilingSteps.track,
-    })
+
+  const planRows = await db
+    .select({ id: pilePlanSteps.id })
     .from(pilePlanSteps)
-    .leftJoin(pilingSteps, eq(pilePlanSteps.stepId, pilingSteps.id))
-    .where(eq(pilePlanSteps.checklistPileId, checklistPileId))
-    .all();
+    .where(and(eq(pilePlanSteps.checklistPileId, checklistPileId), eq(pilePlanSteps.stepId, stepId)))
+    .limit(1);
+  if (planRows.length) {
+    await db
+      .update(pilePlanSteps)
+      .set({ assignedMachineId: newMachineId })
+      .where(eq(pilePlanSteps.id, planRows[0].id));
+  }
 
-  const targetIds = rows
-    .filter(
-      (r) =>
-        r.assignedMachineId === currentMachineId &&
-        r.track === businessTrack &&
-        (r.sequenceOrder ?? 0) >= fromSequenceOrder,
-    )
-    .map((r) => r.id);
-
-  for (const id of targetIds) {
-    await db.update(pilePlanSteps).set({ assignedMachineId: newMachineId }).where(eq(pilePlanSteps.id, id));
+  const actuals = await getActualStepsForChecklistPile(checklistPileId);
+  const actual = actuals.find((a) => a.stepId === stepId);
+  if (actual) {
+    await upsertActualStep({
+      id: actual.id,
+      checklistPileId,
+      stepId,
+      assignedMachineId: newMachineId,
+      filledBy,
+    });
   }
 }
 
@@ -282,6 +281,7 @@ export async function upsertActualStep(
         ...(entry.assignedMachineId !== undefined
           ? { assignedMachineId: entry.assignedMachineId }
           : {}),
+        ...(entry.filledBy !== undefined ? { filledBy: entry.filledBy } : {}),
         updatedAt: now,
       })
       .where(eq(pileActualSteps.id, existing[0].id));
@@ -389,6 +389,7 @@ export async function getActualStepsForChecklist(
         actualEnd: pileActualSteps.actualEnd,
         remarks: pileActualSteps.remarks,
         assignedMachineId: pileActualSteps.assignedMachineId,
+        filledBy: pileActualSteps.filledBy,
         createdAt: pileActualSteps.createdAt,
         updatedAt: pileActualSteps.updatedAt,
         serverUpdatedAt: pileActualSteps.serverUpdatedAt,
@@ -411,6 +412,7 @@ export async function getActualStepsForChecklist(
         actualEnd: r.actualEnd,
         remarks: r.remarks,
         assignedMachineId: r.assignedMachineId,
+        filledBy: r.filledBy,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         serverUpdatedAt: r.serverUpdatedAt,

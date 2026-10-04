@@ -1,7 +1,7 @@
 // src/components/plan/actual/PileStepsModal.tsx
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, Pressable, FlatList, InteractionManager, ActivityIndicator, StyleSheet } from 'react-native';
 import {
   CheckCircle2,
   Circle,
@@ -44,7 +44,6 @@ import type { LogMachineEventInput } from '@state/PlanContext';
 import { findMeasurementTrigger, getMeasurementFieldsForStep } from '@utils/pileMeasurementTriggers';
 import { colors, spacing, radius, typography, shadow } from '@theme/theme';
 import {
-  formatMinutes12,
   formatTime,
   formatTimeWithDay,
   formatDuration,
@@ -55,7 +54,7 @@ import {
 } from '@utils/formatTime';
 import { computeExpectedStepStart, type MachineFloorIndex } from '@utils/machineFloor';
 import { type ConflictNotice } from '@utils/timeValidation';
-import { buildActualTimeRules } from '@utils/actualTimeRules';
+import { buildActualTimeRules, type ActualTimeRules } from '@utils/actualTimeRules';
 import { TRACK_META } from '@utils/helpers';
 import { notify } from '@utils/notify';
 
@@ -88,6 +87,14 @@ function getCurrentMachineIdByTrack(steps: ActualEntry[]): Partial<Record<Actual
   return result;
 }
 
+const EMPTY_RULES: ActualTimeRules = {
+  forStep: () => ({ getDefaultMinutes: () => 0 }),
+  forSegment: () => ({ getDefaultMinutes: () => 0 }),
+};
+const EMPTY_EXPECTED_START_MAP = new Map<string, NonNullable<ReturnType<typeof computeExpectedStepStart>>>();
+const EMPTY_CONFLICT_MAP = new Map<string, ConflictNotice | undefined>();
+const EMPTY_PREDECESSOR_MAP = new Map<string, ActualEntry | undefined>();
+
 interface Props {
   group: PileGroup;
   machines: PilingMachine[];
@@ -99,7 +106,11 @@ interface Props {
   inProgressStepByMachineId: Map<string, { checklistPileId: string; stepId: string; pileCode: string; stepName: string }>;
   contractors: PilContractor[];
   checklist: Pick<PilingDailyChecklist, 'planStartTime' | 'planEndTime'> | null;
+  visible: boolean;
   onClose: () => void;
+  /** Fires once the close animation has genuinely finished — the right
+   * point for the caller to stop rendering this component. */
+  onClosed?: () => void;
   onSetActualTime: (
     stepId: string,
     field: 'actualStart' | 'actualEnd',
@@ -142,6 +153,510 @@ interface Props {
   onDeleteSegment: (stepId: string, segmentId: string) => Promise<void>;
 }
 
+interface StepCardProps {
+  step: ActualEntry;
+  isCurrent: boolean;
+  rules: ReturnType<typeof buildActualTimeRules>;
+  measurements: PileMeasurementFields | null | undefined;
+  contractors: PilContractor[];
+  expectedStart: ReturnType<typeof computeExpectedStepStart> | undefined;
+  blockedNotice: ConflictNotice | undefined;
+  blockingPredecessor: ActualEntry | undefined;
+  onOpenRemarks: (payload: { stepId: string; stepName: string; remarks?: string }) => void;
+  onOpenMachineEvent: (payload: {
+    kind: 'down' | 'idle' | 'replace';
+    stepId: string;
+    stepName: string;
+    track: ActualEntry['track'];
+    initialEventType?: LogMachineEventInput['eventType'];
+  }) => void;
+  onResumeRequested: (step: ActualEntry) => void;
+  onSetActualTime: (
+    step: ActualEntry,
+    field: 'actualStart' | 'actualEnd',
+    minutes: number,
+    explicitDate?: Date,
+  ) => Promise<void>;
+  onClearActualTime: (stepId: string, field: 'actualStart' | 'actualEnd') => Promise<void>;
+  onOpenFinishSheet: (step: ActualEntry, minutes: number, explicitDate?: Date) => void;
+  onEditSegmentTime: (
+    stepId: string,
+    segmentId: string,
+    field: 'start' | 'finish',
+    minutes: number,
+    explicitDate?: Date,
+  ) => Promise<void>;
+  onSetSegmentNotes: (stepId: string, segmentId: string, notes: string) => Promise<void>;
+  onDeleteSegment: (stepId: string, segmentId: string) => Promise<void>;
+  onOpenStepMeasurements: (step: ActualEntry) => void;
+  runSegmentAction: (fn: () => Promise<void>, failure: string) => Promise<void>;
+}
+
+// One card per step. A FlatList renderItem keeps the modal from mounting
+// every step a pile has ever had (current and historical) at once — this
+// component is memoized ON TOP of that so that opening a sheet (Remarks,
+// machine event, finish, resume) for ONE step — which re-renders the whole
+// PileStepsModal via its own state — doesn't also re-render and recompute
+// every OTHER visible card. That only holds as long as the props below stay
+// referentially stable across such a re-render, which is why the callbacks/
+// maps passed into it from PileStepsModal are useCallback/useMemo'd.
+const StepCard = React.memo(function StepCard({
+  step,
+  isCurrent,
+  rules,
+  measurements,
+  contractors,
+  expectedStart,
+  blockedNotice,
+  blockingPredecessor,
+  onOpenRemarks,
+  onOpenMachineEvent,
+  onResumeRequested,
+  onSetActualTime,
+  onClearActualTime,
+  onOpenFinishSheet,
+  onEditSegmentTime,
+  onSetSegmentNotes,
+  onDeleteSegment,
+  onOpenStepMeasurements,
+  runSegmentAction,
+}: StepCardProps) {
+  // Falls back to the timestamps for a row with no derived status —
+  // historical rows, and anything built outside usePileGroups. Same reading
+  // as before segments existed.
+  const status =
+    step.status ?? (step.actualEnd !== undefined ? 'DONE' : step.actualStart !== undefined ? 'RUNNING' : 'NOT_STARTED');
+  const isDone = status === 'DONE';
+  const isPaused = status === 'PAUSED';
+  const hasSegments = !!step.segments?.length;
+  // Still "has work been recorded against this step", which is what every
+  // downstream use of it means — a paused step counts.
+  const isStarted = step.actualStart !== undefined;
+  const isHistorical = !!step.isHistorical;
+  // A step the plan never covered has no planned span, so it can be neither
+  // on time nor late — there is nothing to be late against.
+  const isPlanned = step.plannedStartIso != null;
+  const lateMinutes =
+    isDone && isPlanned && step.plannedEndIso != null
+      ? durationMinutes(step.actualStartIso!, step.actualEndIso!) -
+        durationMinutes(step.plannedStartIso!, step.plannedEndIso)
+      : null;
+  const isLate = lateMinutes != null && lateMinutes > 0;
+  const startDelayMinutes = expectedStart
+    ? durationMinutes(expectedStart.expectedStartIso, step.actualStartIso!)
+    : null;
+
+  return (
+    <View style={[modalStyles.stepWrap, isHistorical && modalStyles.cardLocked]}>
+      <View style={modalStyles.headerRow}>
+        <View style={modalStyles.headerLeft}>
+          {isDone ? (
+            <CheckCircle2 size={20} color={colors.success} />
+          ) : (
+            <Circle size={20} color={isCurrent ? colors.accent : colors.textSecondary} />
+          )}
+          <Text style={modalStyles.stepName}>{step.stepName}</Text>
+          <View style={[modalStyles.trackBadge, { backgroundColor: TRACK_META[step.track].soft }]}>
+            <Text style={[modalStyles.trackTag, { color: TRACK_META[step.track].color }]}>
+              {`${step.track}${step.assignedMachineNo ? ` (${step.assignedMachineNo})` : ''}`}
+            </Text>
+          </View>
+        </View>
+
+        {(isStarted || isDone || isCurrent) && !isHistorical && (
+          <View style={modalStyles.headerActions}>
+            <Button
+              label="Remarks"
+              icon={MessageSquarePlus}
+              variant="secondary"
+              size="sm"
+              onPress={() => onOpenRemarks({ stepId: step.stepId, stepName: step.stepName, remarks: step.remarks })}
+            />
+            <Button
+              icon={ArrowLeftRight}
+              variant="secondary"
+              size="md"
+              iconColor={colors.textSecondary}
+              hitSlop={8}
+              accessibilityLabel="Replace machine"
+              onPress={() =>
+                onOpenMachineEvent({
+                  kind: 'replace',
+                  stepId: step.stepId,
+                  stepName: step.stepName,
+                  track: step.businessTrack ?? step.track,
+                })
+              }
+            />
+          </View>
+        )}
+      </View>
+
+      <View style={[modalStyles.planCard, isHistorical && modalStyles.planCardLocked]}>
+        <Text style={modalStyles.planLabel}>Plan</Text>
+        {/* No plan row at all — the scheduler ran out of window before
+            reaching this step, so it has no planned times and never will.
+            The template duration is shown as a clearly non-binding
+            reference (nothing validates against it), never as a plan. */}
+        {!isPlanned ? (
+          <View style={modalStyles.planTimeRow}>
+            <Text style={modalStyles.planTimeText}>Planned Later</Text>
+            {step.templateMinutes != null && (
+              <Text style={modalStyles.planReferenceText}>· Avg. {formatDurationMinutes(step.templateMinutes)}</Text>
+            )}
+          </View>
+        ) : (
+          <View style={modalStyles.planTimeRow}>
+            <Text style={modalStyles.planTimeText}>{formatTimeWithDay(step.plannedStartIso)}</Text>
+            <ArrowRight size={15} color={colors.textSecondary} />
+            <Text style={modalStyles.planTimeText}>
+              {step.plannedEndIso == null ? 'To be continued' : formatTimeWithDay(step.plannedEndIso)}
+            </Text>
+          </View>
+        )}
+        {step.planBreaks?.map((brk, i) => (
+          <Text key={i} style={modalStyles.planBreakText}>
+            Includes {brk.label} · {formatTime(brk.start)} – {formatTime(brk.end)}
+          </Text>
+        ))}
+      </View>
+
+      {/* isStarted, not "isCurrent && isStarted": any started step shows its
+          actuals now that any step can be started. */}
+      {(isDone || isStarted) && (
+        <View style={modalStyles.actualSection}>
+          <View style={modalStyles.actualHeaderTopRow}>
+            <View style={modalStyles.actualHeaderLeft}>
+              <Clock size={15} color={colors.accentBlue} />
+              <Text style={modalStyles.actualLabelBlue}>ACTUAL</Text>
+            </View>
+            {startDelayMinutes != null && (
+              <View style={modalStyles.delayGroup}>
+                <Text style={modalStyles.delayLabel}>Start delay</Text>
+                <View
+                  style={[
+                    modalStyles.statusPill,
+                    { backgroundColor: startDelayMinutes > 0 ? colors.dangerSoft : colors.successSoft },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      modalStyles.statusPillText,
+                      { color: startDelayMinutes > 0 ? colors.danger : colors.success },
+                    ]}
+                  >
+                    {formatSignedDuration(startDelayMinutes)}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+
+          <View style={modalStyles.actualCard}>
+            <View style={modalStyles.actualRow}>
+              <View style={modalStyles.actualRowTop}>
+                <View style={modalStyles.iconChip}>
+                  <Link2 size={14} color={colors.accentBlue} />
+                </View>
+                <View style={modalStyles.actualRowText}>
+                  <Text style={[modalStyles.actualRowLabel, modalStyles.actualRowLabelFaded]} numberOfLines={1}>
+                    Expected start
+                  </Text>
+                  <Text style={modalStyles.actualRowSubtitle}>
+                    {expectedStart?.anchorPileCode
+                      ? `${expectedStart.anchorPileCode} - ${expectedStart.anchorStepName} ended`
+                      : isPlanned
+                        ? 'Planned start'
+                        : 'Planned Later'}
+                  </Text>
+                </View>
+              </View>
+              <View style={modalStyles.actualRowBottom}>
+                <Text style={[modalStyles.actualRowValue, modalStyles.actualRowValueFaded]}>
+                  {formatTimeWithDay(expectedStart?.expectedStartIso)}
+                </Text>
+                <Pressable
+                  hitSlop={8}
+                  onPress={() =>
+                    notify.info(
+                      startDelayMinutes == null
+                        ? 'No expected start available for this step.'
+                        : startDelayMinutes === 0
+                          ? 'Started right on the expected time.'
+                          : startDelayMinutes > 0
+                            ? `Started ${startDelayMinutes}m later than expected.`
+                            : `Started ${Math.abs(startDelayMinutes)}m earlier than expected.`,
+                    )
+                  }
+                >
+                  <Info size={16} color={colors.textSecondary} />
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={modalStyles.actualRow}>
+              <View style={modalStyles.actualRowTop}>
+                <View style={modalStyles.iconChip}>
+                  <CirclePlay size={14} color={colors.accentBlue} />
+                </View>
+                <View style={modalStyles.actualRowText}>
+                  <Text style={modalStyles.actualRowLabel} numberOfLines={1}>
+                    Actual start
+                  </Text>
+                </View>
+              </View>
+              <View style={modalStyles.actualRowBottom}>
+                <Text style={modalStyles.actualRowValue}>{formatTimeWithDay(step.actualStartIso)}</Text>
+                {/* Hidden once the step has work sessions: this row is then
+                    DERIVED from them, so editing it here would be reverted
+                    by the next recompute. Per-session edits live in
+                    SegmentList below instead. */}
+                {!isHistorical && !hasSegments && (
+                  <View style={modalStyles.fieldActions}>
+                    <EditTimeButton
+                      {...rules.forStep(step.stepId, 'start')}
+                      minutes={step.actualStart!}
+                      label="start time"
+                      onConfirm={(mins, explicitDate) => onSetActualTime(step, 'actualStart', mins, explicitDate)}
+                      blocked={!isDone ? blockedNotice : undefined}
+                    />
+                    <DeleteTimeButton
+                      label="start time"
+                      valueLabel={formatTimeWithDay(step.actualStartIso)}
+                      cascadeWarning={isDone ? 'This will also clear the finish time.' : undefined}
+                      onConfirm={() => onClearActualTime(step.stepId, 'actualStart')}
+                    />
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {isDone && (
+              <View style={modalStyles.actualRow}>
+                <View style={modalStyles.actualRowTop}>
+                  <View style={modalStyles.iconChip}>
+                    <CircleStop size={14} color={colors.accentBlue} />
+                  </View>
+                  <View style={modalStyles.actualRowText}>
+                    <Text style={modalStyles.actualRowLabel} numberOfLines={1}>
+                      Actual end
+                    </Text>
+                  </View>
+                </View>
+                <View style={modalStyles.actualRowBottom}>
+                  <Text style={[modalStyles.actualRowValue, isLate && modalStyles.lateText]}>
+                    {formatTimeWithDay(step.actualEndIso)}
+                  </Text>
+                  {!isHistorical && !hasSegments && (
+                    <View style={modalStyles.fieldActions}>
+                      <EditTimeButton
+                        {...rules.forStep(step.stepId, 'finish')}
+                        minutes={step.actualEnd!}
+                        label="finish time"
+                        onConfirm={(mins, explicitDate) => onSetActualTime(step, 'actualEnd', mins, explicitDate)}
+                      />
+                      <DeleteTimeButton
+                        label="finish time"
+                        valueLabel={formatTimeWithDay(step.actualEndIso)}
+                        onConfirm={() => onClearActualTime(step.stepId, 'actualEnd')}
+                      />
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
+          </View>
+
+          {/* Only for a step actually split between machines. The two rows
+              above can express one span; they cannot express "R-1 until
+              10:30, then R-3 from 14:00", and collapsing that into one span
+              is what mis-credits the machine that left. An ordinary step
+              renders nothing here. */}
+          {!!step.segments?.length && (
+            <SegmentList
+              step={step}
+              rules={rules}
+              onEditSegmentTime={
+                isHistorical
+                  ? undefined
+                  : (segmentId, field, minutes, explicitDate) =>
+                      runSegmentAction(
+                        () => onEditSegmentTime(step.stepId, segmentId, field, minutes, explicitDate),
+                        'Could not update the work session.',
+                      )
+              }
+              onSetSegmentNotes={
+                isHistorical
+                  ? undefined
+                  : (segmentId, notes) =>
+                      runSegmentAction(
+                        () => onSetSegmentNotes(step.stepId, segmentId, notes),
+                        'Could not save remarks.',
+                      )
+              }
+              onDeleteSegment={
+                isHistorical
+                  ? undefined
+                  : (segmentId) =>
+                      runSegmentAction(() => onDeleteSegment(step.stepId, segmentId), 'Could not remove the work session.')
+              }
+            />
+          )}
+
+          {/* Rendered for any finished step, planned or not — the actual
+              duration is real either way. Only the two plan-relative
+              columns degrade: an unplanned step has no planned span to
+              average against and therefore no lateness, so no delay pill
+              is shown for it. */}
+          {isDone && (
+            <View style={modalStyles.statsRow}>
+              <View style={modalStyles.statsCol}>
+                <Clock size={14} color={colors.textSecondary} />
+                <Text style={modalStyles.statsColLabel}>Avg. duration</Text>
+                <Text style={modalStyles.statsColValue}>
+                  {isPlanned && step.plannedEndIso != null
+                    ? formatDuration(step.plannedStartIso!, step.plannedEndIso)
+                    : 'Planned Later'}
+                </Text>
+              </View>
+              <View style={[modalStyles.statsCol, modalStyles.statsColRuled]}>
+                <Clock size={14} color={colors.textSecondary} />
+                <Text style={modalStyles.statsColLabel}>Actual duration</Text>
+                <Text style={modalStyles.statsColValue}>
+                  {formatDuration(step.actualStartIso!, step.actualEndIso!)}
+                </Text>
+              </View>
+              <View style={[modalStyles.statsCol, modalStyles.statsColRuled]}>
+                <Hourglass
+                  size={14}
+                  color={lateMinutes == null ? colors.textSecondary : isLate ? colors.danger : colors.success}
+                />
+                <Text style={modalStyles.statsColLabel}>Activity delay</Text>
+                {lateMinutes == null ? (
+                  <Text style={modalStyles.statsColValue}>—</Text>
+                ) : (
+                  <View
+                    style={[modalStyles.statusPill, { backgroundColor: isLate ? colors.dangerSoft : colors.successSoft }]}
+                  >
+                    <Text style={[modalStyles.statusPillText, { color: isLate ? colors.danger : colors.success }]}>
+                      {formatSignedDuration(lateMinutes)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+
+          {(isStarted || isDone) &&
+            (() => {
+              const applicableFields = getMeasurementFieldsForStep(step.stepName);
+              if (applicableFields.length === 0) return null;
+              const filledCount = applicableFields.filter((f) => measurements?.[f.key] != null).length;
+              return (
+                <View style={modalStyles.actualCard}>
+                  <View style={modalStyles.actualHeaderRow}>
+                    <View style={modalStyles.measurementsLabelRow}>
+                      <Ruler size={14} color={colors.textSecondary} />
+                      <Text style={modalStyles.actualLabel}>MEASUREMENTS</Text>
+                    </View>
+                    <View style={[modalStyles.statusPill, { backgroundColor: colors.accentSoft }]}>
+                      <Text style={[modalStyles.statusPillText, { color: colors.accent }]}>
+                        {filledCount}/{applicableFields.length} filled
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={modalStyles.measurementsGrid}>
+                    {applicableFields.map((field) => {
+                      const value = measurements?.[field.key];
+                      const display =
+                        field.type === 'contractor'
+                          ? contractors.find((c) => c.id === value)?.name ?? '-'
+                          : value == null
+                            ? '-'
+                            : `${value} ${field.unit}`;
+                      // Strip a trailing "(Full Name)" gloss for the compact
+                      // grid — e.g. "E.G.L. (Existing Ground Level)" -> "E.G.L."
+                      const shortLabel = field.label.replace(/\s*\([^)]*\)\s*$/, '');
+                      return (
+                        <View key={field.key} style={modalStyles.measurementCell}>
+                          <Text style={modalStyles.measurementLabel}>{shortLabel}</Text>
+                          <Text
+                            style={[modalStyles.measurementValue, value == null && modalStyles.measurementValueEmpty]}
+                          >
+                            {display}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                  {!isHistorical && (
+                    <Button
+                      label="Edit measurements"
+                      icon={PencilLine}
+                      variant="secondary"
+                      onPress={() => onOpenStepMeasurements(step)}
+                    />
+                  )}
+                </View>
+              );
+            })()}
+        </View>
+      )}
+
+      {step.remarks && (isStarted || isDone) && (
+        <View style={modalStyles.remarkBox}>
+          <MessageSquarePlus size={14} color={colors.textSecondary} style={modalStyles.remarkIcon} />
+          <Text style={modalStyles.remarkText}>
+            {step.remarks}{' '}
+            {!isHistorical && (
+              <Text
+                style={modalStyles.remarkEdit}
+                onPress={() => onOpenRemarks({ stepId: step.stepId, stepName: step.stepName, remarks: step.remarks })}
+              >
+                Edit
+              </Text>
+            )}
+          </Text>
+        </View>
+      )}
+
+      {!isHistorical && !isStarted && !blockingPredecessor && (
+        <StepTimeControl
+          {...rules.forStep(step.stepId, 'start')}
+          mode="start"
+          onConfirm={(mins, explicitDate) => onSetActualTime(step, 'actualStart', mins, explicitDate)}
+          blocked={blockedNotice}
+        />
+      )}
+
+      {!isHistorical && status === 'RUNNING' && (
+        <StepTimeControl
+          {...rules.forStep(step.stepId, 'finish')}
+          mode="finish"
+          label="Stop work"
+          onConfirm={(mins, explicitDate) => onOpenFinishSheet(step, mins, explicitDate)}
+          blocked={blockedNotice}
+        />
+      )}
+
+      {!isHistorical && isPaused && (
+        <Button
+          label="Resume work"
+          icon={Play}
+          variant="warning"
+          onPress={() => {
+            if (blockedNotice) {
+              notify.error(blockedNotice.message, { title: blockedNotice.title });
+              return;
+            }
+            onResumeRequested(step);
+          }}
+        />
+      )}
+    </View>
+  );
+});
+
 export default function PileStepsModal({
   group,
   machines,
@@ -149,7 +664,9 @@ export default function PileStepsModal({
   inProgressStepByMachineId,
   contractors,
   checklist,
+  visible,
   onClose,
+  onClosed,
   onSetActualTime,
   onClearActualTime,
   onSaveRemarks,
@@ -162,36 +679,49 @@ export default function PileStepsModal({
   onSetSegmentNotes,
   onDeleteSegment,
 }: Props) {
-  // Memoised on group.steps (itself stable — usePileGroups builds it in a
-  // useMemo). Without this the sort produces a new array identity every
-  // render, which silently defeats every downstream useMemo keyed on `steps`
-  // — currentMachineIdByTrack, the two conflict-check maps, and
-  // expectedStartByStepId were all recomputing on each render.
   const steps = useMemo(
     () => [...group.steps].sort((a, b) => a.sequenceOrder - b.sequenceOrder),
     [group.steps],
   );
   const currentStepId = steps.find((s) => s.actualEnd === undefined)?.stepId;
   const allDone = !currentStepId;
+  // -1 (not "not found" but "no current step") falls back to undefined below
+  // — initialScrollIndex=-1 would be invalid.
+  const currentStepIndex = steps.findIndex((s) => s.stepId === currentStepId);
 
-  const scrollRef = useRef<ScrollView>(null);
-  const hasScrolledToCurrentRef = useRef(false);
-  useEffect(() => {
-    hasScrolledToCurrentRef.current = false;
-  }, [group.checklistPileId]);
+  // Scrolls the current step near the top (not flush with it — the same
+  // "peek" offset the old onLayout-based scroll used). Rows have wildly
+  // variable height (a done step with segments/measurements vs. a collapsed
+  // historical one), so there's no fixed getItemLayout to make this
+  // instant/guaranteed on the first attempt — the retry below is FlatList's
+  // own documented pattern for that case, not a hack.
+  const listRef = useRef<FlatList<typeof steps[number]>>(null);
   const SCROLL_PEEK_OFFSET = 200;
-  function handleStepCardLayout(stepId: string, y: number) {
-    if (stepId !== currentStepId || hasScrolledToCurrentRef.current) return;
-    hasScrolledToCurrentRef.current = true;
-    setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: Math.max(y - SCROLL_PEEK_OFFSET, 0), animated: false });
-    }, 50);
+  function scrollToCurrentStep(index: number) {
+    if (index < 0) return;
+    listRef.current?.scrollToIndex({ index, animated: false, viewOffset: SCROLL_PEEK_OFFSET });
   }
 
   const [contentReady, setContentReady] = useState(false);
   useEffect(() => {
-    setContentReady(true);
+    let raf2: number | undefined;
+    let task: { cancel: () => void } | undefined;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        task = InteractionManager.runAfterInteractions(() => setContentReady(true));
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2 != null) cancelAnimationFrame(raf2);
+      task?.cancel();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!contentReady) return;
+    scrollToCurrentStep(currentStepIndex);
+  }, [contentReady, currentStepIndex]);
 
   const [remarksFor, setRemarksFor] = useState<{
     stepId: string;
@@ -213,14 +743,17 @@ export default function PileStepsModal({
   /** Runs after StepTimeControl has already validated the time against this
    * step's bounds and the machine/pile conflict checks — so the sheet only
    * ever has to ask what it cannot derive. */
-  const openFinishSheet = (step: ActualEntry, minutes: number, explicitDate?: Date) => {
-    const date =
-      explicitDate ??
-      resolveOvernightDate(step.endAnchorIso ?? checklist?.planStartTime ?? toLocalIsoString(new Date()), minutes);
-    setFinishFor({ step, stoppedAtIso: toLocalIsoString(date) });
-  };
+  const openFinishSheet = useCallback(
+    (step: ActualEntry, minutes: number, explicitDate?: Date) => {
+      const date =
+        explicitDate ??
+        resolveOvernightDate(step.endAnchorIso ?? checklist?.planStartTime ?? toLocalIsoString(new Date()), minutes);
+      setFinishFor({ step, stoppedAtIso: toLocalIsoString(date) });
+    },
+    [checklist?.planStartTime],
+  );
 
-  const runSegmentAction = async (fn: () => Promise<void>, failure: string) => {
+  const runSegmentAction = useCallback(async (fn: () => Promise<void>, failure: string) => {
     setSavingSegment(true);
     try {
       await fn();
@@ -231,7 +764,7 @@ export default function PileStepsModal({
     } finally {
       setSavingSegment(false);
     }
-  };
+  }, []);
 
   // Wraps onSetActualTime: once the actual start/end for this step is
   // recorded, checks whether that (stepName, field) pair is one of the five
@@ -239,25 +772,23 @@ export default function PileStepsModal({
   // opens the low-friction measurement popup right after — never a hard
   // gate on the time entry itself, which has already been saved by the time
   // this fires.
-  const handleSetActualTime = async (
-    step: ActualEntry,
-    field: 'actualStart' | 'actualEnd',
-    minutes: number,
-    explicitDate?: Date,
-  ) => {
-    await onSetActualTime(step.stepId, field, minutes, explicitDate);
-    const trigger = findMeasurementTrigger(step.stepName, field);
-    if (trigger) setMeasurementModal({ title: trigger.title, fields: trigger.fields });
-  };
+  const handleSetActualTime = useCallback(
+    async (step: ActualEntry, field: 'actualStart' | 'actualEnd', minutes: number, explicitDate?: Date) => {
+      await onSetActualTime(step.stepId, field, minutes, explicitDate);
+      const trigger = findMeasurementTrigger(step.stepName, field);
+      if (trigger) setMeasurementModal({ title: trigger.title, fields: trigger.fields });
+    },
+    [onSetActualTime],
+  );
 
   // "Edit measurements" on a step's own Measurements summary — covers every
   // field the step is responsible for (both its start and end triggers, if
   // any), not just whichever one most recently fired.
-  const openStepMeasurements = (step: ActualEntry) => {
+  const openStepMeasurements = useCallback((step: ActualEntry) => {
     const fields = getMeasurementFieldsForStep(step.stepName);
     if (fields.length === 0) return;
     setMeasurementModal({ title: `${step.stepName} Measurements`, fields });
-  };
+  }, []);
   const [machineEventFor, setMachineEventFor] = useState<{
     kind: 'down' | 'idle' | 'replace';
     stepId: string;
@@ -284,15 +815,25 @@ export default function PileStepsModal({
   // than a hook.
   const rules = useMemo(
     () =>
-      buildActualTimeRules({
-        steps,
-        checklistPileId: group.checklistPileId,
-        pileCode: group.pileCode,
-        machineFloorIndex,
-        planWindowMinIso: checklist?.planStartTime ?? undefined,
-        planWindowMaxIso: checklist?.planEndTime ?? undefined,
-      }),
-    [steps, group.checklistPileId, group.pileCode, machineFloorIndex, checklist?.planStartTime, checklist?.planEndTime],
+      contentReady
+        ? buildActualTimeRules({
+            steps,
+            checklistPileId: group.checklistPileId,
+            pileCode: group.pileCode,
+            machineFloorIndex,
+            planWindowMinIso: checklist?.planStartTime ?? undefined,
+            planWindowMaxIso: checklist?.planEndTime ?? undefined,
+          })
+        : EMPTY_RULES,
+    [
+      contentReady,
+      steps,
+      group.checklistPileId,
+      group.pileCode,
+      machineFloorIndex,
+      checklist?.planStartTime,
+      checklist?.planEndTime,
+    ],
   );
 
   const currentMachineIdByTrack = useMemo(() => getCurrentMachineIdByTrack(steps), [steps]);
@@ -306,6 +847,7 @@ export default function PileStepsModal({
   // Only computed once a step has an actualStart — Start Delay is undefined
   // before that.
   const expectedStartByStepId = useMemo(() => {
+    if (!contentReady) return EMPTY_EXPECTED_START_MAP;
     const map = new Map<string, NonNullable<ReturnType<typeof computeExpectedStepStart>>>();
     for (const step of steps) {
       if (!step.actualStartIso) continue;
@@ -324,53 +866,14 @@ export default function PileStepsModal({
       if (expected) map.set(step.stepId, expected);
     }
     return map;
-  }, [steps, machineFloorIndex, group.checklistPileId]);
+  }, [contentReady, steps, machineFloorIndex, group.checklistPileId]);
 
-  /**
-   * The nearest step before this one (by sequence order, across the whole
-   * pile regardless of track) that hasn't been completed yet — historical
-   * rows never count, since they're carry-over steps that are always already
-   * finished. `undefined` once every earlier step has an actualEnd.
-   *
-   * This is what actually stops BORING from being started before CASING is
-   * done. actualTimeRules.ts's latestEarlierEnd only bounds WHEN a step's
-   * start may land once starting it is allowed — when no earlier step has
-   * finished yet, there's nothing recorded to bound against, so that alone
-   * would let the picker accept any time at all.
-   *
-   * Used directly at the render site to HIDE the "Fill start time" control
-   * altogether (with an inline caption naming what's blocking it) rather than
-   * showing a disabled button or a tap-to-toast — unlike the machine
-   * breakdown/idle block below, there is nothing to resolve by interacting
-   * with this step's own card, so a live control here would just invite a
-   * wasted tap.
-   */
   function earliestIncompletePredecessor(step: ActualEntry): ActualEntry | undefined {
     return steps.find(
       (other) => !other.isHistorical && other.sequenceOrder < step.sequenceOrder && other.actualEnd === undefined,
     );
   }
 
-  /**
-   * Why time entry is blocked for ONE step right now, or undefined — covers
-   * breakdown and idle (see StepTimeControl/EditTimeButton's `blocked` prop):
-   * the fill/edit buttons still render and stay tappable, tapping one just
-   * surfaces this via notify.error instead of opening the picker. Never locks
-   * the whole card — Replace Machine / the banners above must stay reachable
-   * so the user has a way to resolve it either way.
-   *
-   * Deliberately does NOT cover an incomplete previous step — see
-   * earliestIncompletePredecessor above, which hides the control instead of
-   * leaving it tappable.
-   *
-   * Resolved per step from that step's OWN assigned machine, not from the
-   * pile's single "current" step: now that every unfinished step is fillable,
-   * keying the block on the current step alone would let an idle machine's
-   * later steps be filled straight past the block (and would pin the block to
-   * the wrong step whenever the pile's current step sits on a different
-   * machine). group.hasBreakdownWarning / group.isBlockedByIdle keep their
-   * current-step meaning for the pile-level banners and card badges.
-   */
   function blockedNoticeForStep(step: ActualEntry): ConflictNotice | undefined {
     if (step.isHistorical) return undefined;
     if (!step.assignedMachineId) return undefined;
@@ -389,6 +892,28 @@ export default function PileStepsModal({
     }
     return undefined;
   }
+
+  // Precomputed once per [steps, machines] change instead of per render of
+  // every visible card — StepCard below is memoized, and passing these as
+  // stable map lookups (rather than recomputing blockedNoticeForStep/
+  // earliestIncompletePredecessor inline per item) is what lets its React.memo
+  // actually skip re-rendering a card when some unrelated step's state
+  // changes (e.g. opening the Remarks sheet for a different step).
+  const blockedNoticeByStepId = useMemo(() => {
+    if (!contentReady) return EMPTY_CONFLICT_MAP;
+    const map = new Map<string, ConflictNotice | undefined>();
+    for (const step of steps) map.set(step.stepId, blockedNoticeForStep(step));
+    return map;
+  }, [contentReady, steps, machines]);
+
+  const blockingPredecessorByStepId = useMemo(() => {
+    if (!contentReady) return EMPTY_PREDECESSOR_MAP;
+    const map = new Map<string, ActualEntry | undefined>();
+    for (const step of steps) {
+      map.set(step.stepId, step.actualStart !== undefined ? undefined : earliestIncompletePredecessor(step));
+    }
+    return map;
+  }, [contentReady, steps]);
 
   const currentStepHasBreakdown =
     group.hasBreakdownWarning &&
@@ -409,23 +934,11 @@ export default function PileStepsModal({
     .filter(Boolean)
     .join(' · ');
 
-  return (
-    <AppModal
-      ref={scrollRef}
-      visible
-      title={group.pileCode}
-      subtitle={subtitle || undefined}
-      onClose={onClose}
-      avoidKeyboard={false}
-      showCloseButton={false}
-    >
-      {!contentReady ? (
-        <View style={modalStyles.loadingWrap}>
-          <ActivityIndicator size="large" color={colors.accent} />
-        </View>
-      ) : (
-      <>
-      {currentStepHasBreakdown && currentStep && (
+  // Rendered as FlatList's ListHeaderComponent, not inline — same content,
+  // just no longer part of the item list itself.
+  const listHeader = (currentStepHasBreakdown || currentStepBlockedByIdle) && currentStep && (
+    <>
+      {currentStepHasBreakdown && (
         <Pressable
           style={modalStyles.warningBanner}
           onPress={() =>
@@ -444,7 +957,7 @@ export default function PileStepsModal({
         </Pressable>
       )}
 
-      {currentStepBlockedByIdle && currentStep && (
+      {currentStepBlockedByIdle && (
         <Pressable
           style={modalStyles.idleBanner}
           onPress={() =>
@@ -461,498 +974,95 @@ export default function PileStepsModal({
           <Text style={modalStyles.idleBannerText}>Machine idle — tap to end idle</Text>
         </Pressable>
       )}
+    </>
+  );
 
-      {steps.map((step) => {
-        // Falls back to the timestamps for a row with no derived status —
-        // historical rows, and anything built outside usePileGroups. Same
-        // reading as before segments existed.
-        const status = step.status ?? (step.actualEnd !== undefined
-          ? 'DONE'
-          : step.actualStart !== undefined
-            ? 'RUNNING'
-            : 'NOT_STARTED');
-        const isDone = status === 'DONE';
-        const isPaused = status === 'PAUSED';
-        const hasSegments = !!step.segments?.length;
-        // Still "has work been recorded against this step", which is what
-        // every downstream use of it means — a paused step counts.
-        const isStarted = step.actualStart !== undefined;
-        const isCurrent = step.stepId === currentStepId;
-        const isHistorical = !!step.isHistorical;
-        // A step the plan never covered has no planned span, so it can be
-        // neither on time nor late — there is nothing to be late against.
-        const isPlanned = step.plannedStartIso != null;
-        const lateMinutes =
-          isDone && isPlanned && step.plannedEndIso != null
-            ? durationMinutes(step.actualStartIso!, step.actualEndIso!) -
-              durationMinutes(step.plannedStartIso!, step.plannedEndIso)
-            : null;
-        const isLate = lateMinutes != null && lateMinutes > 0;
-        const blockedNotice = blockedNoticeForStep(step);
-        // Only meaningful for a not-yet-started step — once isStarted, the
-        // ordering constraint was already satisfied when it first began.
-        const blockingPredecessor = isStarted ? undefined : earliestIncompletePredecessor(step);
+  const listFooter = allDone && (
+    <View style={modalStyles.allDoneWrap}>
+      <CheckCircle2 size={22} color={colors.success} />
+      <Text style={modalStyles.allDoneText}>All steps for {group.pileCode} are complete</Text>
+    </View>
+  );
 
-        return (
-          <View
-            key={`${isHistorical ? 'hist' : 'cur'}-${step.stepId}`}
-            onLayout={(e) => handleStepCardLayout(step.stepId, e.nativeEvent.layout.y)}
-            style={[modalStyles.stepWrap, isHistorical && modalStyles.cardLocked]}
-          >
-            <View style={modalStyles.headerRow}>
-              <View style={modalStyles.headerLeft}>
-                {isDone ? (
-                  <CheckCircle2 size={20} color={colors.success} />
-                ) : (
-                  <Circle size={20} color={isCurrent ? colors.accent : colors.textSecondary} />
-                )}
-                <Text style={modalStyles.stepName}>{step.stepName}</Text>
-                <View
-                  style={[
-                    modalStyles.trackBadge,
-                    { backgroundColor: TRACK_META[step.track].soft },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      modalStyles.trackTag,
-                      { color: TRACK_META[step.track].color },
-                    ]}
-                  >
-                    {`${step.track}${step.assignedMachineNo ? ` (${step.assignedMachineNo})` : ''}`}
-                  </Text>
-                </View>
-              </View>
+  // FlatList renderItem — the modal only mounts cards actually near the
+  // viewport (plus a small overscan window). Wrapped in useCallback, and
+  // StepCard itself is React.memo'd, so unrelated state changes elsewhere in
+  // this modal (opening a sheet for one step) don't re-render every other
+  // visible card.
+  const renderStep = useCallback(
+    ({ item: step }: { item: (typeof steps)[number] }) => (
+      <StepCard
+        step={step}
+        isCurrent={step.stepId === currentStepId}
+        rules={rules}
+        measurements={group.measurements}
+        contractors={contractors}
+        expectedStart={expectedStartByStepId.get(step.stepId)}
+        blockedNotice={blockedNoticeByStepId.get(step.stepId)}
+        blockingPredecessor={blockingPredecessorByStepId.get(step.stepId)}
+        onOpenRemarks={setRemarksFor}
+        onOpenMachineEvent={setMachineEventFor}
+        onResumeRequested={setResumeFor}
+        onSetActualTime={handleSetActualTime}
+        onClearActualTime={onClearActualTime}
+        onOpenFinishSheet={openFinishSheet}
+        onEditSegmentTime={onEditSegmentTime}
+        onSetSegmentNotes={onSetSegmentNotes}
+        onDeleteSegment={onDeleteSegment}
+        onOpenStepMeasurements={openStepMeasurements}
+        runSegmentAction={runSegmentAction}
+      />
+    ),
+    [
+      currentStepId,
+      rules,
+      group.measurements,
+      contractors,
+      expectedStartByStepId,
+      blockedNoticeByStepId,
+      blockingPredecessorByStepId,
+      handleSetActualTime,
+      onClearActualTime,
+      openFinishSheet,
+      onEditSegmentTime,
+      onSetSegmentNotes,
+      onDeleteSegment,
+      openStepMeasurements,
+      runSegmentAction,
+    ],
+  );
 
-              {(isStarted || isDone || isCurrent) && !isHistorical && (
-                <View style={modalStyles.headerActions}>
-                  <Button
-                    label="Remarks"
-                    icon={MessageSquarePlus}
-                    variant="secondary"
-                    size="sm"
-                    onPress={() =>
-                      setRemarksFor({ stepId: step.stepId, stepName: step.stepName, remarks: step.remarks })
-                    }
-                  />
-                  <Button
-                    icon={ArrowLeftRight}
-                    variant="secondary"
-                    size="md"
-                    iconColor={colors.textSecondary}
-                    hitSlop={8}
-                    accessibilityLabel="Replace machine"
-                    onPress={() =>
-                      setMachineEventFor({
-                        kind: 'replace',
-                        stepId: step.stepId,
-                        stepName: step.stepName,
-                        track: step.businessTrack ?? step.track,
-                      })
-                    }
-                  />
-                </View>
-              )}
-            </View>
-
-            <View style={[modalStyles.planCard, isHistorical && modalStyles.planCardLocked]}>
-              <Text style={modalStyles.planLabel}>
-                Plan
-              </Text>
-              {/* No plan row at all — the scheduler ran out of window before
-                  reaching this step, so it has no planned times and never
-                  will. The template duration is shown as a clearly non-binding
-                  reference (nothing validates against it), never as a plan. */}
-              {!isPlanned ? (
-                <View style={modalStyles.planTimeRow}>
-                  <Text style={modalStyles.planTimeText}>Planned Later</Text>
-                   {step.templateMinutes != null && (
-                      <Text style={modalStyles.planReferenceText}>
-                        · Avg. {formatDurationMinutes(step.templateMinutes)}
-                      </Text>
-                    )}
-                </View>
-              ) : (
-              <View style={modalStyles.planTimeRow}>
-                <Text style={modalStyles.planTimeText}>{formatTimeWithDay(step.plannedStartIso)}</Text>
-                <ArrowRight size={15} color={colors.textSecondary} />
-                <Text style={modalStyles.planTimeText}>
-                  {step.plannedEndIso == null ? 'To be continued' : formatTimeWithDay(step.plannedEndIso)}
-                </Text>
-              </View>
-              )}
-              {step.planBreaks?.map((brk, i) => (
-                <Text key={i} style={modalStyles.planBreakText}>
-                  Includes {brk.label} · {formatTime(brk.start)} – {formatTime(brk.end)}
-                </Text>
-              ))}
-            </View>
-
-            {/* isStarted, not "isCurrent && isStarted": any started step shows
-                its actuals now that any step can be started. */}
-            {(isDone || isStarted) && (() => {
-              const expectedStart = expectedStartByStepId.get(step.stepId);
-              const startDelayMinutes = expectedStart
-                ? durationMinutes(expectedStart.expectedStartIso, step.actualStartIso!)
-                : null;
-              return (
-                <>
-                  <View style={modalStyles.actualSection}>
-                  <View style={modalStyles.actualHeaderTopRow}>
-                    <View style={modalStyles.actualHeaderLeft}>
-                      <Clock size={15} color={colors.accentBlue} />
-                      <Text style={modalStyles.actualLabelBlue}>ACTUAL</Text>
-                    </View>
-                    {startDelayMinutes != null && (
-                      <View style={modalStyles.delayGroup}>
-                        <Text style={modalStyles.delayLabel}>Start delay</Text>
-                        <View
-                          style={[
-                            modalStyles.statusPill,
-                            { backgroundColor: startDelayMinutes > 0 ? colors.dangerSoft : colors.successSoft },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              modalStyles.statusPillText,
-                              { color: startDelayMinutes > 0 ? colors.danger : colors.success },
-                            ]}
-                          >
-                            {formatSignedDuration(startDelayMinutes)}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-                  </View>
-
-                  <View style={modalStyles.actualCard}>
-                    <View style={modalStyles.actualRow}>
-                      <View style={modalStyles.actualRowTop}>
-                        <View style={modalStyles.iconChip}>
-                          <Link2 size={14} color={colors.accentBlue} />
-                        </View>
-                        <View style={modalStyles.actualRowText}>
-                          <Text style={[modalStyles.actualRowLabel, modalStyles.actualRowLabelFaded]} numberOfLines={1}>Expected start</Text>
-                          <Text style={modalStyles.actualRowSubtitle}>
-                            {expectedStart?.anchorPileCode
-                              ? `${expectedStart.anchorPileCode} - ${expectedStart.anchorStepName} ended`
-                              : isPlanned
-                                ? 'Planned start'
-                                : 'Planned Later'}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={modalStyles.actualRowBottom}>
-                        <Text style={[modalStyles.actualRowValue, modalStyles.actualRowValueFaded]}>
-                          {formatTimeWithDay(expectedStart?.expectedStartIso)}
-                        </Text>
-                        <Pressable
-                          hitSlop={8}
-                          onPress={() =>
-                            notify.info(
-                              startDelayMinutes == null
-                                ? 'No expected start available for this step.'
-                                : startDelayMinutes === 0
-                                  ? 'Started right on the expected time.'
-                                  : startDelayMinutes > 0
-                                    ? `Started ${startDelayMinutes}m later than expected.`
-                                    : `Started ${Math.abs(startDelayMinutes)}m earlier than expected.`,
-                            )
-                          }
-                        >
-                          <Info size={16} color={colors.textSecondary} />
-                        </Pressable>
-                      </View>
-                    </View>
-
-                    <View style={modalStyles.actualRow}>
-                      <View style={modalStyles.actualRowTop}>
-                        <View style={modalStyles.iconChip}>
-                          <CirclePlay size={14} color={colors.accentBlue} />
-                        </View>
-                        <View style={modalStyles.actualRowText}>
-                          <Text style={modalStyles.actualRowLabel} numberOfLines={1}>Actual start</Text>
-                        </View>
-                      </View>
-                      <View style={modalStyles.actualRowBottom}>
-                        <Text style={modalStyles.actualRowValue}>{formatTimeWithDay(step.actualStartIso)}</Text>
-                        {/* Hidden once the step has work sessions: this row is
-                            then DERIVED from them, so editing it here would be
-                            reverted by the next recompute. Per-session edits
-                            live in SegmentList below instead. */}
-                        {!isHistorical && !hasSegments && (
-                          <View style={modalStyles.fieldActions}>
-                            <EditTimeButton
-                              {...rules.forStep(step.stepId, 'start')}
-                              minutes={step.actualStart!}
-                              label="start time"
-                              onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualStart', mins, explicitDate)}
-                              blocked={!isDone ? blockedNotice : undefined}
-                            />
-                            <DeleteTimeButton
-                              label="start time"
-                              valueLabel={formatTimeWithDay(step.actualStartIso)}
-                              cascadeWarning={isDone ? 'This will also clear the finish time.' : undefined}
-                              onConfirm={() => onClearActualTime(step.stepId, 'actualStart')}
-                            />
-                          </View>
-                        )}
-                      </View>
-                    </View>
-
-                    {isDone && (
-                      <View style={modalStyles.actualRow}>
-                        <View style={modalStyles.actualRowTop}>
-                          <View style={modalStyles.iconChip}>
-                            <CircleStop size={14} color={colors.accentBlue} />
-                          </View>
-                          <View style={modalStyles.actualRowText}>
-                            <Text style={modalStyles.actualRowLabel} numberOfLines={1}>Actual end</Text>
-                          </View>
-                        </View>
-                        <View style={modalStyles.actualRowBottom}>
-                          <Text style={[modalStyles.actualRowValue, isLate && modalStyles.lateText]}>
-                            {formatTimeWithDay(step.actualEndIso)}
-                          </Text>
-                          {!isHistorical && !hasSegments && (
-                            <View style={modalStyles.fieldActions}>
-                              <EditTimeButton
-                                {...rules.forStep(step.stepId, 'finish')}
-                                minutes={step.actualEnd!}
-                                label="finish time"
-                                onConfirm={(mins, explicitDate) => handleSetActualTime(step, 'actualEnd', mins, explicitDate)}
-                              />
-                              <DeleteTimeButton
-                                label="finish time"
-                                valueLabel={formatTimeWithDay(step.actualEndIso)}
-                                onConfirm={() => onClearActualTime(step.stepId, 'actualEnd')}
-                              />
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Only for a step actually split between machines. The two
-                      rows above can express one span; they cannot express
-                      "R-1 until 10:30, then R-3 from 14:00", and collapsing
-                      that into one span is what mis-credits the machine that
-                      left. An ordinary step renders nothing here. */}
-                  {!!step.segments?.length && (
-                    <SegmentList
-                      step={step}
-                      rules={rules}
-                      onEditSegmentTime={
-                        isHistorical
-                          ? undefined
-                          : (segmentId, field, minutes, explicitDate) =>
-                              runSegmentAction(
-                                () => onEditSegmentTime(step.stepId, segmentId, field, minutes, explicitDate),
-                                'Could not update the work session.',
-                              )
-                      }
-                      onSetSegmentNotes={
-                        isHistorical
-                          ? undefined
-                          : (segmentId, notes) =>
-                              runSegmentAction(
-                                () => onSetSegmentNotes(step.stepId, segmentId, notes),
-                                'Could not save remarks.',
-                              )
-                      }
-                      onDeleteSegment={
-                        isHistorical
-                          ? undefined
-                          : (segmentId) =>
-                              runSegmentAction(
-                                () => onDeleteSegment(step.stepId, segmentId),
-                                'Could not remove the work session.',
-                              )
-                      }
-                    />
-                  )}
-
-                  {/* Rendered for any finished step, planned or not — the
-                      actual duration is real either way. Only the two
-                      plan-relative columns degrade: an unplanned step has no
-                      planned span to average against and therefore no
-                      lateness, so no delay pill is shown for it. */}
-                  {isDone && (
-                    <View style={modalStyles.statsRow}>
-                      <View style={modalStyles.statsCol}>
-                        <Clock size={14} color={colors.textSecondary} />
-                        <Text style={modalStyles.statsColLabel}>Avg. duration</Text>
-                        <Text style={modalStyles.statsColValue}>
-                          {isPlanned && step.plannedEndIso != null
-                            ? formatDuration(step.plannedStartIso!, step.plannedEndIso)
-                            : 'Planned Later'}
-                        </Text>
-                      </View>
-                      <View style={[modalStyles.statsCol, modalStyles.statsColRuled]}>
-                        <Clock size={14} color={colors.textSecondary} />
-                        <Text style={modalStyles.statsColLabel}>Actual duration</Text>
-                        <Text style={modalStyles.statsColValue}>
-                          {formatDuration(step.actualStartIso!, step.actualEndIso!)}
-                        </Text>
-                      </View>
-                      <View style={[modalStyles.statsCol, modalStyles.statsColRuled]}>
-                        <Hourglass
-                          size={14}
-                          color={lateMinutes == null ? colors.textSecondary : isLate ? colors.danger : colors.success}
-                        />
-                        <Text style={modalStyles.statsColLabel}>Activity delay</Text>
-                        {lateMinutes == null ? (
-                          <Text style={modalStyles.statsColValue}>—</Text>
-                        ) : (
-                          <View
-                            style={[
-                              modalStyles.statusPill,
-                              { backgroundColor: isLate ? colors.dangerSoft : colors.successSoft },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                modalStyles.statusPillText,
-                                { color: isLate ? colors.danger : colors.success },
-                              ]}
-                            >
-                              {formatSignedDuration(lateMinutes)}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                  )}
-
-                  {(isStarted || isDone) && (() => {
-                    const applicableFields = getMeasurementFieldsForStep(step.stepName);
-                    if (applicableFields.length === 0) return null;
-                    const measurements = group.measurements;
-                    const filledCount = applicableFields.filter((f) => measurements?.[f.key] != null).length;
-                    return (
-                      <View style={modalStyles.actualCard}>
-                        <View style={modalStyles.actualHeaderRow}>
-                          <View style={modalStyles.measurementsLabelRow}>
-                            <Ruler size={14} color={colors.textSecondary} />
-                            <Text style={modalStyles.actualLabel}>MEASUREMENTS</Text>
-                          </View>
-                          <View style={[modalStyles.statusPill, { backgroundColor: colors.accentSoft }]}>
-                            <Text style={[modalStyles.statusPillText, { color: colors.accent }]}>
-                              {filledCount}/{applicableFields.length} filled
-                            </Text>
-                          </View>
-                        </View>
-                        <View style={modalStyles.measurementsGrid}>
-                          {applicableFields.map((field) => {
-                            const value = measurements?.[field.key];
-                            const display =
-                              field.type === 'contractor'
-                                ? contractors.find((c) => c.id === value)?.name ?? '-'
-                                : value == null
-                                  ? '-'
-                                  : `${value} ${field.unit}`;
-                            // Strip a trailing "(Full Name)" gloss for the compact
-                            // grid — e.g. "E.G.L. (Existing Ground Level)" -> "E.G.L."
-                            const shortLabel = field.label.replace(/\s*\([^)]*\)\s*$/, '');
-                            return (
-                              <View key={field.key} style={modalStyles.measurementCell}>
-                                <Text style={modalStyles.measurementLabel}>{shortLabel}</Text>
-                                <Text
-                                  style={[
-                                    modalStyles.measurementValue,
-                                    value == null && modalStyles.measurementValueEmpty,
-                                  ]}
-                                >
-                                  {display}
-                                </Text>
-                              </View>
-                            );
-                          })}
-                        </View>
-                        {!isHistorical && (
-                          <Button
-                            label="Edit measurements"
-                            icon={PencilLine}
-                            variant="secondary"
-                            onPress={() => openStepMeasurements(step)}
-                          />
-                        )}
-                      </View>
-                    );
-                  })()}
-                  </View>
-                </>
-              );
-            })()}
-
-            {step.remarks && (isStarted || isDone) && (
-              <View style={modalStyles.remarkBox}>
-                <MessageSquarePlus size={14} color={colors.textSecondary} style={modalStyles.remarkIcon} />
-                <Text style={modalStyles.remarkText}>
-                  {step.remarks}{' '}
-                  {!isHistorical && (
-                    <Text
-                      style={modalStyles.remarkEdit}
-                      onPress={() =>
-                        setRemarksFor({ stepId: step.stepId, stepName: step.stepName, remarks: step.remarks })
-                      }
-                    >
-                      Edit
-                    </Text>
-                  )}
-                </Text>
-              </View>
-            )}
-
-            {!isHistorical && !isStarted && !blockingPredecessor && (
-              <StepTimeControl
-                {...rules.forStep(step.stepId, 'start')}
-                mode="start"
-                onConfirm={(mins, explicitDate) =>
-                  handleSetActualTime(step, 'actualStart', mins, explicitDate)
-                }
-                blocked={blockedNotice}
-              />
-            )}
-
-            {!isHistorical && status === 'RUNNING' && (
-              <StepTimeControl
-                {...rules.forStep(step.stepId, 'finish')}
-                mode="finish"
-                label="Stop work"
-                onConfirm={(mins, explicitDate) => openFinishSheet(step, mins, explicitDate)}
-                blocked={blockedNotice}
-              />
-            )}
-
-            {!isHistorical && isPaused && (
-              <Button
-                label="Resume work"
-                icon={Play}
-                variant="warning"
-                onPress={() => {
-                  if (blockedNotice) {
-                    notify.error(blockedNotice.message, { title: blockedNotice.title });
-                    return;
-                  }
-                  setResumeFor(step);
-                }}
-              />
-            )}
-          </View>
-        );
-      })}
-
-      {allDone && (
-        <View style={modalStyles.allDoneWrap}>
-          <CheckCircle2 size={22} color={colors.success} />
-          <Text style={modalStyles.allDoneText}>
-            All steps for {group.pileCode} are complete
-          </Text>
+  return (
+    <AppModal
+      visible={visible}
+      title={group.pileCode}
+      subtitle={subtitle || undefined}
+      onClose={onClose}
+      onClosed={onClosed}
+      avoidKeyboard={false}
+      showCloseButton={false}
+      scrollable={false}
+      fillHeight
+    >
+      {!contentReady ? (
+        <View style={modalStyles.loadingWrap}>
+          <ActivityIndicator size="large" color={colors.accent} />
         </View>
-      )}
-      </>
+      ) : (
+        <FlatList
+          ref={listRef}
+          data={steps}
+          keyExtractor={(step) => `${step.isHistorical ? 'hist' : 'cur'}-${step.stepId}`}
+          renderItem={renderStep}
+          initialNumToRender={currentStepIndex >= 0 ? currentStepIndex + 3 : 10}
+          onScrollToIndexFailed={(info) => setTimeout(() => scrollToCurrentStep(info.index), 100)}
+          ListHeaderComponent={listHeader || null}
+          ListFooterComponent={listFooter || null}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          style={modalStyles.flatList}
+          contentContainerStyle={modalStyles.flatListContent}
+        />
       )}
 
       {remarksFor && (
@@ -986,10 +1096,6 @@ export default function PileStepsModal({
           onClose={() => setFinishFor(null)}
           onCompleted={(notes) =>
             runSegmentAction(async () => {
-              // A step with sessions finishes by closing the open one; one
-              // without has no session to close, so the plain roll-up write
-              // still applies. Routing both through here keeps the finish
-              // gesture identical for the supervisor either way.
               if (finishFor.step.segments?.length) {
                 await onFinishSegment(finishFor.step.stepId, {
                   endedAtIso: finishFor.stoppedAtIso,
@@ -1002,8 +1108,6 @@ export default function PileStepsModal({
                   minutesOfDay(finishFor.stoppedAtIso),
                   new Date(finishFor.stoppedAtIso),
                 );
-                // No sessions to hang the note on, so it goes to the step's
-                // own remarks — the same place the remark control writes.
                 await onSaveRemarks(finishFor.step.stepId, notes);
               }
             }, 'Could not save the finish time.')
@@ -1014,8 +1118,6 @@ export default function PileStepsModal({
                 onPauseStep(finishFor.step.stepId, {
                   notes: input.notes,
                   stoppedAtIso: finishFor.stoppedAtIso,
-                  // Both needed to back-fill a baseline session for a step
-                  // that was already in progress before it was ever split.
                   machineId: finishFor.step.assignedMachineId,
                   actualStartIso: finishFor.step.actualStartIso,
                 }),
@@ -1099,12 +1201,14 @@ export default function PileStepsModal({
 }
 
 const modalStyles = StyleSheet.create({
+  flatList: { flex: 1 },
+  flatListContent: { paddingBottom: spacing.sm },
   stepWrap: {
     backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.lg,
-    padding: spacing.md,
+    padding: spacing.sm,
     marginBottom: spacing.md,
     ...shadow.soft,
   },
@@ -1134,7 +1238,7 @@ const modalStyles = StyleSheet.create({
   planCard: {
     backgroundColor: colors.fade,
     borderRadius: radius.lg,
-    padding: spacing.md,
+    padding: spacing.sm,
     marginBottom: spacing.sm,
   },
   planCardLocked: {
@@ -1251,7 +1355,7 @@ const modalStyles = StyleSheet.create({
   actualSection: {
     backgroundColor: colors.accentSoft,
     borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
     gap: spacing.sm,
     borderLeftWidth: 3,
@@ -1357,7 +1461,7 @@ const modalStyles = StyleSheet.create({
     fontWeight: '400',
     color: colors.textSecondary,
   },
-  loadingWrap: { alignItems: 'center', paddingVertical: spacing.xxl },
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   allDoneWrap: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
   allDoneText: { ...typography.body, fontWeight: '700', color: colors.textPrimary },
   warningBanner: {

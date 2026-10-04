@@ -5,7 +5,7 @@
 // ReorderPilesModal's Save is tapped (handleReorderConfirm), which is the
 // only action that actually persists.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { ReorderPile } from '@components/plan/generate/preview/ReorderPilesModal';
 import type { EditPlanPileInput, EditPlanPreview, EditPlanSummary } from '@state/PlanContext';
 import type { PilingChecklistPile, PilingDailyChecklist, PilingMachine, PilingPile } from '@db/schema';
@@ -150,7 +150,13 @@ export function useSequenceEditor(args: {
     return pinned;
   }
 
-  function openSequenceModal() {
+  // useCallback — this is passed straight through as MachinePilesPage's
+  // onEditSequence prop, and MachinePilesPage is React.memo'd specifically
+  // so an unrelated screen re-render (e.g. opening a pile's PileStepsModal)
+  // doesn't re-render every machine's whole pile list. A plain function
+  // declaration here would get a new identity every render and silently
+  // defeat that memo for every page at once.
+  const openSequenceModal = useCallback(() => {
     setDraftRows(
       checklistPiles.map((cp) => {
         const group = groupByPileId.get(cp.pileId);
@@ -164,7 +170,7 @@ export function useSequenceEditor(args: {
       }),
     );
     setSequenceModalOpen(true);
-  }
+  }, [checklistPiles, groupByPileId]);
 
   function closeSequenceModal() {
     setSequenceModalOpen(false);

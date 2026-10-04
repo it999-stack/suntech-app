@@ -76,6 +76,7 @@ import { enqueueChecklistSync, dequeueChecklistSync } from '@repositories/syncQu
 import { triggerDebounced } from '@sync/SyncManager';
 import { onConflicts, onChecklistsDropped } from '@sync/delta/deltaPush';
 import { apiClient } from '@services/apiClient';
+import { useAuthStore } from '@store/authStore';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -359,6 +360,11 @@ function checklistStatusToPlanStatus(status: string): PlanStatus {
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function PlanProvider({ children }: { children: React.ReactNode }) {
+  // Who's logged in on this device right now — stamped onto every actual-step
+  // / segment write as filledBy at the moment it's written (not at sync time),
+  // so attribution survives offline queueing even if a different user logs in
+  // before the device next syncs.
+  const filledByUserId = useAuthStore((s) => s.user?.id);
   const [checklist, setChecklist] = useState<PilingDailyChecklist | null>(null);
   const [checklistPiles, setChecklistPiles] = useState<PilingChecklistPile[]>([]);
   const [pileMeasurementsByPileId, setPileMeasurementsByPileId] = useState<Map<string, PilPileMeasurement>>(
@@ -701,6 +707,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           // Omitted entirely when the caller can't resolve a machine, so a
           // caller that can't resolve one never erases one already recorded.
           ...(assignedMachineId !== undefined ? { assignedMachineId } : {}),
+          filledBy: filledByUserId,
         });
 
         if (checklist) {
@@ -714,7 +721,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [actualSteps, checklist],
+    [actualSteps, checklist, filledByUserId],
   );
 
   // ── Work sessions (a step split between machines) ─────────────────────────
@@ -790,6 +797,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           stepId,
           actualStartIso: input.actualStartIso,
           machineId: input.machineId,
+          filledBy: filledByUserId,
         });
 
         const live = await getSegmentsForStep(checklistPileId, stepId);
@@ -806,6 +814,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             remainingMinutes: null,
             notes: input.notes ?? null,
             machineEventId: input.machineEventId ?? null,
+            filledBy: filledByUserId,
           });
         }
 
@@ -819,6 +828,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             startedAt: input.stoppedAtIso,
             endedAt: null,
             assignedMachineId: input.continueOnMachineId,
+            filledBy: filledByUserId,
             outcome: null,
             stopReason: null,
             remainingMinutes: null,
@@ -836,7 +846,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [refreshAfterSegmentWrite, syncRollupFromSegments],
+    [refreshAfterSegmentWrite, syncRollupFromSegments, filledByUserId],
   );
 
   /** Pick a paused step back up — opens a new session on the given machine. */
@@ -854,6 +864,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           startedAt: input.startedAtIso,
           endedAt: null,
           assignedMachineId: input.machineId ?? null,
+          filledBy: filledByUserId,
           outcome: null,
           stopReason: null,
           remainingMinutes: null,
@@ -869,7 +880,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [refreshAfterSegmentWrite, syncRollupFromSegments],
+    [refreshAfterSegmentWrite, syncRollupFromSegments, filledByUserId],
   );
 
   /** Finish a step that has sessions — closes the open one as FINAL. */
@@ -884,6 +895,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         await closeLastLiveSegment(checklistPileId, stepId, {
           endedAtIso: input.endedAtIso,
           notes: input.notes,
+          filledBy: filledByUserId,
         });
         await syncRollupFromSegments(checklistPileId, stepId);
         await refreshAfterSegmentWrite();
@@ -892,7 +904,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [refreshAfterSegmentWrite, syncRollupFromSegments],
+    [refreshAfterSegmentWrite, syncRollupFromSegments, filledByUserId],
   );
 
   /** Correct one already-recorded session time (not for filling a blank one —
@@ -909,7 +921,12 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     ) => {
       setError(null);
       try {
-        await updateSegment(segmentId, field === 'start' ? { startedAt: isoTimestamp } : { endedAt: isoTimestamp });
+        await updateSegment(
+          segmentId,
+          field === 'start'
+            ? { startedAt: isoTimestamp, filledBy: filledByUserId }
+            : { endedAt: isoTimestamp, filledBy: filledByUserId },
+        );
         await syncRollupFromSegments(checklistPileId, stepId);
         await refreshAfterSegmentWrite();
       } catch (err) {
@@ -917,7 +934,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [refreshAfterSegmentWrite, syncRollupFromSegments],
+    [refreshAfterSegmentWrite, syncRollupFromSegments, filledByUserId],
   );
 
   /** Free-text note on one session — the segment-scoped counterpart to
@@ -973,6 +990,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           // recopied from `existing`.
           actualStart: field === 'actualStart' ? null : undefined,
           actualEnd: null,
+          filledBy: filledByUserId,
         });
 
         if (checklist) {
@@ -986,7 +1004,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [actualSteps, checklist],
+    [actualSteps, checklist, filledByUserId],
   );
 
   const setRemarks = useCallback(
@@ -1007,6 +1025,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
           // when this runs right after setActualTime in the same Stop-work
           // action, silently reverting the finish time it had just saved.
           remarks,
+          filledBy: filledByUserId,
         });
 
         if (checklist) {
@@ -1020,7 +1039,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [actualSteps, checklist],
+    [actualSteps, checklist, filledByUserId],
   );
 
   // ── One-time engineering measurements (per physical pile) ────────────────
@@ -1075,8 +1094,9 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         // machine's hours to the replacement.
         //
         // Only for a running step. On a not-yet-started one there is nothing
-        // to split, and on a finished one the supervisor is correcting who did
-        // it — both keep the original behaviour.
+        // to split, and on a finished one reassignMachineFromStep itself now
+        // corrects the already-recorded actual row directly (see its own doc
+        // comment) — neither needs a segment handover here.
         if (input.eventType === 'REPLACED' && input.replacementId) {
           const existingSegments = await getSegmentsForStep(checklistPileId, stepId);
           const rollup = actualSteps.find(
@@ -1105,13 +1125,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             (s) => s.checklistPileId === checklistPileId && s.stepId === stepId,
           );
           if (currentStep) {
-            await reassignMachineFromStep(
-              checklistPileId,
-              input.machineId,
-              currentStep.businessTrack ?? currentStep.track,
-              currentStep.sequenceOrder,
-              input.replacementId,
-            );
+            await reassignMachineFromStep(checklistPileId, stepId, input.replacementId, filledByUserId);
           } else {
             // No pil_plan_steps row for this step — an unplanned ("Planned
             // Later") step that ran ahead of the scheduler. There's no plan
@@ -1132,6 +1146,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
               // actualStart/actualEnd/remarks omitted — patch semantics
               // preserve them exactly, rather than recopying them here.
               assignedMachineId: input.replacementId,
+              filledBy: filledByUserId,
             });
           }
         }
@@ -1166,7 +1181,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [checklistPiles, planSteps, actualSteps, checklist, pauseStep],
+    [checklistPiles, planSteps, actualSteps, checklist, pauseStep, filledByUserId],
   );
 
   // ── Derived plan status ───────────────────────────────────────────────────

@@ -201,14 +201,14 @@ const styles = StyleSheet.create({
   headerArea: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xs,
     paddingTop: spacing.md,
     paddingBottom: spacing.lg,
     gap: spacing.sm,
   },
   bodyArea: { 
     flex: 1, 
-    paddingHorizontal: spacing.md 
+    paddingHorizontal: spacing.xs 
   },
   backBtn: {
     width: 36,
@@ -220,7 +220,7 @@ const styles = StyleSheet.create({
   },
   pageTitle: { ...typography.h1, textAlign: 'center', color: colors.textPrimary },
   loadingText: { ...typography.body, color: colors.textSecondary },
-  scrollContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl, gap: spacing.md },
+  scrollContent: { paddingHorizontal: spacing.sm, paddingBottom: spacing.sm, gap: spacing.md },
 
   cardInner: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

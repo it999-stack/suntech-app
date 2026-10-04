@@ -87,6 +87,7 @@ export async function updateSegment(
       | 'startedAt'
       | 'endedAt'
       | 'assignedMachineId'
+      | 'filledBy'
       | 'outcome'
       | 'stopReason'
       | 'remainingMinutes'
@@ -136,6 +137,7 @@ export async function ensureBaselineSegment(args: {
   stepId: string;
   actualStartIso?: string;
   machineId?: string;
+  filledBy?: string | null;
 }): Promise<string | null> {
   const existing = await getSegmentsForStep(args.checklistPileId, args.stepId);
   if (existing.length > 0) return null;
@@ -150,6 +152,7 @@ export async function ensureBaselineSegment(args: {
     // action (pause, hand off, or finish).
     endedAt: null,
     assignedMachineId: args.machineId ?? null,
+    filledBy: args.filledBy ?? null,
     outcome: null,
     stopReason: null,
     remainingMinutes: null,

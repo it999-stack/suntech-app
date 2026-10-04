@@ -1,14 +1,13 @@
 // src/screens/Home/fillActual/MachinePilesPage.tsx
 //
-// One machine's page inside the badge pager. Memoized because SwipeableTabBar's PagerView
-// mounts every machine's page up front (needed for swipe), so without this every machine
-// would re-render on any unrelated change (e.g. another pile's step being logged).
+// One machine's page inside the badge pager.
 
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { colors, spacing, typography } from '@theme/theme';
 import PileSequenceRow from '@components/plan/actual/PileSequenceRow';
 import MachineInfoCard from './MachineInfoCard';
+import type { CardEventType } from './useMachineEventActions';
 import type { OpenIdleSession } from './useMachineEvents';
 import type { MachineBadge } from './useMachinePages';
 import type { PileGroup } from '@app-types/plan';
@@ -22,12 +21,18 @@ interface MachinePilesPageProps {
   openIdle?: OpenIdleSession;
   hasActiveStep: boolean;
   onOpenPile: (checklistPileId: string) => void;
-  onBreakdown: () => void;
-  onStartIdle: () => void;
-  onEndIdle: () => void;
+  /** One stable function for all three machine-card quick actions — bound
+   * to this page's own machine below via useCallback, instead of the
+   * caller passing three already-bound closures, which would get a new
+   * identity every render and defeat this component's memo (see below). */
+  onMachineEvent: (machineId: string, track: 'RIG' | 'CRANE', eventType: CardEventType) => void;
   onEditSequence: () => void;
 }
 
+// Memoized because SwipeableTabBar's PagerView mounts every machine's page
+// up front (needed for swipe), so without this every machine would
+// re-render on any unrelated screen state change (e.g. opening another
+// pile's PileStepsModal, or logging a step on a different machine's pile).
 const MachinePilesPage = React.memo(function MachinePilesPage({
   machine,
   status,
@@ -37,11 +42,21 @@ const MachinePilesPage = React.memo(function MachinePilesPage({
   openIdle,
   hasActiveStep,
   onOpenPile,
-  onBreakdown,
-  onStartIdle,
-  onEndIdle,
+  onMachineEvent,
   onEditSequence,
 }: MachinePilesPageProps) {
+  const onBreakdown = useCallback(
+    () => onMachineEvent(machine.id, machine.type, 'BREAKDOWN'),
+    [onMachineEvent, machine.id, machine.type],
+  );
+  const onStartIdle = useCallback(
+    () => onMachineEvent(machine.id, machine.type, 'IDLE_START'),
+    [onMachineEvent, machine.id, machine.type],
+  );
+  const onEndIdle = useCallback(
+    () => onMachineEvent(machine.id, machine.type, 'IDLE_END'),
+    [onMachineEvent, machine.id, machine.type],
+  );
 
   return (
     <View style={styles.machinePage}>

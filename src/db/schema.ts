@@ -454,6 +454,10 @@ export const pileActualSteps = sqliteTable('pil_actual_steps', {
    * pil_checklist_piles to resolve one from).
    */
   assignedMachineId: text('assigned_machine_id'),
+  /** Who entered this value, captured at the moment it was written (not at
+   * sync time) — see PlanContext's actual-step writers. Null for rows
+   * predating this column. */
+  filledBy: text('filled_by'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
   serverUpdatedAt: text('server_updated_at'),
@@ -492,6 +496,9 @@ export const pileActualStepSegments = sqliteTable('pil_actual_step_segments', {
   endedAt: text('ended_at'),
   /** The machine that did THIS session. The whole point of the table. */
   assignedMachineId: text('assigned_machine_id'),
+  /** Who recorded THIS session, captured at write time. Null for rows
+   * predating this column. */
+  filledBy: text('filled_by'),
   /** null while open; 'PARTIAL' = stopped with work left; 'FINAL' = step done. */
   outcome: text('outcome').$type<'PARTIAL' | 'FINAL'>(),
   stopReason: text('stop_reason').$type<'SHIFT_CHANGE' | 'BREAKDOWN' | 'IDLE' | 'OTHER'>(),

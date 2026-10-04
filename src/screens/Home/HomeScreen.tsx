@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
   loadingText: { ...typography.body, color: colors.textSecondary },
 
   headerArea: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
   },
@@ -517,8 +517,8 @@ const styles = StyleSheet.create({
   },
 
   scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
     gap: spacing.lg,
   },
 
