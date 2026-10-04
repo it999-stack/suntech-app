@@ -8,11 +8,13 @@
 
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { differenceInCalendarDays } from 'date-fns';
 import AppModal from '@components/shared/AppModal';
 import AppCalendar, { type DayVisualState } from '@components/shared/AppCalendar';
 import Switch from '@components/shared/Switch';
 import { colors, spacing, radius, typography } from '@theme/theme';
 import { useWorkingDateStore } from '@store/workingDateStore';
+import { useAppConfig } from '@state/AppConfigContext';
 import { toLocalDateStr, formatHeaderDate } from '@utils/formatTime';
 
 interface Props {
@@ -24,11 +26,18 @@ export default function WorkingDateSheet({ visible, onClose }: Props) {
   const overrideEnabled = useWorkingDateStore((s) => s.overrideEnabled);
   const overrideDate = useWorkingDateStore((s) => s.overrideDate);
   const setOverride = useWorkingDateStore((s) => s.setOverride);
+  const { config } = useAppConfig();
 
   const today = useMemo(() => toLocalDateStr(new Date()), [visible]);
   const selectedDate = overrideDate ?? today;
+  // This one picked date feeds both the generate and edit flows app-wide, so
+  // it's bounded by whichever of the two configured ranges is wider.
+  const daysBack = Math.max(config.planGenerateDaysBack, config.planEditDaysBack);
+  const daysAhead = Math.max(config.planGenerateDaysAhead, config.planEditDaysAhead);
 
   function getDayState(dateStr: string): DayVisualState {
+    const offset = differenceInCalendarDays(new Date(`${dateStr}T00:00:00`), new Date(`${today}T00:00:00`));
+    if (offset < -daysBack || offset > daysAhead) return { disabled: true };
     return { selected: dateStr === selectedDate, tone: 'default' };
   }
 

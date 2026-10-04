@@ -4,8 +4,9 @@
 // (locked/planned/selectable) via `getDayState` — the generic AppCalendar it
 // wraps stays ignorant of plans/checklists entirely.
 //
-// Only today and tomorrow are ever valid generation targets (see
-// plan_generation_service.py's date + shift-grace-window rule), so plan
+// Valid generation targets are bounded by the server's
+// plan_generate_days_back/plan_generate_days_ahead config (see
+// plan_generation.py's _validate_generation_window), so plan
 // existence is checked against the server (GET /plans/state), not local
 // SQLite — a reinstalled/data-cleared device has nothing locally to go on,
 // and must not be allowed to assume "no local row" means "no plan exists."
@@ -28,7 +29,7 @@ import { getPrimaryShiftType, combineDateAndTime, isWithinGenerationGrace } from
 import { toLocalDateStr, formatHeaderDate } from '@utils/formatTime';
 import { fmtPlanTime, planEndTime } from '@/types/plan';
 import { useAppConfig } from '@state/AppConfigContext';
-import { useWorkingDate, useWorkingDateStore } from '@store/workingDateStore';
+import { useWorkingDate } from '@store/workingDateStore';
 
 const DEFAULT_START_TIME = '08:00';
 
@@ -54,13 +55,6 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
   // instead of the device's real today — same "operate on the picked date"
   // behavior WorkingDateSheet already promises for Home/Fill Actuals.
   const workingDate = useWorkingDate();
-  const workingDateOverrideEnabled = useWorkingDateStore((s) => s.overrideEnabled);
-  // isWithinGenerationGrace always compares against the device's real clock,
-  // so a picked working date that isn't real-today would otherwise look
-  // "closed" and get silently bumped to tomorrow — the override means "let me
-  // freely operate on this exact date," same intent allowAnyPlanDate already
-  // carries elsewhere in this file, so it's folded into the same bypass.
-  const testingModeActive = workingDateOverrideEnabled || config.allowAnyPlanDate;
 
   // Recomputed each time the sheet opens (keyed on `visible`) rather than once
   // at mount, so a day boundary crossed while the app stays open doesn't leave
@@ -68,10 +62,11 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
   const today = useMemo(() => workingDate, [visible, workingDate]);
   const rangeDates = useMemo(
     () =>
-      Array.from({ length: config.futureDaysAhead + 1 }, (_, i) =>
-        toLocalDateStr(addDays(new Date(`${workingDate}T00:00:00`), i)),
+      Array.from(
+        { length: config.planGenerateDaysBack + config.planGenerateDaysAhead + 1 },
+        (_, i) => toLocalDateStr(addDays(new Date(`${workingDate}T00:00:00`), i - config.planGenerateDaysBack)),
       ),
-    [visible, config.futureDaysAhead, workingDate],
+    [visible, config.planGenerateDaysBack, config.planGenerateDaysAhead, workingDate],
   );
 
   const [selectedDate, setSelectedDate] = useState(today);
@@ -124,14 +119,11 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
 
         // Don't default the selection onto "today" if it's neither planned
         // nor still within its own generation grace window — land on
-        // tomorrow instead, which is always open. Skipped entirely in
-        // testing mode — the whole point there is to stay on the exact date
-        // picked/overridden, not have it second-guessed against real-world time.
+        // tomorrow instead, which is always open.
         const todayUsable =
-          testingModeActive ||
-          planned.has(today) ||
-          isWithinGenerationGrace(today, startTime, config.generationGraceHours);
-        if (!todayUsable && rangeDates[1]) setSelectedDate(rangeDates[1]);
+          planned.has(today) || isWithinGenerationGrace(today, startTime, config.generationGraceHours);
+        const tomorrow = rangeDates[config.planGenerateDaysBack + 1];
+        if (!todayUsable && tomorrow) setSelectedDate(tomorrow);
       } catch {
         if (!cancelled) {
           setLoadError('Sync failed - Please try again later.');
@@ -143,11 +135,11 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
     return () => {
       cancelled = true;
     };
-  }, [visible, siteId, rangeDates, today, config.generationGraceHours, testingModeActive]);
+  }, [visible, siteId, rangeDates, today, config.generationGraceHours]);
 
   function getDayState(dateStr: string): DayVisualState {
     const idx = rangeDates.indexOf(dateStr);
-    if (idx === -1 && !testingModeActive) return { disabled: true };
+    if (idx === -1) return { disabled: true };
 
     if (plannedDates.has(dateStr)) {
       return {
@@ -158,19 +150,14 @@ export default function GeneratePlanCalendarSheet({ visible, onClose, siteId, on
       };
     }
 
-    // A failed server check always disables — no offline guessing, even in
-    // testing mode.
     if (loadError) {
       return { disabled: true, tone: 'muted', a11yLabel: 'Unavailable' };
     }
 
-    if (testingModeActive) {
-      return { selected: dateStr === selectedDate, tone: 'default' };
-    }
-
-    // "Today" closes once its own shift's generation grace window has
-    // passed; "tomorrow" is always open (its shift hasn't started yet).
-    if (!isWithinGenerationGrace(dateStr, planStartTimeOfDay, config.generationGraceHours)) {
+    // The grace-window cutoff only ever closes "today" (see
+    // _validate_generation_window's docstring server-side) — backdated/
+    // future dates are governed purely by the rangeDates bound above.
+    if (dateStr === today && !isWithinGenerationGrace(dateStr, planStartTimeOfDay, config.generationGraceHours)) {
       return { disabled: true, tone: 'muted', a11yLabel: 'Window closed' };
     }
 

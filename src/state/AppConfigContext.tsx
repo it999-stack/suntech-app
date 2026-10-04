@@ -17,9 +17,11 @@ export type AppConfigValues = {
   pilesSearchDebounceMs: number;
   maxAutoPreselectPiles: number;
   generationGraceHours: number;
-  futureDaysAhead: number;
-  allowAnyPlanDate: boolean;
   noNewStepCutoffMinutes: number;
+  planGenerateDaysBack: number;
+  planGenerateDaysAhead: number;
+  planEditDaysBack: number;
+  planEditDaysAhead: number;
 };
 
 // Fallback for the window before the first sync ever completes (fresh
@@ -30,9 +32,11 @@ const DEFAULTS: AppConfigValues = {
   pilesSearchDebounceMs: 300,
   maxAutoPreselectPiles: 5,
   generationGraceHours: 2,
-  futureDaysAhead: 1,
-  allowAnyPlanDate: false,
   noNewStepCutoffMinutes: 25,
+  planGenerateDaysBack: 0,
+  planGenerateDaysAhead: 1,
+  planEditDaysBack: 0,
+  planEditDaysAhead: 0,
 };
 
 // Maps the server's snake_case keys onto the camelCase fields above.
@@ -41,9 +45,11 @@ const KEY_MAP: Record<keyof AppConfigValues, string> = {
   pilesSearchDebounceMs: 'piles_search_debounce_ms',
   maxAutoPreselectPiles: 'max_auto_preselect_piles',
   generationGraceHours: 'generation_grace_hours',
-  futureDaysAhead: 'future_days_ahead',
-  allowAnyPlanDate: 'allow_any_plan_date',
   noNewStepCutoffMinutes: 'no_new_step_cutoff_minutes',
+  planGenerateDaysBack: 'plan_generate_days_back',
+  planGenerateDaysAhead: 'plan_generate_days_ahead',
+  planEditDaysBack: 'plan_edit_days_back',
+  planEditDaysAhead: 'plan_edit_days_ahead',
 };
 
 type AppConfigContextValue = {
