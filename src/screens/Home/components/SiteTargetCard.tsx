@@ -14,12 +14,13 @@ const STAT_TILES = [
   { key: 'notStarted', label: 'Not Started', Icon: Circle, color: colors.textSecondary },
 ] as const;
 
-type Period = 'overall' | 'weekly' | 'monthly';
+type Period = 'overall' | 'weekly' | 'monthly' | 'daily';
 
 const PERIODS: { key: Period; label: string }[] = [
   { key: 'overall', label: 'Overall' },
   { key: 'weekly', label: 'Weekly' },
   { key: 'monthly', label: 'Monthly' },
+  { key: 'daily', label: 'Daily' },
 ];
 
 function PeriodToggle({ value, onChange }: { value: Period; onChange: (period: Period) => void }) {
@@ -37,7 +38,6 @@ function PeriodToggle({ value, onChange }: { value: Period; onChange: (period: P
   );
 }
 
-/** Site progress in one card: completed vs target with a bar (Overall/Weekly/Monthly), then — for Overall only — the four pile-status counts. */
 export default function SiteTargetCard({ stats }: { stats: SiteTargetStats }) {
   const [period, setPeriod] = useState<Period>('weekly');
 

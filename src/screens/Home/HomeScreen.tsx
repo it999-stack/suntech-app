@@ -325,8 +325,10 @@ export default function HomeScreen() {
     return ids.size;
   }, [checklistPiles]);
 
-  // Refetch on regaining focus so counts reflect work done on other tabs.
-  const siteStats = useSiteStats(user?.siteId, isFocused);
+  // Refetch on regaining focus (so counts reflect work done on other tabs)
+  // and whenever workingDate changes, so Weekly/Monthly/Daily track whatever
+  // date is selected rather than always "the current one".
+  const siteStats = useSiteStats(user?.siteId, workingDate, isFocused);
   const recentPlans = useRecentPlans(user?.siteId, isFocused && planStatus);
   const userName = user?.name ?? 'User';
   const siteName = user?.siteName ?? 'Your Site';

@@ -5,6 +5,10 @@
 // the "today" step, which still runs after this one to stay authoritative for
 // the current day).
 //
+// The same response also carries the site's full DAILY/WEEKLY/MONTHLY
+// target-period history (bootstrap-history's `target_periods`) — hydrated
+// here too, for zero extra network calls, since it's the same payload.
+//
 // Also reports bootstrap-history's `server_time` in its StepResult — this is
 // the candidate Phase 3 delta-sync cursor value, established here with zero
 // extra network calls since this is already the last data-fetching step of
@@ -21,6 +25,7 @@ import type { StepResult } from '@sync/bootstrap/syncResult';
 import { toFailedStepResult } from '@sync/bootstrap/stepError';
 import { apiClient } from '@services/apiClient';
 import { hydrateChecklistFromServer } from '@repositories/checklistRepository';
+import { mapRawTargetPeriod, saveTargetPeriods } from '@repositories/targetPeriodRepository';
 
 export class SyncChecklistHistoryStep implements ISyncStep {
   readonly name = 'checklistHistory';
@@ -33,6 +38,12 @@ export class SyncChecklistHistoryStep implements ISyncStep {
       for (const checklist of checklists) {
         await hydrateChecklistFromServer(checklist);
       }
+
+      const targetPeriods = ((data.target_periods as any[]) ?? []).map((p) =>
+        mapRawTargetPeriod(p, ctx.siteId, syncedAt),
+      );
+      await saveTargetPeriods(targetPeriods);
+
       return {
         step: this.name,
         count: checklists.length,

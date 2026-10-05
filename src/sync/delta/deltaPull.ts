@@ -21,6 +21,7 @@ import {
   deleteNonWorkingWindowsByIds,
 } from '@repositories/shiftsRepository';
 import { saveSiteTargets } from '@repositories/siteRepository';
+import { mapRawTargetPeriod, saveTargetPeriods } from '@repositories/targetPeriodRepository';
 import { saveDurationTemplates } from '@repositories/durationTemplatesRepository';
 import { saveSteps } from '@repositories/stepsRepository';
 import {
@@ -201,6 +202,11 @@ export async function deltaPull(siteId: string, cursor: string): Promise<DeltaPu
       },
     });
   }
+
+  const targetPeriodRows = ((data.target_periods as any[]) ?? []).map((p) =>
+    mapRawTargetPeriod(p, siteId, syncedAt),
+  );
+  await saveTargetPeriods(targetPeriodRows);
 
   const checklists = (data.checklists as any[]) ?? [];
 
