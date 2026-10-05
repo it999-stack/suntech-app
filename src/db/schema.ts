@@ -241,6 +241,32 @@ export type NewPilSite = typeof pilSites.$inferInsert;
 export type PilSiteCoordinator = typeof pilSiteCoordinators.$inferSelect;
 export type NewPilSiteCoordinator = typeof pilSiteCoordinators.$inferInsert;
 
+/**
+ * Local cache of pil_site_target_periods — DAILY/WEEKLY/MONTHLY rows only.
+ * OVERALL is a single non-dated row per site and stays covered by
+ * pilSites.siteConfig above; this table is what lets the app look up the
+ * target for a specific calendar date (the date picked in
+ * GeneratePlanCalendarSheet/WorkingDateSheet), not just "the current one".
+ * Rows are never deleted server-side — a period "rolls over" by the server
+ * adding a new row, never touching the old one — so this is pure upsert,
+ * same as pilingDimensions/pilingMachines above, with no deletedAt.
+ */
+export type TargetPeriodType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
+
+export const pilSiteTargetPeriods = sqliteTable('pil_site_target_periods', {
+  id: text('id').primaryKey(),
+  siteId: text('site_id').notNull(),
+  periodType: text('period_type').notNull().$type<TargetPeriodType>(),
+  periodStart: text('period_start').notNull(),
+  periodEnd: text('period_end').notNull(),
+  targetPiles: integer('target_piles'),
+  completedPiles: integer('completed_piles').notNull().default(0),
+  syncedAt: integer('synced_at').notNull(),
+});
+
+export type PilSiteTargetPeriod = typeof pilSiteTargetPeriods.$inferSelect;
+export type NewPilSiteTargetPeriod = typeof pilSiteTargetPeriods.$inferInsert;
+
 // ─── Piling Steps (synced from server) ──────────────────────────────────────
 
 /**

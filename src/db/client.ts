@@ -49,6 +49,7 @@ export async function initDb() {
       DROP TABLE IF EXISTS pil_daily_checklists;
       DROP TABLE IF EXISTS pil_step_duration_templates;
       DROP TABLE IF EXISTS pil_steps;
+      DROP TABLE IF EXISTS pil_site_target_periods;
       DROP TABLE IF EXISTS pil_site_coordinators;
       DROP TABLE IF EXISTS pil_sites;
       DROP TABLE IF EXISTS pil_site_personnel;
@@ -210,6 +211,24 @@ export async function initDb() {
       id          TEXT PRIMARY KEY NOT NULL,
       site_config TEXT NOT NULL DEFAULT '{}'
     );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE TABLE IF NOT EXISTS pil_site_target_periods (
+      id              TEXT PRIMARY KEY NOT NULL,
+      site_id         TEXT NOT NULL,
+      period_type     TEXT NOT NULL,
+      period_start    TEXT NOT NULL,
+      period_end      TEXT NOT NULL,
+      target_piles    INTEGER,
+      completed_piles INTEGER NOT NULL DEFAULT 0,
+      synced_at       INTEGER NOT NULL
+    );
+  `);
+
+  await sqlite.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_target_periods_site_type_start
+      ON pil_site_target_periods (site_id, period_type, period_start);
   `);
 
   await sqlite.execAsync(`
