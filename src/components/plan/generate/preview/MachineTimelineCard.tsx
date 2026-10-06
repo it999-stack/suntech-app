@@ -96,7 +96,7 @@ export default function MachineTimelineCard({
     return map;
   }, [machines, sourceItems, windowStart, windowEnd, windowsByMachineId]);
 
-  if (machines.length === 0) return null;
+  if (machines.length === 0 && !isRecomputing) return null;
 
   return (
     <GlassCard style={styles.card} innerStyle={styles.cardInner}>
@@ -113,13 +113,15 @@ export default function MachineTimelineCard({
 
       <View style={styles.body}>
         <BusyOverlay busy={isRecomputing}>
-          <MachineStopTimeline
-            machines={machines}
-            stopsByMachineId={stopsByMachineId}
-            selectedMachineId={selectedMachineId}
-            onSelectMachine={setSelectedMachineId}
-            onEditMachine={onEditMachine}
-          />
+          {machines.length > 0 && (
+            <MachineStopTimeline
+              machines={machines}
+              stopsByMachineId={stopsByMachineId}
+              selectedMachineId={selectedMachineId}
+              onSelectMachine={setSelectedMachineId}
+              onEditMachine={onEditMachine}
+            />
+          )}
         </BusyOverlay>
       </View>
     </GlassCard>

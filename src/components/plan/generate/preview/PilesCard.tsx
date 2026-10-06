@@ -60,12 +60,15 @@ interface PilePreviewPageProps {
   /** Opens the machine-reassignment panel for this pile. Omitted on read-only screens
    * (e.g. PlanDetailScreen) so the rows below render non-interactive, with no pencil icon. */
   onPressMachineBadge?: (pileId: string) => void;
+  /** The card's schedule is still loading — an empty step list means "not here yet",
+   * not "no steps", so the empty-state message is held back. */
+  isRecomputing: boolean;
 }
 
-/** One pile's page content inside the swipeable bar. Memoized because SwipeableTabBar's
- * PagerView mounts every pile's page up front (needed for swipe), so without this every
- * pile would redo its full step/duration/breaks computation on every render — including
- * the two renders a single tile tap causes before the debounced recompute even starts. */
+/** One pile's page content inside the swipeable bar. The bar is lazy (only the active pile
+ * and its neighbours mount), and this is memoized so those mounted pages don't redo their
+ * step/duration/breaks computation on every render — including the two renders a single
+ * tile tap causes before the debounced recompute even starts. */
 const PilePreviewPage = React.memo(function PilePreviewPage({
   pile,
   steps,
@@ -77,6 +80,7 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
   selectedStepIds,
   resumeWork,
   onPressMachineBadge,
+  isRecomputing,
 }: PilePreviewPageProps) {
   const totalDuration = formatDurationMinutes(computeTotalDuration(steps));
   // Occupancy is derived from the CONFIRMED schedule (steps) only — a pending,
@@ -195,7 +199,7 @@ const PilePreviewPage = React.memo(function PilePreviewPage({
 
       <View style={styles.stepsContainer}>
         {displaySteps.length === 0 ? (
-          <Text style={styles.noSteps}>No plan steps generated for this pile.</Text>
+          isRecomputing ? null : <Text style={styles.noSteps}>No plan steps generated for this pile.</Text>
         ) : (
           displaySteps.map((s, idx) => {
             const historical = historicalCompletedByStepId.get(s.stepId);
@@ -366,12 +370,12 @@ export default function PilesCard({
     return map;
   }, [actualSteps]);
 
-  if (piles.length === 0) {
+  if (piles.length === 0 && !isRecomputing) {
     return <Text style={styles.emptyText}>No piles in this plan.</Text>;
   }
 
   const items: SwipeableTabItem[] = piles.map((p) => ({ value: p.id, label: p.code }));
-  const value = selectedPileId ?? piles[0].id;
+  const value = selectedPileId ?? piles[0]?.id ?? '';
 
   return (
     <GlassCard style={styles.card} innerStyle={styles.cardInner}>
@@ -387,29 +391,33 @@ export default function PilesCard({
 
       <View style={styles.body}>
         <BusyOverlay busy={isRecomputing}>
-          <SwipeableTabBar
-            items={items}
-            value={value}
-            onChange={setSelectedPileId}
-            scrollHint="dots"
-            renderPage={(item) => {
-              const pile = piles.find((p) => p.id === item.value) ?? piles[0];
-              return (
-                <PilePreviewPage
-                  pile={pile}
-                  steps={stepsByPileId.get(pile.checklistPileId) ?? EMPTY_STEPS}
-                  actualSteps={actualStepsByPileId.get(pile.checklistPileId) ?? EMPTY_ACTUAL_STEPS}
-                  overriddenStepIds={overriddenTrackStepIdsByPileId?.[pile.checklistPileId] ?? EMPTY_STEP_IDS}
-                  onToggleTrack={onToggleTrack}
-                  windowsByMachineId={windowsByMachineId}
-                  allSteps={allSteps}
-                  selectedStepIds={selectedStepIds}
-                  resumeWork={resumeWorkByPileId[pile.id]}
-                  onPressMachineBadge={onPressMachineBadge}
-                />
-              );
-            }}
-          />
+          {piles.length > 0 && (
+            <SwipeableTabBar
+              items={items}
+              value={value}
+              onChange={setSelectedPileId}
+              scrollHint="dots"
+              lazyPages
+              renderPage={(item) => {
+                const pile = piles.find((p) => p.id === item.value) ?? piles[0];
+                return (
+                  <PilePreviewPage
+                    pile={pile}
+                    steps={stepsByPileId.get(pile.checklistPileId) ?? EMPTY_STEPS}
+                    actualSteps={actualStepsByPileId.get(pile.checklistPileId) ?? EMPTY_ACTUAL_STEPS}
+                    overriddenStepIds={overriddenTrackStepIdsByPileId?.[pile.checklistPileId] ?? EMPTY_STEP_IDS}
+                    onToggleTrack={onToggleTrack}
+                    windowsByMachineId={windowsByMachineId}
+                    allSteps={allSteps}
+                    selectedStepIds={selectedStepIds}
+                    resumeWork={resumeWorkByPileId[pile.id]}
+                    onPressMachineBadge={onPressMachineBadge}
+                    isRecomputing={isRecomputing}
+                  />
+                );
+              }}
+            />
+          )}
         </BusyOverlay>
       </View>
     </GlassCard>

@@ -4,7 +4,7 @@
 // Shows the plan window, core team, machine timeline, and per-pile accordions.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { RefreshCw } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -72,46 +72,30 @@ export default function PlanDetailScreen() {
   // writes to the checklist itself, only reflects what's been synced.
   const loadLocalData = useCallback(async (): Promise<void> => {
     if (!checklistId || !user?.siteId) return;
+    const siteId = user.siteId;
 
-    // Load checklist data
-    const cl = await getChecklistById(checklistId);
+    // Two stages, committed separately: the plan's shape first (piles,
+    // machines, team), so the Timeline and Piles cards paint their real
+    // layout dimmed under the loading overlay — same as the wizard's Preview
+    // step, which knows its piles/machines before its schedule — then the
+    // schedule itself fills them in.
+    const [cl, cpList, allPiles, rigs, cranes, personnelRows, shiftsList, stepCatalog] = await Promise.all([
+      getChecklistById(checklistId),
+      getChecklistPiles(checklistId),
+      getPilesBySiteWithDimensions(siteId),
+      getMachinesByType(siteId, 'RIG'),
+      getMachinesByType(siteId, 'CRANE'),
+      getChecklistPersonnel(checklistId),
+      getAllShiftTypes(),
+      getSteps(),
+    ]);
 
-    // Load checklist piles
-    const cpList = await getChecklistPiles(checklistId);
-
-    // Load all piles with dimensions
-    const allPiles = await getPilesBySiteWithDimensions(user.siteId!);
-
-    // Build a map for quick pile lookup
     const pileMap = new Map(allPiles.map((p) => [p.id, p]));
-
-    // Load plan steps + recorded actuals
-    const steps = await getPlanStepsForChecklist(checklistId);
-    const actuals = await getActualStepsForChecklist(checklistId);
-
-    // Load machines
-    const rigs = await getMachinesByType(user.siteId!, 'RIG');
-    const cranes = await getMachinesByType(user.siteId!, 'CRANE');
-
-    // Load every checklist-personnel role assignment (Leadership, Shift
-    // Incharge, and per-machine Engineer/Supervisor/Operator), resolving
-    // every referenced person in one batch for the merged Core Team card.
-    const personnelRows = cl ? await getChecklistPersonnel(cl.id) : [];
     const personnelIds = [...new Set(personnelRows.map((r) => r.personnelId))];
     const personnelList = personnelIds.length > 0 ? await getPersonnelByIds(personnelIds) : [];
 
-    // Load shifts
-    const shiftsList = await getAllShiftTypes();
-
-    // Global step catalog, in sequence order — lets PilesCard show every step
-    // this plan covers on every pile, including ones the scheduler never got
-    // to, instead of silently dropping them. Same treatment as PreviewStep.
-    const stepCatalog = await getSteps();
-
     setChecklist(cl ?? null);
-    setPlanSteps(steps);
     setAllSteps(stepCatalog);
-    setActualSteps(actuals);
     setPersonnel(personnelList);
     setChecklistPersonnelRows(personnelRows);
     setShifts(shiftsList);
@@ -139,6 +123,13 @@ export default function PlanDetailScreen() {
       };
     });
     setDetailPiles(builtPiles);
+
+    const [steps, actuals] = await Promise.all([
+      getPlanStepsForChecklist(checklistId),
+      getActualStepsForChecklist(checklistId),
+    ]);
+    setPlanSteps(steps);
+    setActualSteps(actuals);
   }, [checklistId, user?.siteId]);
 
   useEffect(() => {
@@ -151,7 +142,6 @@ export default function PlanDetailScreen() {
       cancelled = true;
     };
   }, [loadLocalData]);
-
   // Pulls this checklist's latest server state into local SQLite, then
   // re-reads local state — this is the only way to get fresh data while
   // viewing a plan, since generation itself requires connectivity and this
@@ -266,23 +256,11 @@ export default function PlanDetailScreen() {
 
   const { windowsByMachineId } = useNonWorkingWindows({ checklist, planSteps });
 
-  // Both branches below render an opaque copy of the app's shared backdrop
-  // gradient, not the transparent contentStyle HomeStackNavigator normally
-  // relies on — this screen gets pushed on top of HomeScreen, which stays
-  // mounted underneath (native-stack never unmounts a blurred screen), and a
-  // transparent root here let HomeScreen's own real content bleed through
-  // during the slide-in transition (and through any layout gap at rest).
-  if (loading) {
-    return (
-      <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
-        <View style={[styles.flex, styles.center]}>
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.loadingText}>Loading plan details…</Text>
-        </View>
-      </LinearGradient>
-    );
-  }
-
+  // This screen renders its full layout immediately, even before the initial
+  // load finishes — the Machine Timeline and Piles cards show their own
+  // in-body BusyOverlay spinner (isRecomputing={loading}) instead of
+  // blocking the whole screen behind one spinner. Keeps the header (and the
+  // refresh button) interactive the instant the screen opens.
   return (
     <LinearGradient colors={colors.backdropGradient} style={styles.flex}>
       <View style={styles.flex}>
@@ -321,14 +299,15 @@ export default function PlanDetailScreen() {
           />
 
           {/* ── Visual timeline ─────────────────────────────────────────────── */}
-          {checklist?.planStartTime && endIso && planSteps.length > 0 && (
+          {(loading || (checklist?.planStartTime && endIso && planSteps.length > 0)) && (
             <MachineTimelineCard
-              windowStart={new Date(checklist.planStartTime)}
-              windowEnd={new Date(endIso)}
+              windowStart={checklist?.planStartTime ? new Date(checklist.planStartTime) : new Date()}
+              windowEnd={endIso ? new Date(endIso) : new Date()}
               steps={planSteps}
               activeRigs={machineInfos.filter((m) => m.type === 'RIG')}
               activeCranes={machineInfos.filter((m) => m.type === 'CRANE')}
               pileLabelById={pileLabelById}
+              isRecomputing={loading || refreshing}
             />
           )}
 
@@ -340,6 +319,7 @@ export default function PlanDetailScreen() {
             allSteps={allSteps}
             selectedStepIds={selectedStepIds}
             windowsByMachineId={windowsByMachineId}
+            isRecomputing={loading || refreshing}
           />
         </ScrollView>
       </View>
@@ -351,8 +331,6 @@ export default function PlanDetailScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  loadingText: { ...typography.body, color: colors.textSecondary, marginTop: spacing.md },
 
   headerArea: {
     paddingHorizontal: spacing.lg,

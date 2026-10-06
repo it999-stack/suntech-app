@@ -98,6 +98,14 @@ export interface SwipeableTabBarProps<T extends string = string> {
    * whole page growing/shrinking to fit. Opt-in; other callers unaffected.
    */
   fillHeight?: boolean;
+  /**
+   * Renders only the active page and its immediate neighbours; the rest stay
+   * as empty full-width slots so swipe/scrollTo positions are unchanged. For
+   * callers with many expensive pages (e.g. a plan's piles). Trade-off: the
+   * pager's auto height follows the rendered pages, so it can change on swipe.
+   * Opt-in; other callers unaffected.
+   */
+  lazyPages?: boolean;
 }
 
 const FADE_WIDTH = 28;
@@ -113,6 +121,7 @@ export default function SwipeableTabBar<T extends string = string>({
   pillVariant = 'default',
   dividerStyle,
   fillHeight = false,
+  lazyPages = false,
 }: SwipeableTabBarProps<T>) {
   const pagerScrollRef = useRef<ScrollView>(null);
   const [pagerWidth, setPagerWidth] = useState(0);
@@ -238,7 +247,7 @@ export default function SwipeableTabBar<T extends string = string>({
           >
             {items.map((item, index) => (
               <View key={item.value} style={[{ width: pagerWidth }, fillHeight && styles.fillFlex]}>
-                {renderPage(item, index)}
+                {!lazyPages || Math.abs(index - activeIndex) <= 1 ? renderPage(item, index) : null}
               </View>
             ))}
           </ScrollView>
