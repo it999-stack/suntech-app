@@ -31,6 +31,7 @@ import { getPersonnelByIds } from '@repositories/personnelRepository';
 import { getAllShiftTypes } from '@repositories/shiftsRepository';
 import { getSteps } from '@repositories/stepsRepository';
 import type { PilingDailyChecklist, PilingSitePersonnel, PilingShiftType, PilingChecklistPile, PilingMachine, PilingStep } from '@db/schema';
+import { useNonWorkingWindows } from './fillActual/useNonWorkingWindows';
 import PilesCard from '@components/plan/generate/preview/PilesCard';
 import MachineTimelineCard from '@components/plan/generate/preview/MachineTimelineCard';
 import CoreTeamCard from '@/components/plan/generate/preview/CoreTeamCard';
@@ -263,6 +264,8 @@ export default function PlanDetailScreen() {
     [planSteps],
   );
 
+  const { windowsByMachineId } = useNonWorkingWindows({ checklist, planSteps });
+
   // Both branches below render an opaque copy of the app's shared backdrop
   // gradient, not the transparent contentStyle HomeStackNavigator normally
   // relies on — this screen gets pushed on top of HomeScreen, which stays
@@ -336,6 +339,7 @@ export default function PlanDetailScreen() {
             actualSteps={actualSteps}
             allSteps={allSteps}
             selectedStepIds={selectedStepIds}
+            windowsByMachineId={windowsByMachineId}
           />
         </ScrollView>
       </View>
